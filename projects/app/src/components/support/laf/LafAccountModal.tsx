@@ -67,7 +67,7 @@ const LafAccountModal = ({
       enabled: !!lafToken,
       onSuccess: (data) => {
         if (!getValues('appid') && data.length > 0) {
-          setValue('appid', data[0].appid);
+          setValue('appid', data.filter((app) => app.state === 'Running')[0]?.appid);
         }
       },
       onError: (err) => {
@@ -84,7 +84,6 @@ const LafAccountModal = ({
     mutationFn: async (data: LafAccountType) => {
       if (!userInfo?.team.teamId) return;
       return putUpdateTeam({
-        teamId: userInfo?.team.teamId,
         lafAccount: data
       });
     },
@@ -97,7 +96,7 @@ const LafAccountModal = ({
   });
 
   return (
-    <MyModal isOpen iconSrc="/imgs/module/laf.png" title={t('user.Laf Account Setting')}>
+    <MyModal isOpen iconSrc="/imgs/workflow/laf.png" title={t('user.Laf Account Setting')}>
       <ModalBody>
         <Box fontSize={'sm'} color={'myGray.500'}>
           <Box>{t('support.user.Laf account intro')}</Box>
@@ -108,7 +107,9 @@ const LafAccountModal = ({
           </Box>
           <Box>
             <Link textDecoration={'underline'} href={`${feConfigs.lafEnv}/`} isExternal>
-              {t('support.user.Go laf env')}
+              {t('support.user.Go laf env', {
+                env: feConfigs.lafEnv?.split('//')[1]
+              })}
             </Link>
           </Box>
         </Box>
@@ -140,7 +141,6 @@ const LafAccountModal = ({
               onClick={() => {
                 onResetForm();
                 putUpdateTeam({
-                  teamId: userInfo?.team.teamId || '',
                   lafAccount: { token: '', appid: '', pat: '' }
                 });
               }}
@@ -173,7 +173,13 @@ const LafAccountModal = ({
         )}
       </ModalBody>
       <ModalFooter>
-        <Button variant={'whiteBase'} onClick={onClose}>
+        <Button
+          variant={'whiteBase'}
+          onClick={() => {
+            initUserInfo();
+            onClose();
+          }}
+        >
           {t('common.Close')}
         </Button>
         {appid && (

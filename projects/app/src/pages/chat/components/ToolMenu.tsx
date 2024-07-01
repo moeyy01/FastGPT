@@ -5,7 +5,7 @@ import { Box, IconButton } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 import MyIcon from '@fastgpt/web/components/common/Icon';
 import { useRouter } from 'next/router';
-import MyMenu from '@/components/MyMenu';
+import MyMenu from '@fastgpt/web/components/common/MyMenu';
 
 const ToolMenu = ({ history }: { history: ChatItemType[] }) => {
   const { t } = useTranslation();
@@ -55,7 +55,7 @@ const ToolMenu = ({ history }: { history: ChatItemType[] }) => {
           variant={'whitePrimary'}
         />
       }
-      menuList={menuList}
+      menuList={[{ children: menuList }]}
     />
   ) : (
     <Box w={'28px'} h={'28px'} />

@@ -11,20 +11,21 @@ import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
 import { initGlobal } from './common/system';
 import { startMongoWatch } from './common/system/volumnMongoWatch';
 import { startTrainingQueue } from './core/dataset/training/utils';
+import { systemStartCb } from '@fastgpt/service/common/system/tools';
 
 /**
  * connect MongoDB and init data
  */
-export function connectToDatabase(): Promise<void> {
+export function connectToDatabase() {
   return connectMongo({
     beforeHook: () => {
       initGlobal();
     },
     afterHook: async () => {
-      // init system config
-      getInitConfig();
-      //init vector database, init root user
-      await Promise.all([initVectorStore(), initRootUser()]);
+      systemStartCb();
+
+      //init system config；init vector database；init root user
+      await Promise.all([getInitConfig(), initVectorStore(), initRootUser()]);
 
       startMongoWatch();
       // cron

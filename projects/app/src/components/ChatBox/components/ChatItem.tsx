@@ -25,7 +25,9 @@ import {
   ChatStatusEnum
 } from '@fastgpt/global/core/chat/constants';
 import FilesBlock from './FilesBox';
-import { useChatProviderStore } from '../Provider';
+import { ChatBoxContext } from '../Provider';
+import Avatar from '@/components/Avatar';
+import { useContextSelector } from 'use-context-selector';
 
 const colorMap = {
   [ChatStatusEnum.loading]: {
@@ -77,7 +79,7 @@ const ChatItem = ({
           bg: 'myGray.50'
         };
 
-  const { isChatting } = useChatProviderStore();
+  const isChatting = useContextSelector(ChatBoxContext, (v) => v.isChatting);
   const { chat } = chatControllerProps;
 
   const ContentCard = useMemo(() => {
@@ -97,10 +99,11 @@ const ChatItem = ({
       <Flex flexDirection={'column'} key={chat.dataId} gap={2}>
         {chat.value.map((value, i) => {
           const key = `${chat.dataId}-ai-${i}`;
+
           if (value.text) {
             let source = (value.text?.content || '').trim();
 
-            if (!source && chat.value.length > 1) return <></>;
+            if (!source && chat.value.length > 1) return null;
 
             if (
               isLastChild &&
@@ -152,12 +155,13 @@ ${JSON.stringify(questionGuides)}`;
                             borderColor={'myGray.200'}
                             boxShadow={'1'}
                             _hover={{
-                              bg: 'auto',
-                              color: 'primary.600'
+                              bg: 'auto'
                             }}
                           >
-                            <Image src={tool.toolAvatar} alt={''} w={'14px'} mr={2} />
-                            <Box mr={1}>{tool.toolName}</Box>
+                            <Avatar src={tool.toolAvatar} borderRadius={'md'} w={'1rem'} mr={2} />
+                            <Box mr={1} fontSize={'sm'}>
+                              {tool.toolName}
+                            </Box>
                             {isChatting && !tool.response && (
                               <MyIcon name={'common/loading'} w={'14px'} />
                             )}
@@ -216,7 +220,14 @@ ${toolResponse}`}
         <ChatAvatar src={avatar} type={type} />
 
         {!!chatStatusMap && statusBoxData && isLastChild && (
-          <Flex alignItems={'center'} px={3} py={'1.5px'} borderRadius="md" bg={chatStatusMap.bg}>
+          <Flex
+            alignItems={'center'}
+            px={3}
+            py={'1.5px'}
+            borderRadius="md"
+            bg={chatStatusMap.bg}
+            fontSize={'sm'}
+          >
             <Box
               className={styles.statusAnimation}
               bg={chatStatusMap.color}

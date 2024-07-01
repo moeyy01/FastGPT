@@ -1,54 +1,85 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { jsonRes } from '@fastgpt/service/common/response';
-import { connectToDatabase } from '@/service/mongo';
+import type { NextApiRequest } from 'next';
 import type { DatasetListItemType } from '@fastgpt/global/core/dataset/type.d';
 import { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
 import { MongoDataset } from '@fastgpt/service/core/dataset/schema';
-import { mongoRPermission } from '@fastgpt/global/support/permission/utils';
-import { authUserRole } from '@fastgpt/service/support/permission/auth/user';
+import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
 import { getVectorModel } from '@fastgpt/service/core/ai/model';
+import { NextAPI } from '@/service/middleware/entry';
+import { DatasetPermission } from '@fastgpt/global/support/permission/dataset/controller';
+import {
+  PerResourceTypeEnum,
+  ReadPermissionVal
+} from '@fastgpt/global/support/permission/constant';
+import { MongoResourcePermission } from '@fastgpt/service/support/permission/schema';
+import { DatasetDefaultPermissionVal } from '@fastgpt/global/support/permission/dataset/constant';
+import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
+import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<any>) {
-  try {
-    await connectToDatabase();
-    const { parentId, type } = req.query as { parentId?: string; type?: `${DatasetTypeEnum}` };
-    // 凭证校验
-    const { teamId, tmbId, teamOwner, role, canWrite } = await authUserRole({
-      req,
-      authToken: true,
-      authApiKey: true
-    });
+export type GetDatasetListBody = { parentId: ParentIdType; type?: DatasetTypeEnum };
 
-    const datasets = await MongoDataset.find({
-      ...mongoRPermission({ teamId, tmbId, role }),
-      ...(parentId !== undefined && { parentId: parentId || null }),
+async function handler(req: NextApiRequest) {
+  const { parentId, type } = req.body as GetDatasetListBody;
+  // 凭证校验
+  const {
+    teamId,
+    tmbId,
+    permission: tmbPer
+  } = await authUserPer({
+    req,
+    authToken: true,
+    authApiKey: true,
+    per: ReadPermissionVal
+  });
+
+  const [myDatasets, rpList] = await Promise.all([
+    MongoDataset.find({
+      teamId,
+      ...parseParentIdInMongo(parentId),
       ...(type && { type })
     })
-      .sort({ updateTime: -1 })
-      .lean();
+      .sort({
+        updateTime: -1
+      })
+      .lean(),
+    MongoResourcePermission.find({
+      resourceType: PerResourceTypeEnum.dataset,
+      teamId,
+      tmbId
+    }).lean()
+  ]);
 
-    const data = await Promise.all(
-      datasets.map<DatasetListItemType>((item) => ({
-        _id: item._id,
-        parentId: item.parentId,
-        avatar: item.avatar,
-        name: item.name,
-        intro: item.intro,
-        type: item.type,
-        permission: item.permission,
-        canWrite,
-        isOwner: teamOwner || String(item.tmbId) === tmbId,
-        vectorModel: getVectorModel(item.vectorModel)
-      }))
-    );
+  const filterDatasets = myDatasets
+    .map((dataset) => {
+      const perVal = rpList.find(
+        (item) => String(item.resourceId) === String(dataset._id)
+      )?.permission;
+      const Per = new DatasetPermission({
+        per: perVal ?? dataset.defaultPermission,
+        isOwner: String(dataset.tmbId) === tmbId || tmbPer.isOwner
+      });
 
-    jsonRes<DatasetListItemType[]>(res, {
-      data
-    });
-  } catch (err) {
-    jsonRes(res, {
-      code: 500,
-      error: err
-    });
-  }
+      return {
+        ...dataset,
+        permission: Per
+      };
+    })
+    .filter((app) => app.permission.hasReadPer);
+
+  const data = await Promise.all(
+    filterDatasets.map<DatasetListItemType>((item) => ({
+      _id: item._id,
+      parentId: item.parentId,
+      avatar: item.avatar,
+      name: item.name,
+      intro: item.intro,
+      type: item.type,
+      permission: item.permission,
+      vectorModel: getVectorModel(item.vectorModel),
+      defaultPermission: item.defaultPermission ?? DatasetDefaultPermissionVal
+    }))
+  );
+
+  return data;
 }
+
+export default NextAPI(handler);

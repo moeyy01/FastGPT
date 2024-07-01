@@ -2,12 +2,13 @@ import React from 'react';
 import { Box, Button, Flex, useTheme } from '@chakra-ui/react';
 import { getInforms, readInform } from '@/web/support/user/inform/api';
 import type { UserInformSchema } from '@fastgpt/global/support/user/inform/type';
-import { formatTimeToChatTime } from '@/utils/tools';
+import { formatTimeToChatTime } from '@fastgpt/global/common/string/time';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import MyIcon from '@fastgpt/web/components/common/Icon';
 import { usePagination } from '@fastgpt/web/hooks/usePagination';
 import { useLoading } from '@fastgpt/web/hooks/useLoading';
 import { useTranslation } from 'next-i18next';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
 
 const InformTable = () => {
   const { t } = useTranslation();
@@ -78,14 +79,7 @@ const InformTable = () => {
             )}
           </Box>
         ))}
-        {!isLoading && informs.length === 0 && (
-          <Flex flex={'1 0 0'} flexDirection={'column'} alignItems={'center'} pt={'10vh'}>
-            <MyIcon name="empty" w={'48px'} h={'48px'} color={'transparent'} />
-            <Box mt={2} color={'myGray.500'}>
-              暂无通知~
-            </Box>
-          </Flex>
-        )}
+        {!isLoading && informs.length === 0 && <EmptyTip text={'暂无通知~'}></EmptyTip>}
       </Box>
 
       {total > pageSize && (
