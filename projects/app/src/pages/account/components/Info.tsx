@@ -9,7 +9,8 @@ import {
   Link,
   Progress,
   Grid,
-  Image
+  Image,
+  BoxProps
 } from '@chakra-ui/react';
 import { useForm } from 'react-hook-form';
 import { UserUpdateParams } from '@/types/user';
@@ -17,15 +18,14 @@ import { useToast } from '@fastgpt/web/hooks/useToast';
 import { useUserStore } from '@/web/support/user/useUserStore';
 import type { UserType } from '@fastgpt/global/support/user/type.d';
 import { useQuery } from '@tanstack/react-query';
-import { QuestionOutlineIcon } from '@chakra-ui/icons';
 import dynamic from 'next/dynamic';
 import { useSelectFile } from '@/web/common/file/hooks/useSelectFile';
 import { compressImgFileAndUpload } from '@/web/common/file/controller';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import { useTranslation } from 'next-i18next';
-import Avatar from '@/components/Avatar';
+import Avatar from '@fastgpt/web/components/common/Avatar';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import MyTooltip from '@/components/MyTooltip';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import { useRouter } from 'next/router';
 import { formatStorePrice2Read } from '@fastgpt/global/support/wallet/usage/tools';
 import { putUpdateMemberName } from '@/web/support/user/team/api';
@@ -43,6 +43,8 @@ import {
 
 import StandardPlanContentList from '@/components/support/wallet/StandardPlanContentList';
 import { TeamMemberRoleEnum } from '@fastgpt/global/support/user/team/constant';
+import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
 
 const StandDetailModal = dynamic(() => import('./standardDetailModal'));
 const TeamMenu = dynamic(() => import('@/components/support/user/team/TeamMenu'));
@@ -53,7 +55,7 @@ const LafAccountModal = dynamic(() => import('@/components/support/laf/LafAccoun
 const CommunityModal = dynamic(() => import('@/components/CommunityModal'));
 
 const Account = () => {
-  const { isPc } = useSystemStore();
+  const { isPc } = useSystem();
   const { teamPlanStatus } = useUserStore();
   const standardPlan = teamPlanStatus?.standardConstants;
 
@@ -62,7 +64,7 @@ const Account = () => {
   useQuery(['init'], initUserInfo);
 
   return (
-    <Box py={[3, '28px']} px={['5vw', '64px']}>
+    <Box py={[3, '28px']} maxW={['95vw', '1080px']} px={[5, 10]} mx={'auto'}>
       {isPc ? (
         <Flex justifyContent={'center'}>
           <Box flex={'0 0 330px'}>
@@ -98,7 +100,7 @@ const MyInfo = () => {
   const { reset } = useForm<UserUpdateParams>({
     defaultValues: userInfo as UserType
   });
-  const { isPc } = useSystemStore();
+  const { isPc } = useSystem();
 
   const { toast } = useToast();
   const {
@@ -125,7 +127,7 @@ const MyInfo = () => {
       });
       reset(data);
       toast({
-        title: t('dataset.data.Update Success Tip'),
+        title: t('common:dataset.data.Update Success Tip'),
         status: 'success'
       });
     },
@@ -150,7 +152,7 @@ const MyInfo = () => {
         });
       } catch (err: any) {
         toast({
-          title: typeof err === 'string' ? err : t('common.error.Select avatar failed'),
+          title: typeof err === 'string' ? err : t('common:common.error.Select avatar failed'),
           status: 'warning'
         });
       }
@@ -158,22 +160,28 @@ const MyInfo = () => {
     [onclickSave, t, toast, userInfo]
   );
 
+  const labelStyles: BoxProps = {
+    flex: '0 0 80px',
+    fontSize: 'sm',
+    color: 'myGray.900'
+  };
+
   return (
     <Box>
       {/* user info */}
       {isPc && (
-        <Flex alignItems={'center'} fontSize={'xl'} h={'30px'}>
-          <MyIcon mr={2} name={'support/user/userLight'} w={'20px'} />
-          {t('support.user.User self info')}
+        <Flex alignItems={'center'} fontSize={'md'} h={'30px'}>
+          <MyIcon mr={2} name={'support/user/userLight'} w={'1.25rem'} />
+          {t('common:support.user.User self info')}
         </Flex>
       )}
 
-      <Box mt={[0, 6]}>
+      <Box mt={[0, 6]} fontSize={'sm'}>
         {isPc ? (
           <Flex alignItems={'center'} cursor={'pointer'}>
-            <Box flex={'0 0 80px'}>{t('support.user.Avatar')}:&nbsp;</Box>
+            <Box {...labelStyles}>{t('common:support.user.Avatar')}:&nbsp;</Box>
 
-            <MyTooltip label={t('common.avatar.Select Avatar')}>
+            <MyTooltip label={t('common:common.avatar.Select Avatar')}>
               <Box
                 w={['44px', '56px']}
                 h={['44px', '56px']}
@@ -196,7 +204,7 @@ const MyInfo = () => {
             cursor={'pointer'}
             onClick={onOpenSelectFile}
           >
-            <MyTooltip label={t('common.avatar.Select Avatar')}>
+            <MyTooltip label={t('common:common.avatar.Select Avatar')}>
               <Box
                 w={['44px', '54px']}
                 h={['44px', '54px']}
@@ -213,17 +221,17 @@ const MyInfo = () => {
 
             <Flex alignItems={'center'} fontSize={'sm'} color={'myGray.600'}>
               <MyIcon mr={1} name={'edit'} w={'14px'} />
-              {t('user.Replace')}
+              {t('common:user.Replace')}
             </Flex>
           </Flex>
         )}
         {feConfigs.isPlus && (
           <Flex mt={[0, 4]} alignItems={'center'}>
-            <Box flex={'0 0 80px'}>{t('user.Member Name')}:&nbsp;</Box>
+            <Box {...labelStyles}>{t('common:user.Member Name')}:&nbsp;</Box>
             <Input
               flex={'1 0 0'}
               defaultValue={userInfo?.team?.memberName || 'Member'}
-              title={t('user.Edit name')}
+              title={t('common:user.Edit name')}
               borderColor={'transparent'}
               transform={'translateX(-11px)'}
               maxLength={20}
@@ -238,20 +246,20 @@ const MyInfo = () => {
           </Flex>
         )}
         <Flex alignItems={'center'} mt={6}>
-          <Box flex={'0 0 80px'}>{t('user.Account')}:&nbsp;</Box>
+          <Box {...labelStyles}>{t('common:user.Account')}:&nbsp;</Box>
           <Box flex={1}>{userInfo?.username}</Box>
         </Flex>
         {feConfigs.isPlus && (
           <Flex mt={6} alignItems={'center'}>
-            <Box flex={'0 0 80px'}>{t('user.Password')}:&nbsp;</Box>
+            <Box {...labelStyles}>{t('common:user.Password')}:&nbsp;</Box>
             <Box flex={1}>*****</Box>
             <Button size={'sm'} variant={'whitePrimary'} onClick={onOpenUpdatePsw}>
-              {t('user.Change')}
+              {t('common:user.Change')}
             </Button>
           </Flex>
         )}
         <Flex mt={6} alignItems={'center'}>
-          <Box flex={'0 0 80px'}>{t('user.Team')}:&nbsp;</Box>
+          <Box {...labelStyles}>{t('common:user.Team')}:&nbsp;</Box>
           <Box flex={1}>
             <TeamMenu />
           </Box>
@@ -259,15 +267,13 @@ const MyInfo = () => {
         {feConfigs.isPlus && (
           <Box mt={6} whiteSpace={'nowrap'}>
             <Flex alignItems={'center'}>
-              <Box flex={'0 0 80px'} fontSize={'md'}>
-                {t('user.team.Balance')}:&nbsp;
-              </Box>
+              <Box {...labelStyles}>{t('common:user.team.Balance')}:&nbsp;</Box>
               <Box flex={1}>
                 <strong>{formatStorePrice2Read(userInfo?.team?.balance).toFixed(3)}</strong> 元
               </Box>
-              {feConfigs?.show_pay && userInfo?.team?.canWrite && (
+              {feConfigs?.show_pay && userInfo?.team?.permission.hasWritePer && (
                 <Button variant={'whitePrimary'} size={'sm'} ml={5} onClick={onOpenPayModal}>
-                  {t('user.Pay')}
+                  {t('common:user.Pay')}
                 </Button>
               )}
             </Flex>
@@ -326,7 +332,7 @@ const PlanUsage = () => {
       return {
         colorScheme: 'green',
         value: 0,
-        maxSize: t('common.Unlimited'),
+        maxSize: t('common:common.Unlimited'),
         usedSize: 0
       };
     }
@@ -341,7 +347,7 @@ const PlanUsage = () => {
     return {
       colorScheme,
       value: rate * 100,
-      maxSize: teamPlanStatus.datasetMaxSize || t('common.Unlimited'),
+      maxSize: teamPlanStatus.datasetMaxSize || t('common:common.Unlimited'),
       usedSize: teamPlanStatus.usedDatasetSize
     };
   }, [teamPlanStatus, t]);
@@ -350,7 +356,7 @@ const PlanUsage = () => {
       return {
         colorScheme: 'green',
         value: 0,
-        maxSize: t('common.Unlimited'),
+        maxSize: t('common:common.Unlimited'),
         usedSize: 0
       };
     }
@@ -366,23 +372,23 @@ const PlanUsage = () => {
     return {
       colorScheme,
       value: rate * 100,
-      max: teamPlanStatus.totalPoints ? teamPlanStatus.totalPoints : t('common.Unlimited'),
+      max: teamPlanStatus.totalPoints ? teamPlanStatus.totalPoints : t('common:common.Unlimited'),
       used: teamPlanStatus.usedPoints ? Math.round(teamPlanStatus.usedPoints) : 0
     };
   }, [teamPlanStatus, t]);
 
   return standardPlan ? (
     <Box mt={[6, 0]}>
-      <Flex fontSize={'xl'} h={'30px'}>
+      <Flex fontSize={'lg'} h={'30px'}>
         <Flex alignItems={'center'}>
           <MyIcon mr={2} name={'support/account/plans'} w={'20px'} />
-          {t('support.wallet.subscription.Team plan and usage')}
+          {t('common:support.wallet.subscription.Team plan and usage')}
         </Flex>
         <Button ml={4} size={'sm'} onClick={() => router.push(AI_POINT_USAGE_CARD_ROUTE)}>
-          {t('support.user.Price')}
+          {t('common:support.user.Price')}
         </Button>
         <Button ml={4} variant={'whitePrimary'} size={'sm'} onClick={onOpenStandardModal}>
-          {t('support.wallet.Standard Plan Detail')}
+          {t('common:support.wallet.Standard Plan Detail')}
         </Button>
       </Flex>
       <Box
@@ -392,19 +398,19 @@ const PlanUsage = () => {
         borderColor={'borderColor.low'}
         borderRadius={'md'}
       >
-        <Flex px={[5, 10]} py={[3, 6]}>
+        <Flex px={[5, 7]} py={[3, 6]}>
           <Box flex={'1 0 0'}>
             <Box color={'myGray.600'} fontSize="sm">
-              {t('support.wallet.subscription.Current plan')}
+              {t('common:support.wallet.subscription.Current plan')}
             </Box>
-            <Box fontWeight={'bold'} fontSize="xl">
-              {t(planName)}
+            <Box fontWeight={'bold'} fontSize="lg">
+              {t(planName as any)}
             </Box>
 
             {isFreeTeam ? (
               <>
                 <Flex mt="2" color={'#485264'} fontSize="sm">
-                  <Box>{t('support.wallet.Plan reset time')}:</Box>
+                  <Box>{t('common:support.wallet.Plan reset time')}:</Box>
                   <Box ml={2}>{formatTime2YMD(standardPlan?.expiredTime)}</Box>
                 </Flex>
                 <Box mt="2" color={'#485264'} fontSize="sm">
@@ -412,18 +418,18 @@ const PlanUsage = () => {
                 </Box>
               </>
             ) : (
-              <Flex mt="2" color={'#485264'} fontSize="sm">
-                <Box>{t('support.wallet.Plan expired time')}:</Box>
+              <Flex mt="2" color={'#485264'} fontSize="xs">
+                <Box>{t('common:support.wallet.Plan expired time')}:</Box>
                 <Box ml={2}>{formatTime2YMD(standardPlan?.expiredTime)}</Box>
               </Flex>
             )}
           </Box>
-          <Button onClick={() => router.push('/price')}>
-            {t('support.wallet.subscription.Upgrade plan')}
+          <Button onClick={() => router.push('/price')} w={'8rem'} size="sm">
+            {t('common:support.wallet.subscription.Upgrade plan')}
           </Button>
         </Flex>
         <Box py={3} borderTopWidth={'1px'} borderTopColor={'borderColor.base'}>
-          <Box py={[0, 3]} px={[5, 10]} overflow={'auto'}>
+          <Box py={[0, 3]} px={[5, 7]} overflow={'auto'}>
             <StandardPlanContentList
               level={standardPlan?.currentSubLevel}
               mode={standardPlan.currentMode}
@@ -443,8 +449,8 @@ const PlanUsage = () => {
       >
         <Flex>
           <Flex flex={'1 0 0'} alignItems={'flex-end'}>
-            <Box fontSize={'xl'}>资源用量</Box>
-            <Box fontSize={'sm'} color={'myGray.500'}>
+            <Box fontSize={'md'}>资源用量</Box>
+            <Box fontSize={'xs'} color={'myGray.500'}>
               (包含标准套餐与额外资源包)
             </Box>
           </Flex>
@@ -455,15 +461,18 @@ const PlanUsage = () => {
             alignItems={'center'}
             color={'primary.600'}
             cursor={'pointer'}
+            fontSize={'sm'}
           >
             购买额外套餐
             <MyIcon ml={1} name={'common/rightArrowLight'} w={'12px'} />
           </Link>
         </Flex>
-        <Box width={'100%'} mt={5}>
+        <Box width={'100%'} mt={5} fontSize={'sm'}>
           <Flex alignItems={'center'}>
             <Flex alignItems={'center'}>
-              <Box fontWeight={'bold'}>{t('support.user.team.Dataset usage')}</Box>
+              <Box fontWeight={'bold'} color={'myGray.900'}>
+                {t('common:support.user.team.Dataset usage')}
+              </Box>
               <Box color={'myGray.600'} ml={2}>
                 {datasetUsageMap.usedSize}/{datasetUsageMap.maxSize}
               </Box>
@@ -482,13 +491,16 @@ const PlanUsage = () => {
             />
           </Box>
         </Box>
-        <Box mt="9" width={'100%'}>
+        <Box mt="9" width={'100%'} fontSize={'sm'}>
           <Flex alignItems={'center'}>
             <Flex alignItems={'center'}>
-              <Box fontWeight={'bold'}>{t('support.wallet.subscription.AI points usage')}</Box>
-              <MyTooltip label={t('support.wallet.subscription.AI points usage tip')}>
-                <QuestionOutlineIcon ml={'2px'} />
-              </MyTooltip>
+              <Box fontWeight={'bold'} color={'myGray.900'}>
+                {t('common:support.wallet.subscription.AI points usage')}
+              </Box>
+              <QuestionTip
+                ml={1}
+                label={t('common:support.wallet.subscription.AI points usage tip')}
+              ></QuestionTip>
               <Box color={'myGray.600'} ml={2}>
                 {aiPointsUsageMap.used}/{aiPointsUsageMap.max}
               </Box>
@@ -557,37 +569,41 @@ const Other = () => {
             alignItems={'center'}
             userSelect={'none'}
             textDecoration={'none !important'}
+            fontSize={'sm'}
           >
             <MyIcon name={'common/courseLight'} w={'18px'} color={'myGray.600'} />
             <Box ml={2} flex={1}>
-              {t('system.Help Document')}
+              {t('common:system.Help Document')}
             </Box>
           </Link>
         )}
-        <Link
-          href={feConfigs.chatbotUrl}
-          target="_blank"
-          display={'flex'}
-          py={3}
-          px={6}
-          bg={'white'}
-          border={theme.borders.sm}
-          borderWidth={'1.5px'}
-          borderRadius={'md'}
-          alignItems={'center'}
-          userSelect={'none'}
-          textDecoration={'none !important'}
-        >
-          <MyIcon name={'core/app/aiLight'} w={'18px'} />
-          <Box ml={2} flex={1}>
-            {t('common.system.Help Chatbot')}
-          </Box>
-        </Link>
+        {feConfigs?.chatbotUrl && (
+          <Link
+            href={feConfigs.chatbotUrl}
+            target="_blank"
+            display={'flex'}
+            py={3}
+            px={6}
+            bg={'white'}
+            border={theme.borders.sm}
+            borderWidth={'1.5px'}
+            borderRadius={'md'}
+            alignItems={'center'}
+            userSelect={'none'}
+            textDecoration={'none !important'}
+            fontSize={'sm'}
+          >
+            <MyIcon name={'core/app/aiLight'} w={'18px'} />
+            <Box ml={2} flex={1}>
+              {t('common:common.system.Help Chatbot')}
+            </Box>
+          </Link>
+        )}
 
         {feConfigs?.lafEnv && userInfo?.team.role === TeamMemberRoleEnum.owner && (
           <Flex
             bg={'white'}
-            py={4}
+            py={3}
             px={6}
             border={theme.borders.sm}
             borderWidth={'1.5px'}
@@ -596,8 +612,9 @@ const Other = () => {
             cursor={'pointer'}
             userSelect={'none'}
             onClick={onOpenLaf}
+            fontSize={'sm'}
           >
-            <Image src="/imgs/module/laf.png" w={'18px'} alt="laf" />
+            <Image src="/imgs/workflow/laf.png" w={'18px'} alt="laf" />
             <Box ml={2} flex={1}>
               laf 账号
             </Box>
@@ -613,7 +630,7 @@ const Other = () => {
         {feConfigs?.show_openai_account && (
           <Flex
             bg={'white'}
-            py={4}
+            py={3}
             px={6}
             border={theme.borders.sm}
             borderWidth={'1.5px'}
@@ -622,6 +639,7 @@ const Other = () => {
             cursor={'pointer'}
             userSelect={'none'}
             onClick={onOpenOpenai}
+            fontSize={'sm'}
           >
             <MyIcon name={'common/openai'} w={'18px'} color={'myGray.600'} />
             <Box ml={2} flex={1}>
@@ -642,8 +660,9 @@ const Other = () => {
             leftIcon={<MyIcon name={'modal/concat'} w={'18px'} color={'myGray.600'} />}
             onClick={onOpenConcat}
             h={'48px'}
+            fontSize={'sm'}
           >
-            联系我们
+            {t('common:system.Concat us')}
           </Button>
         )}
       </Grid>

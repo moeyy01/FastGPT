@@ -1,20 +1,25 @@
-import { AppWhisperConfigType } from './type';
+import { AppTTSConfigType, AppWhisperConfigType } from './type';
 
 export enum AppTypeEnum {
+  folder = 'folder',
   simple = 'simple',
-  advanced = 'advanced'
+  workflow = 'advanced',
+  plugin = 'plugin',
+  httpPlugin = 'httpPlugin'
 }
-export const AppTypeMap = {
-  [AppTypeEnum.simple]: {
-    label: 'simple'
-  },
-  [AppTypeEnum.advanced]: {
-    label: 'advanced'
-  }
-};
+
+export const AppFolderTypeList = [AppTypeEnum.folder, AppTypeEnum.httpPlugin];
+
+export const defaultTTSConfig: AppTTSConfigType = { type: 'web' };
 
 export const defaultWhisperConfig: AppWhisperConfigType = {
   open: false,
   autoSend: false,
   autoTTSResponse: false
+};
+
+export const defaultChatInputGuideConfig = {
+  open: false,
+  textList: [],
+  customUrl: ''
 };

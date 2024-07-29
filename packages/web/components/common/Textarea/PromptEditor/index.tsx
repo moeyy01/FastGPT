@@ -5,29 +5,35 @@ import Editor from './Editor';
 import MyModal from '../../MyModal';
 import { useTranslation } from 'next-i18next';
 import { EditorState, type LexicalEditor } from 'lexical';
-import { EditorVariablePickerType } from './type.d';
+import { EditorVariableLabelPickerType, EditorVariablePickerType } from './type.d';
 import { useCallback, useTransition } from 'react';
 
 const PromptEditor = ({
   showOpenModal = true,
   showResize = true,
   variables = [],
+  variableLabels = [],
   value,
   onChange,
   onBlur,
   h,
+  maxLength,
   placeholder,
-  title
+  title,
+  isFlow
 }: {
   showOpenModal?: boolean;
   showResize?: boolean;
   variables?: EditorVariablePickerType[];
+  variableLabels?: EditorVariableLabelPickerType[];
   value?: string;
   onChange?: (text: string) => void;
   onBlur?: (text: string) => void;
   h?: number;
+  maxLength?: number;
   placeholder?: string;
   title?: string;
+  isFlow?: boolean;
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [, startSts] = useTransition();
@@ -51,19 +57,24 @@ const PromptEditor = ({
         showOpenModal={showOpenModal}
         onOpenModal={onOpen}
         variables={variables}
+        variableLabels={variableLabels}
         h={h}
+        maxLength={maxLength}
         value={value}
         onChange={onChangeInput}
         onBlur={onBlurInput}
         placeholder={placeholder}
+        isFlow={isFlow}
       />
       <MyModal isOpen={isOpen} onClose={onClose} iconSrc="modal/edit" title={title} w={'full'}>
         <ModalBody>
           <Editor
             h={400}
+            maxLength={maxLength}
             showResize
             showOpenModal={false}
             variables={variables}
+            variableLabels={variableLabels}
             value={value}
             onChange={onChangeInput}
             onBlur={onBlurInput}
@@ -71,8 +82,8 @@ const PromptEditor = ({
           />
         </ModalBody>
         <ModalFooter>
-          <Button mr={2} onClick={onClose}>
-            {t('common.Confirm')}
+          <Button mr={2} onClick={onClose} px={6}>
+            {t('common:common.Confirm')}
           </Button>
         </ModalFooter>
       </MyModal>

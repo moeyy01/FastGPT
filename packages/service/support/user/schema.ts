@@ -1,4 +1,4 @@
-import { connectionMongo, type Model } from '../../common/mongo';
+import { connectionMongo, getMongoModel, type Model } from '../../common/mongo';
 const { Schema, model, models } = connectionMongo;
 import { hashStr } from '@fastgpt/global/common/string/tools';
 import type { UserModelSchema } from '@fastgpt/global/support/user/type';
@@ -45,7 +45,7 @@ const UserSchema = new Schema({
   inviterId: {
     // 谁邀请注册的
     type: Schema.Types.ObjectId,
-    ref: 'user'
+    ref: userCollectionName
   },
   promotionRate: {
     type: Number,
@@ -74,6 +74,4 @@ try {
   console.log(error);
 }
 
-export const MongoUser: Model<UserModelSchema> =
-  models[userCollectionName] || model(userCollectionName, UserSchema);
-MongoUser.syncIndexes();
+export const MongoUser = getMongoModel<UserModelSchema>(userCollectionName, UserSchema);

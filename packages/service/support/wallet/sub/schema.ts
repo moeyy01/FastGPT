@@ -3,7 +3,7 @@
   1. type=standard: There will only be 1, and each team will have one
   2. type=extraDatasetSize/extraPoints: Can buy multiple
 */
-import { connectionMongo, type Model } from '../../../common/mongo';
+import { connectionMongo, getMongoModel, type Model } from '../../../common/mongo';
 const { Schema, model, models } = connectionMongo;
 import { TeamCollectionName } from '@fastgpt/global/support/user/team/constant';
 import {
@@ -14,7 +14,7 @@ import {
 } from '@fastgpt/global/support/wallet/sub/constants';
 import type { TeamSubSchema } from '@fastgpt/global/support/wallet/sub/type';
 
-export const subCollectionName = 'team.subscriptions';
+export const subCollectionName = 'team_subscriptions';
 
 const SubSchema = new Schema({
   teamId: {
@@ -93,5 +93,4 @@ try {
   console.log(error);
 }
 
-export const MongoTeamSub: Model<TeamSubSchema> =
-  models[subCollectionName] || model(subCollectionName, SubSchema);
+export const MongoTeamSub = getMongoModel<TeamSubSchema>(subCollectionName, SubSchema);

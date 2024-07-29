@@ -1,29 +1,37 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { connectToDatabase } from '@/service/mongo';
 import { sseErrRes } from '@fastgpt/service/common/response';
-import { SseResponseEventEnum } from '@fastgpt/global/core/module/runtime/constants';
+import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import { responseWrite } from '@fastgpt/service/common/response';
-import type { ModuleItemType } from '@fastgpt/global/core/module/type.d';
 import { pushChatUsage } from '@/service/support/wallet/usage/push';
 import { UsageSourceEnum } from '@fastgpt/global/support/wallet/usage/constants';
-import type { ChatItemType, ChatItemValueItemType } from '@fastgpt/global/core/chat/type';
-import { authApp } from '@fastgpt/service/support/permission/auth/app';
+import type { UserChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { dispatchWorkFlow } from '@fastgpt/service/core/workflow/dispatch';
 import { authCert } from '@fastgpt/service/support/permission/auth/common';
 import { getUserChatInfoAndAuthTeamPoints } from '@/service/support/permission/auth/team';
-import { setEntryEntries } from '@fastgpt/service/core/workflow/dispatch/utils';
-import { chatValue2RuntimePrompt } from '@fastgpt/global/core/chat/adapt';
+import { RuntimeEdgeItemType } from '@fastgpt/global/core/workflow/type/edge';
+import { RuntimeNodeItemType } from '@fastgpt/global/core/workflow/runtime/type';
+import { removeEmptyUserInput } from '@fastgpt/global/core/chat/utils';
+import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import {
+  removePluginInputVariables,
+  updatePluginInputByVariables
+} from '@fastgpt/global/core/workflow/utils';
+import { NextAPI } from '@/service/middleware/entry';
+import { GPTMessages2Chats } from '@fastgpt/global/core/chat/adapt';
+import { ChatCompletionMessageParam } from '@fastgpt/global/core/ai/type';
 
 export type Props = {
-  history: ChatItemType[];
-  prompt: ChatItemValueItemType[];
-  modules: ModuleItemType[];
+  messages: ChatCompletionMessageParam[];
+  nodes: RuntimeNodeItemType[];
+  edges: RuntimeEdgeItemType[];
   variables: Record<string, any>;
   appId: string;
   appName: string;
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: NextApiRequest, res: NextApiResponse) {
   res.on('close', () => {
     res.end();
   });
@@ -32,29 +40,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.end();
   });
 
-  let { modules = [], history = [], prompt, variables = {}, appName, appId } = req.body as Props;
+  let { nodes = [], edges = [], messages = [], variables = {}, appName, appId } = req.body as Props;
   try {
-    await connectToDatabase();
-    if (!history || !modules || !prompt || prompt.length === 0) {
-      throw new Error('Prams Error');
-    }
-    if (!Array.isArray(modules)) {
-      throw new Error('history is not array');
-    }
+    // [histories, user]
+    const chatMessages = GPTMessages2Chats(messages);
+    const userInput = chatMessages.pop()?.value as UserChatItemValueItemType[] | undefined;
 
     /* user auth */
-    const [_, { teamId, tmbId }] = await Promise.all([
-      authApp({ req, authToken: true, appId, per: 'r' }),
+    const [{ app }, { teamId, tmbId }] = await Promise.all([
+      authApp({ req, authToken: true, appId, per: ReadPermissionVal }),
       authCert({
         req,
         authToken: true
       })
     ]);
+    const isPlugin = app.type === AppTypeEnum.plugin;
+
+    if (!Array.isArray(nodes)) {
+      throw new Error('Nodes is not array');
+    }
+    if (!Array.isArray(edges)) {
+      throw new Error('Edges is not array');
+    }
+
+    // Plugin need to replace inputs
+    if (isPlugin) {
+      nodes = updatePluginInputByVariables(nodes, variables);
+      variables = removePluginInputVariables(variables, nodes);
+    } else {
+      if (!userInput) {
+        throw new Error('Params Error');
+      }
+    }
 
     // auth balance
     const { user } = await getUserChatInfoAndAuthTeamPoints(tmbId);
-
-    const { text, files } = chatValue2RuntimePrompt(prompt);
 
     /* start process */
     const { flowResponses, flowUsages } = await dispatchWorkFlow({
@@ -63,14 +83,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       teamId,
       tmbId,
       user,
-      appId,
-      modules: setEntryEntries(modules),
+      app,
+      runtimeNodes: nodes,
+      runtimeEdges: edges,
       variables,
-      inputFiles: files,
-      histories: history,
-      startParams: {
-        userChatInput: text
-      },
+      query: removeEmptyUserInput(userInput),
+      histories: chatMessages,
       stream: true,
       detail: true,
       maxRunTimes: 200
@@ -86,6 +104,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       event: SseResponseEventEnum.flowResponses,
       data: JSON.stringify(flowResponses)
     });
+
     res.end();
 
     pushChatUsage({
@@ -102,6 +121,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.end();
   }
 }
+
+export default NextAPI(handler);
 
 export const config = {
   api: {

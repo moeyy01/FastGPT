@@ -11,6 +11,9 @@ import { useQuery } from '@tanstack/react-query';
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'next-i18next';
 import { useLoading } from '@fastgpt/web/hooks/useLoading';
+import { useContextSelector } from 'use-context-selector';
+import { DatasetPageContext } from '../context/datasetPageContext';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
 
 const SelectCollections = ({
   datasetId,
@@ -37,7 +40,8 @@ const SelectCollections = ({
 }) => {
   const { t } = useTranslation();
   const theme = useTheme();
-  const { datasetDetail, loadDatasetDetail } = useDatasetStore();
+  const { loadDatasetDetail } = useContextSelector(DatasetPageContext, (v) => v);
+
   const { Loading } = useLoading();
   const [selectedDatasetCollectionIds, setSelectedDatasetCollectionIds] =
     useState<string[]>(defaultSelectedId);
@@ -93,7 +97,7 @@ const SelectCollections = ({
 
       return null;
     },
-    errorToast: t('common.Request Error')
+    errorToast: t('common:common.Request Error')
   });
 
   return (
@@ -114,12 +118,12 @@ const SelectCollections = ({
             }))}
             FirstPathDom={
               <>
-                <Box fontWeight={'bold'} fontSize={['sm', 'lg']}>
+                <Box fontWeight={'bold'} fontSize={['sm', 'md']}>
                   {title
                     ? title
                     : type === 'folder'
-                      ? t('common.Root folder')
-                      : t('dataset.collections.Select Collection')}
+                      ? t('common:common.Root folder')
+                      : t('common:dataset.collections.Select Collection')}
                 </Box>
                 {!!tip && (
                   <Box fontSize={'sm'} color={'myGray.500'}>
@@ -190,12 +194,7 @@ const SelectCollections = ({
           )}
         </Grid>
         {collections.length === 0 && (
-          <Flex mt={'20vh'} flexDirection={'column'} alignItems={'center'}>
-            <MyIcon name="empty" w={'48px'} h={'48px'} color={'transparent'} />
-            <Box mt={2} color={'myGray.500'}>
-              {t('common.folder.No Folder')}
-            </Box>
-          </Flex>
+          <EmptyTip pt={'20vh'} text={t('common:common.folder.No Folder')}></EmptyTip>
         )}
         <Loading loading={isLoading} fixed={false} />
       </ModalBody>
@@ -208,7 +207,7 @@ const SelectCollections = ({
             isDisabled={type === 'collection' && selectedDatasetCollectionIds.length === 0}
             onClick={mutate}
           >
-            {type === 'folder' ? t('common.Confirm Move') : t('common.Confirm')}
+            {type === 'folder' ? t('common:common.Confirm Move') : t('common:common.Confirm')}
           </Button>
         </ModalFooter>
       )}

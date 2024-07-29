@@ -14,13 +14,11 @@ import {
 } from '@chakra-ui/react';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import MySlider from '@/components/Slider';
-import { ModuleInputKeyEnum } from '@fastgpt/global/core/module/constants';
-import type { SettingAIDataType } from '@fastgpt/global/core/module/node/type.d';
+import { NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import type { SettingAIDataType } from '@fastgpt/global/core/app/type.d';
 import { getDocPath } from '@/web/common/system/doc';
 import AIModelSelector from '@/components/Select/AIModelSelector';
 import { LLMModelItemType } from '@fastgpt/global/core/ai/model.d';
-import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
-import { QuestionOutlineIcon } from '@chakra-ui/icons';
 import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
 
 const AIChatSettingsModal = ({
@@ -42,7 +40,7 @@ const AIChatSettingsModal = ({
     defaultValues: defaultData
   });
   const model = watch('model');
-  const showResponseAnswerText = watch(ModuleInputKeyEnum.aiChatIsResponseText) !== undefined;
+  const showResponseAnswerText = watch(NodeInputKeyEnum.aiChatIsResponseText) !== undefined;
   const showMaxHistoriesSlider = watch('maxHistories') !== undefined;
   const selectedModel = llmModelList.find((item) => item.model === model) || llmModelList[0];
 
@@ -65,18 +63,19 @@ const AIChatSettingsModal = ({
   const LabelStyles: BoxProps = {
     display: 'flex',
     alignItems: 'center',
-    fontSize: ['sm', 'md'],
+    fontSize: 'sm',
+    color: 'myGray.900',
     width: ['80px', '90px']
   };
 
   return (
     <MyModal
       isOpen
-      iconSrc="/imgs/module/AI.png"
+      iconSrc="/imgs/workflow/AI.png"
       onClose={onClose}
       title={
         <>
-          {t('core.ai.AI settings')}
+          {t('common:core.ai.AI settings')}
           {feConfigs?.docUrl && (
             <Link
               href={getDocPath('/docs/course/ai_settings/')}
@@ -86,7 +85,7 @@ const AIChatSettingsModal = ({
               fontWeight={'normal'}
               fontSize={'md'}
             >
-              {t('common.Read intro')}
+              {t('common:common.Read intro')}
             </Link>
           )}
         </>
@@ -96,7 +95,7 @@ const AIChatSettingsModal = ({
       <ModalBody overflowY={'auto'}>
         <Flex alignItems={'center'}>
           <Box {...LabelStyles} mr={2}>
-            {t('core.ai.Model')}
+            {t('common:core.ai.Model')}
           </Box>
           <Box flex={'1 0 0'}>
             <AIModelSelector
@@ -113,7 +112,7 @@ const AIChatSettingsModal = ({
         {feConfigs && (
           <Flex mt={8}>
             <Box {...LabelStyles} mr={2}>
-              {t('core.ai.Ai point price')}
+              {t('common:core.ai.Ai point price')}
             </Box>
             <Box flex={1} ml={'10px'}>
               {t('support.wallet.Ai point every thousand tokens', {
@@ -124,7 +123,7 @@ const AIChatSettingsModal = ({
         )}
         <Flex mt={8}>
           <Box {...LabelStyles} mr={2}>
-            {t('core.ai.Max context')}
+            {t('common:core.ai.Max context')}
           </Box>
           <Box flex={1} ml={'10px'}>
             {selectedModel?.maxContext || 4096}Tokens
@@ -132,29 +131,29 @@ const AIChatSettingsModal = ({
         </Flex>
         <Flex mt={8}>
           <Box {...LabelStyles} mr={2}>
-            {t('core.ai.Support tool')}
-            <QuestionTip ml={1} label={t('core.module.template.AI support tool tip')} />
+            {t('common:core.ai.Support tool')}
+            <QuestionTip ml={1} label={t('common:core.module.template.AI support tool tip')} />
           </Box>
           <Box flex={1} ml={'10px'}>
-            {selectedModel?.usedInToolCall ? '支持' : '不支持'}
+            {selectedModel?.toolChoice || selectedModel?.functionCall ? '支持' : '不支持'}
           </Box>
         </Flex>
         <Flex mt={8}>
           <Box {...LabelStyles} mr={2}>
-            {t('core.app.Temperature')}
+            {t('common:core.app.Temperature')}
           </Box>
           <Box flex={1} ml={'10px'}>
             <MySlider
               markList={[
-                { label: t('core.app.deterministic'), value: 0 },
-                { label: t('core.app.Random'), value: 10 }
+                { label: t('common:core.app.deterministic'), value: 0 },
+                { label: t('common:core.app.Random'), value: 10 }
               ]}
               width={'95%'}
               min={0}
               max={10}
-              value={getValues(ModuleInputKeyEnum.aiChatTemperature)}
+              value={getValues(NodeInputKeyEnum.aiChatTemperature)}
               onChange={(e) => {
-                setValue(ModuleInputKeyEnum.aiChatTemperature, e);
+                setValue(NodeInputKeyEnum.aiChatTemperature, e);
                 setRefresh(!refresh);
               }}
             />
@@ -162,7 +161,7 @@ const AIChatSettingsModal = ({
         </Flex>
         <Flex mt={8}>
           <Box {...LabelStyles} mr={2}>
-            {t('core.app.Max tokens')}
+            {t('common:core.app.Max tokens')}
           </Box>
           <Box flex={1} ml={'10px'}>
             <MySlider
@@ -174,9 +173,9 @@ const AIChatSettingsModal = ({
               min={100}
               max={tokenLimit}
               step={50}
-              value={getValues(ModuleInputKeyEnum.aiChatMaxToken)}
+              value={getValues(NodeInputKeyEnum.aiChatMaxToken)}
               onChange={(val) => {
-                setValue(ModuleInputKeyEnum.aiChatMaxToken, val);
+                setValue(NodeInputKeyEnum.aiChatMaxToken, val);
                 setRefresh(!refresh);
               }}
             />
@@ -185,7 +184,7 @@ const AIChatSettingsModal = ({
         {showMaxHistoriesSlider && (
           <Flex mt={8}>
             <Box {...LabelStyles} mr={2}>
-              {t('core.app.Max histories')}
+              {t('common:core.app.Max histories')}
             </Box>
             <Box flex={1} ml={'10px'}>
               <MySlider
@@ -208,18 +207,18 @@ const AIChatSettingsModal = ({
         {showResponseAnswerText && (
           <Flex mt={8} alignItems={'center'}>
             <Box {...LabelStyles}>
-              {t('core.app.Ai response')}
-              <MyTooltip label={t('core.module.template.AI response switch tip')}>
-                <QuestionOutlineIcon ml={1} />
-              </MyTooltip>
+              {t('common:core.app.Ai response')}
+              <QuestionTip
+                ml={1}
+                label={t('common:core.module.template.AI response switch tip')}
+              ></QuestionTip>
             </Box>
             <Box flex={1} ml={'10px'}>
               <Switch
-                isChecked={getValues(ModuleInputKeyEnum.aiChatIsResponseText)}
-                size={'lg'}
+                isChecked={getValues(NodeInputKeyEnum.aiChatIsResponseText)}
                 onChange={(e) => {
                   const value = e.target.checked;
-                  setValue(ModuleInputKeyEnum.aiChatIsResponseText, value);
+                  setValue(NodeInputKeyEnum.aiChatIsResponseText, value);
                   setRefresh((state) => !state);
                 }}
               />
@@ -229,10 +228,10 @@ const AIChatSettingsModal = ({
       </ModalBody>
       <ModalFooter>
         <Button variant={'whiteBase'} onClick={onClose}>
-          {t('common.Close')}
+          {t('common:common.Close')}
         </Button>
         <Button ml={4} onClick={handleSubmit(onSuccess)}>
-          {t('common.Confirm')}
+          {t('common:common.Confirm')}
         </Button>
       </ModalFooter>
     </MyModal>

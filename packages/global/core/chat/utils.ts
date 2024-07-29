@@ -1,7 +1,18 @@
-import { DispatchNodeResponseType } from '../module/runtime/type';
-import { FlowNodeInputTypeEnum, FlowNodeTypeEnum } from '../module/node/constant';
+import { DispatchNodeResponseType } from '../workflow/runtime/type';
+import { FlowNodeTypeEnum } from '../workflow/node/constant';
 import { ChatItemValueTypeEnum, ChatRoleEnum } from './constants';
-import { ChatHistoryItemResType, ChatItemType } from './type.d';
+import { ChatHistoryItemResType, ChatItemType, UserChatItemValueItemType } from './type.d';
+
+// Concat 2 -> 1, and sort by role
+export const concatHistories = (histories1: ChatItemType[], histories2: ChatItemType[]) => {
+  const newHistories = [...histories1, ...histories2];
+  return newHistories.sort((a, b) => {
+    if (a.obj === ChatRoleEnum.System) {
+      return -1;
+    }
+    return 1;
+  });
+};
 
 export const getChatTitleFromChatMessage = (message?: ChatItemType, defaultValue = '新对话') => {
   // @ts-ignore
@@ -54,11 +65,12 @@ export const filterPublicNodeResponseData = ({
 }: {
   flowResponses?: ChatHistoryItemResType[];
 }) => {
-  const filedList = ['quoteList', 'moduleType'];
+  const filedList = ['quoteList', 'moduleType', 'pluginOutput'];
   const filterModuleTypeList: any[] = [
     FlowNodeTypeEnum.pluginModule,
     FlowNodeTypeEnum.datasetSearchNode,
-    FlowNodeTypeEnum.tools
+    FlowNodeTypeEnum.tools,
+    FlowNodeTypeEnum.pluginOutput
   ];
 
   return flowResponses
@@ -76,4 +88,24 @@ export const filterPublicNodeResponseData = ({
       }
       return obj as ChatHistoryItemResType;
     });
+};
+
+export const removeEmptyUserInput = (input?: UserChatItemValueItemType[]) => {
+  return (
+    input?.filter((item) => {
+      if (item.type === ChatItemValueTypeEnum.text && !item.text?.content?.trim()) {
+        return false;
+      }
+      if (item.type === ChatItemValueTypeEnum.file && !item.file?.url) {
+        return false;
+      }
+      return true;
+    }) || []
+  );
+};
+
+export const getPluginOutputsFromChatResponses = (responses: ChatHistoryItemResType[]) => {
+  const outputs =
+    responses.find((item) => item.moduleType === FlowNodeTypeEnum.pluginOutput)?.pluginOutput ?? {};
+  return outputs;
 };
