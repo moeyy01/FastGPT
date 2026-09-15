@@ -1,17 +1,14 @@
 import React, { useCallback } from 'react';
-import { ModalFooter, ModalBody, Input, Button, Box, Textarea, HStack } from '@chakra-ui/react';
-import MyModal from '@fastgpt/web/components/common/MyModal/index';
+import { Input, Button, Box, Textarea, Flex } from '@chakra-ui/react';
+import MyModal from '@fastgpt/web/components/v2/common/MyModal';
 import { useTranslation } from 'next-i18next';
-import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
 import FormLabel from '@fastgpt/web/components/common/MyBox/FormLabel';
 import { useForm } from 'react-hook-form';
-import { compressImgFileAndUpload } from '@/web/common/file/controller';
-import { MongoImageTypeEnum } from '@fastgpt/global/common/file/image/constants';
-import { useSelectFile } from '@/web/common/file/hooks/useSelectFile';
-import { getErrText } from '@fastgpt/global/common/error/utils';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import Avatar from '@fastgpt/web/components/common/Avatar';
-import { useToast } from '@fastgpt/web/hooks/useToast';
+import { useUploadAvatar } from '@fastgpt/web/common/file/hooks/useUploadAvatar';
+import { getUploadAvatarPresignedUrl } from '@/web/common/file/api';
 
 export type EditResourceInfoFormType = {
   id: string;
@@ -31,84 +28,94 @@ const EditResourceModal = ({
   onEdit: (data: EditResourceInfoFormType) => any;
 }) => {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const { register, watch, setValue, handleSubmit } = useForm<EditResourceInfoFormType>({
     defaultValues: defaultForm
   });
   const avatar = watch('avatar');
 
-  const { runAsync: onSave, loading } = useRequest2(
+  const { runAsync: onSave, loading } = useRequest(
     (data: EditResourceInfoFormType) => onEdit(data),
     {
-      onSuccess: (res) => {
+      onSuccess: () => {
         onClose();
       }
     }
   );
 
-  const { File, onOpen: onOpenSelectFile } = useSelectFile({
-    fileType: '.jpg,.png',
-    multiple: false
-  });
-  const onSelectFile = useCallback(
-    async (e: File[]) => {
-      const file = e[0];
-      if (!file) return;
-      try {
-        const src = await compressImgFileAndUpload({
-          type: MongoImageTypeEnum.appAvatar,
-          file,
-          maxW: 300,
-          maxH: 300
-        });
-        setValue('avatar', src);
-      } catch (err: any) {
-        toast({
-          title: getErrText(err, t('common:common.error.Select avatar failed')),
-          status: 'warning'
-        });
-      }
+  const afterUploadAvatar = useCallback(
+    (avatar: string) => {
+      setValue('avatar', avatar);
     },
-    [setValue, t, toast]
+    [setValue]
   );
+  const { Component: AvatarUploader, handleFileSelectorOpen: handleAvatarSelectorOpen } =
+    useUploadAvatar(getUploadAvatarPresignedUrl, { onSuccess: afterUploadAvatar });
 
   return (
-    <MyModal isOpen onClose={onClose} iconSrc={avatar} title={title}>
-      <ModalBody>
+    <MyModal
+      isOpen
+      onClose={onClose}
+      title={title}
+      size={'sm'}
+      isCentered
+      closeOnOverlayClick={false}
+      footer={
+        <>
+          <Button variant={'whiteBase'} onClick={onClose}>
+            {t('common:Cancel')}
+          </Button>
+          <Button isLoading={loading} onClick={handleSubmit(onSave)}>
+            {t('common:Confirm')}
+          </Button>
+        </>
+      }
+    >
+      <Flex flexDirection={'column'} gap={6}>
+        {/* 图标 & 名称 */}
         <Box>
-          <FormLabel mb={1}>{t('common:core.app.Name and avatar')}</FormLabel>
-          <HStack spacing={4}>
-            <MyTooltip label={t('common:common.Set Avatar')}>
-              <Avatar
-                flex={'0 0 2rem'}
-                src={avatar}
-                w={'2rem'}
-                h={'2rem'}
+          <FormLabel mb={2}>{t('common:core.app.Name and avatar')}</FormLabel>
+          <Flex alignItems={'center'}>
+            <MyTooltip label={t('common:set_avatar')}>
+              <Flex
+                borderRadius={'6px'}
+                w={'34px'}
+                h={'34px'}
+                border={'1px solid'}
+                borderColor={'myGray.200'}
+                justifyContent={'center'}
+                alignItems={'center'}
+                mr={3}
+                p={'4px'}
                 cursor={'pointer'}
-                borderRadius={'md'}
-                onClick={onOpenSelectFile}
-              />
+                onClick={handleAvatarSelectorOpen}
+              >
+                <Avatar src={avatar} w={'24px'} borderRadius={'6px'} />
+              </Flex>
             </MyTooltip>
             <Input
+              flex={1}
+              size={'sm'}
               {...register('name', { required: true })}
-              bg={'myGray.50'}
               autoFocus
-              maxLength={20}
+              maxLength={100}
             />
-          </HStack>
+          </Flex>
         </Box>
-        <Box mt={4}>
-          <FormLabel mb={1}>{t('common:common.Intro')}</FormLabel>
-          <Textarea {...register('intro')} bg={'myGray.50'} maxLength={200} />
-        </Box>
-      </ModalBody>
-      <ModalFooter>
-        <Button isLoading={loading} onClick={handleSubmit(onSave)} px={6}>
-          {t('common:common.Confirm')}
-        </Button>
-      </ModalFooter>
 
-      <File onSelect={onSelectFile} />
+        {/* 介绍 */}
+        <Box>
+          <FormLabel mb={2}>{t('common:Intro')}</FormLabel>
+          <Textarea
+            {...register('intro')}
+            h={'90px'}
+            minH={'90px'}
+            maxLength={200}
+            resize={'vertical'}
+          />
+        </Box>
+      </Flex>
+
+      <AvatarUploader />
     </MyModal>
   );
 };

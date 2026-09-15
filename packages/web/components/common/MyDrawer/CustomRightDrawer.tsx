@@ -1,7 +1,7 @@
 import React from 'react';
-import MyIcon from '../Icon';
-import { Flex, Image, Box, CloseButton, FlexProps } from '@chakra-ui/react';
+import { Flex, Box, CloseButton, type FlexProps } from '@chakra-ui/react';
 import { useLoading } from '../../../hooks/useLoading';
+import Avatar from '../Avatar';
 
 type Props = FlexProps & {
   onClose: () => void;
@@ -16,6 +16,8 @@ const CustomRightDrawer = ({
   iconSrc,
   title,
   maxW = ['90vw', '30vw'],
+  top = 16,
+  bottom = 0,
   children,
   isLoading,
   showMask = true,
@@ -31,7 +33,8 @@ const CustomRightDrawer = ({
       zIndex={100}
       maxW={maxW}
       w={'100%'}
-      h={'90vh'}
+      top={top}
+      bottom={bottom}
       borderLeftRadius={'lg'}
       border={'base'}
       boxShadow={'2'}
@@ -47,15 +50,7 @@ const CustomRightDrawer = ({
         py={'10px'}
         px={5}
       >
-        {iconSrc && (
-          <>
-            {iconSrc.startsWith('/') ? (
-              <Image mr={3} objectFit={'contain'} alt="" src={iconSrc} w={'20px'} />
-            ) : (
-              <MyIcon mr={3} name={iconSrc as any} w={'20px'} />
-            )}
-          </>
-        )}
+        {iconSrc && <Avatar mr={3} w={'20px'} src={iconSrc} />}
         <Box flex={'1'} fontSize={'md'}>
           {title}
         </Box>

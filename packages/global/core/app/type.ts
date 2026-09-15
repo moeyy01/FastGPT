@@ -1,0 +1,431 @@
+import { StoreNodeItemTypeSchema } from '../workflow/type/node';
+import { AppTypeEnum } from './constants';
+import { NodeInputKeyEnum } from '../workflow/constants';
+import { DatasetSearchModeEnum } from '../dataset/constants';
+import {
+  DatasetTagFilterValueSchema,
+  DatasetTagFilterVersionSchema
+} from '../dataset/workflowTagFilter';
+import type { ReasoningEffort } from '../ai/llm/type';
+import { StoreEdgeItemTypeSchema } from '../workflow/type/edge';
+import type { AppPermission } from '../../support/permission/app/controller';
+import { ParentIdSchema, type ParentIdType } from '../../common/parentFolder/type';
+import type { WorkflowTemplateBasicType } from '../workflow/type';
+import { UserTagsSchema, type SourceMemberType } from '../../support/user/type';
+import z from 'zod';
+import { LOGO_ICON } from '../../common/system/constants';
+import { ObjectIdSchema } from '../../common/type/mongo';
+import { AppFileSelectConfigTypeSchema } from './type/config.schema';
+import { BoolSchema, NumSchema, optionalNullToUndefined } from '../../common/zod';
+import { VariableItemTypeSchema } from './variable/type';
+
+// tts
+export const AppTTSConfigTypeSchema = z.object({
+  type: z.enum(['none', 'web', 'model']).meta({
+    description: '语音播报方式：关闭、浏览器播报或模型播报'
+  }),
+  modelId: z.string().optional().meta({
+    description: '模型播报时使用的语音模型 ID'
+  }),
+  model: z.string().optional().meta({
+    description: '模型播报时使用的语音模型',
+    deprecated: true
+  }),
+  voice: z.string().optional().meta({
+    description: '模型播报时使用的音色'
+  }),
+  speed: NumSchema.optional().meta({
+    description: '语音播报速度'
+  })
+});
+export type AppTTSConfigType = z.infer<typeof AppTTSConfigTypeSchema>;
+
+// whisper
+export const AppWhisperConfigTypeSchema = z.object({
+  open: BoolSchema.meta({
+    description: '是否开启语音输入识别'
+  }),
+  autoSend: BoolSchema.meta({
+    description: '语音识别完成后是否自动发送问题'
+  }).default(false),
+  autoTTSResponse: BoolSchema.meta({
+    description: '语音输入后是否自动播报应用回复'
+  }).default(false)
+});
+export type AppWhisperConfigType = z.infer<typeof AppWhisperConfigTypeSchema>;
+
+// question guide
+export const AppQGConfigTypeSchema = z.object({
+  open: BoolSchema.meta({
+    description: '是否开启问题引导'
+  }),
+  modelId: z.string().optional().meta({
+    description: '生成问题引导时使用的模型 ID'
+  }),
+  model: z.string().optional().meta({
+    description: '生成问题引导时使用的模型',
+    deprecated: true
+  }),
+  customPrompt: z.string().optional().meta({
+    description: '生成问题引导时追加的自定义提示词'
+  })
+});
+export type AppQGConfigType = z.infer<typeof AppQGConfigTypeSchema>;
+
+// question guide text
+export const ChatInputGuideConfigTypeSchema = z.object({
+  open: BoolSchema.meta({
+    description: '是否开启对话输入引导'
+  }),
+  customUrl: z.string().meta({
+    description: '自定义输入引导页面地址'
+  })
+});
+export type ChatInputGuideConfigType = z.infer<typeof ChatInputGuideConfigTypeSchema>;
+
+// interval timer
+export const AppScheduledTriggerConfigTypeSchema = z.object({
+  cronString: z.string().meta({
+    description: '定时触发表达式'
+  }),
+  timezone: z.string().meta({
+    description: '定时触发使用的时区'
+  }),
+  defaultPrompt: z.string().meta({
+    description: '定时触发时注入的默认用户问题'
+  })
+});
+export type AppScheduledTriggerConfigType = z.infer<typeof AppScheduledTriggerConfigTypeSchema>;
+
+// auto execute
+export const AppAutoExecuteConfigTypeSchema = z.object({
+  open: BoolSchema.meta({
+    description: '是否在进入会话后自动触发应用执行'
+  }),
+  defaultPrompt: z.string().default('').meta({
+    description: '自动执行时注入的默认用户问题'
+  })
+});
+export type AppAutoExecuteConfigType = z.infer<typeof AppAutoExecuteConfigTypeSchema>;
+
+export const AppWelcomeConfigTypeSchema = z.object({
+  welcomeText: z.string().optional().meta({
+    description: '新会话开始时展示给用户的欢迎语'
+  }),
+  welcomeQuestions: z.array(z.string()).optional().meta({
+    description: '开场白下方展示的预设问题列表'
+  })
+});
+export type AppWelcomeConfigType = z.infer<typeof AppWelcomeConfigTypeSchema>;
+
+export const EntryPointItemTypeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  icon: z.string().optional()
+});
+export type EntryPointItemType = z.infer<typeof EntryPointItemTypeSchema>;
+
+export const EntryPointItemsTypeSchema = z
+  .array(EntryPointItemTypeSchema)
+  .superRefine((items, ctx) => {
+    const seenNames = new Map<string, number>();
+    items.forEach((item, index) => {
+      const normalizedName = item.name.trim();
+      const previousIndex = seenNames.get(normalizedName);
+      if (previousIndex !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index, 'name'],
+          message: 'Entry point names must be unique'
+        });
+        return;
+      }
+      seenNames.set(normalizedName, index);
+    });
+  });
+
+export const AppChatConfigTypeSchema = z.object({
+  welcomeText: optionalNullToUndefined(z.string()).meta({
+    description: '新会话开始时展示给用户的欢迎语'
+  }),
+  welcomeConfig: optionalNullToUndefined(AppWelcomeConfigTypeSchema).meta({
+    description: '开场白配置'
+  }),
+  variables: optionalNullToUndefined(z.array(VariableItemTypeSchema)).meta({
+    description: '应用启动对话前需要用户填写的变量列表'
+  }),
+  autoExecute: optionalNullToUndefined(AppAutoExecuteConfigTypeSchema).meta({
+    description: '自动执行配置'
+  }),
+  questionGuide: optionalNullToUndefined(AppQGConfigTypeSchema).meta({
+    description: '问题引导配置'
+  }),
+  ttsConfig: optionalNullToUndefined(AppTTSConfigTypeSchema).meta({
+    description: '语音播报配置'
+  }),
+  whisperConfig: optionalNullToUndefined(AppWhisperConfigTypeSchema).meta({
+    description: '语音输入配置'
+  }),
+  scheduledTriggerConfig: optionalNullToUndefined(AppScheduledTriggerConfigTypeSchema).meta({
+    description: '定时触发配置'
+  }),
+  chatInputGuide: optionalNullToUndefined(ChatInputGuideConfigTypeSchema).meta({
+    description: '对话输入引导配置'
+  }),
+  fileSelectConfig: optionalNullToUndefined(AppFileSelectConfigTypeSchema).meta({
+    description: '对话文件选择配置'
+  }),
+  entryPoints: optionalNullToUndefined(EntryPointItemsTypeSchema).meta({
+    description: '应用对话页的功能入口列表'
+  }),
+  instruction: optionalNullToUndefined(z.string()).meta({
+    description: '应用对话页展示给用户的使用说明'
+  })
+});
+export type AppChatConfigType = z.infer<typeof AppChatConfigTypeSchema>;
+
+export const AppResourceRefsSchema = z.object({
+  skillIds: z.array(z.string()).default([]).meta({
+    description: '应用发布版本引用的技能 ID 列表'
+  })
+});
+export type AppResourceRefsType = z.infer<typeof AppResourceRefsSchema>;
+
+// Mongo Collection
+export const AppStorageSchemaTypeSchema = z.object({
+  _id: ObjectIdSchema,
+  parentId: ParentIdSchema.optional(),
+  teamId: z.string(),
+  tmbId: z.string(),
+  type: z.enum(AppTypeEnum),
+  version: z.enum(['v1', 'v2']).optional().meta({ description: '内容版本，folder 类型不会有' }),
+
+  name: z.string(),
+  avatar: z.string().nullish(),
+  intro: z.string().nullish(),
+  templateId: z.string().optional(),
+
+  updateTime: z.coerce.date(),
+  createTime: z.coerce.date().optional(),
+
+  modules: z.array(StoreNodeItemTypeSchema),
+  edges: z.array(StoreEdgeItemTypeSchema),
+  pluginData: z
+    .object({
+      nodeVersion: z.string().optional().meta({
+        description: '当前应用保存或发布时对应的版本记录 ID'
+      }),
+      pluginUniId: z.string().optional().meta({
+        description: '插件唯一标识，用于兼容旧版插件应用'
+      }),
+      apiSchemaStr: z.string().optional().meta({
+        description: 'HTTP 工具集导入的 OpenAPI Schema 原始内容'
+      }),
+      customHeaders: z.string().optional().meta({
+        description: 'HTTP 工具集配置的公共请求头 JSON 字符串'
+      })
+    })
+    .optional()
+    .meta({
+      description: '应用扩展配置，主要用于工具集和旧版插件应用'
+    }),
+
+  // App system config
+  chatConfig: AppChatConfigTypeSchema,
+  scheduledTriggerConfig: AppScheduledTriggerConfigTypeSchema.optional(),
+  scheduledTriggerNextTime: z.coerce.date().optional(),
+  resourceRefs: AppResourceRefsSchema.optional(),
+  inheritPermission: BoolSchema.optional(),
+
+  // if access the app by favourite or quick
+  favourite: BoolSchema.optional(),
+  quick: BoolSchema.optional(),
+
+  // 置顶。状态保存在资源文档上，按团队共享，随资源移动、删除
+  isPinned: BoolSchema.optional().meta({
+    description: '是否置顶。置顶状态按团队共享，团队间隔离'
+  }),
+  pinnedAt: z.coerce.date().optional().meta({
+    description: '置顶时间。未置顶时为空，用于置顶项之间的排序'
+  }),
+
+  // 软删除字段
+  deleteTime: z.coerce.date().nullish(),
+
+  defaultPermission: NumSchema.optional().meta({
+    deprecated: true
+  }),
+  inited: BoolSchema.optional().meta({
+    deprecated: true
+  })
+});
+export type AppStorageSchemaType = z.infer<typeof AppStorageSchemaTypeSchema>;
+
+/**
+ * 应用在服务端归一化后返回给客户端的结构。
+ *
+ * 历史存量数据可能缺少 avatar/intro，但客户端始终接收字符串，避免可空类型向 UI 扩散。
+ */
+export const AppSchemaTypeSchema = AppStorageSchemaTypeSchema.extend({
+  avatar: z.preprocess((value) => value ?? undefined, z.string().default(LOGO_ICON)),
+  intro: z.string()
+});
+export type AppSchemaType = z.infer<typeof AppSchemaTypeSchema>;
+
+export type AppListItemType = {
+  _id: string;
+  parentId: ParentIdType;
+  tmbId: string;
+  name: string;
+  avatar: string;
+  intro: string;
+  type: AppTypeEnum;
+  createTime: Date;
+  updateTime: Date;
+  pluginData?: AppSchemaType['pluginData'];
+  permission: AppPermission;
+  inheritPermission?: boolean;
+  private?: boolean;
+  sourceMember: SourceMemberType;
+  hasInteractiveNode?: boolean;
+  /** 仅在列表请求显式要求置顶排序时返回 */
+  isPinned?: boolean;
+};
+
+export type AppDetailType = AppSchemaType & {
+  permission: AppPermission;
+};
+
+// 可选模型兼容 null 输入，解析后仍保持 string/undefined；外层 optional 保留字段可省略语义。
+const OptionalDatasetModelSchema = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? undefined)
+  .optional();
+
+export const AppDatasetSearchParamsTypeSchema = z.object({
+  searchMode: z.enum(DatasetSearchModeEnum),
+  limit: NumSchema.optional(), // limit max tokens
+  similarity: NumSchema.optional(),
+  embeddingWeight: NumSchema.optional(), // embedding weight, fullText weight = 1 - embeddingWeight
+
+  usingReRank: BoolSchema.optional(),
+  rerankModelId: OptionalDatasetModelSchema,
+  /** @deprecated */
+  rerankModel: OptionalDatasetModelSchema,
+  rerankWeight: NumSchema.optional(),
+
+  datasetSearchUsingExtensionQuery: BoolSchema.optional(),
+  datasetSearchExtensionModelId: OptionalDatasetModelSchema,
+  /** @deprecated */
+  datasetSearchExtensionModel: OptionalDatasetModelSchema,
+  datasetSearchExtensionBg: z.string().optional(),
+  [NodeInputKeyEnum.authTmbId]: BoolSchema.optional(),
+
+  collectionFilterMatch: z.union([z.string(), DatasetTagFilterValueSchema]).optional(),
+  [NodeInputKeyEnum.collectionFilterVersion]: DatasetTagFilterVersionSchema.optional()
+});
+export type AppDatasetSearchParamsType = z.infer<typeof AppDatasetSearchParamsTypeSchema>;
+
+export type SettingAIDataType = {
+  modelId?: string;
+  temperature?: number;
+  maxToken?: number;
+  isResponseAnswerText?: boolean;
+  maxHistories?: number;
+  [NodeInputKeyEnum.aiChatVision]?: boolean; // Is open vision mode
+  [NodeInputKeyEnum.aiChatAudio]?: boolean; // Is open audio recognition mode
+  [NodeInputKeyEnum.aiChatVideo]?: boolean; // Is open video recognition mode
+  [NodeInputKeyEnum.aiChatExtractFiles]?: boolean; // Parse multimodal links from user question
+  [NodeInputKeyEnum.aiChatReasoning]?: boolean; // Is open reasoning mode
+  [NodeInputKeyEnum.aiChatReasoningEffort]?: ReasoningEffort;
+  [NodeInputKeyEnum.aiChatTopP]?: number;
+  [NodeInputKeyEnum.aiChatStopSign]?: string;
+  [NodeInputKeyEnum.aiChatResponseFormat]?: string;
+  [NodeInputKeyEnum.aiChatJsonSchema]?: string;
+};
+
+export const AppTemplateStorageSchema = z.object({
+  templateId: z.string().meta({
+    example: 'template-simple-chat',
+    description: '模板 ID'
+  }),
+  name: z.string().meta({
+    example: '客服助手',
+    description: '模板名称'
+  }),
+  intro: z.string().nullish().meta({
+    description: '模板介绍'
+  }),
+  avatar: z.string().nullish().meta({
+    description: '模板头像'
+  }),
+  tags: z.array(z.string()).meta({
+    description: '模板标签'
+  }),
+  type: z.string().meta({
+    example: AppTypeEnum.workflow,
+    description: '应用类型'
+  }),
+  author: z.string().optional().meta({
+    description: '作者'
+  }),
+  isActive: BoolSchema.optional().meta({
+    description: '是否启用'
+  }),
+  isPromoted: BoolSchema.optional().meta({
+    description: '是否推荐'
+  }),
+  promoteTags: z.array(UserTagsSchema).optional().meta({
+    description: '推荐用户标签'
+  }),
+  hideTags: z.array(UserTagsSchema).optional().meta({
+    description: '隐藏用户标签'
+  }),
+  recommendText: z.string().optional().meta({
+    description: '推荐文案'
+  }),
+  userGuide: z
+    .object({
+      type: z.enum(['markdown', 'link']).meta({
+        example: 'markdown',
+        description: '用户指引展示方式'
+      }),
+      content: z.string().optional().meta({
+        description: 'Markdown 类型用户指引内容'
+      }),
+      link: z.string().optional().meta({
+        description: '外链类型用户指引地址'
+      })
+    })
+    .optional()
+    .meta({
+      description: '用户指引'
+    }),
+  isQuickTemplate: BoolSchema.optional().meta({
+    description: '是否快捷模板'
+  }),
+  order: NumSchema.optional().meta({
+    description: '排序值'
+  }),
+  // TODO: 对于 chat agent，是另一个格式。
+  workflow: z
+    .custom<WorkflowTemplateBasicType>(() => true)
+    .meta({
+      description: '模板对应的应用编排配置；不同应用类型可能使用不同结构'
+    })
+});
+export type AppTemplateStorageSchemaType = z.infer<typeof AppTemplateStorageSchema>;
+
+/** 模板返回客户端前的归一化结构。 */
+export const AppTemplateSchema = AppTemplateStorageSchema.extend({
+  avatar: z.string(),
+  intro: z.string()
+});
+export type AppTemplateSchemaType = z.infer<typeof AppTemplateSchema>;
+
+export type TemplateTypeSchemaType = {
+  typeName: string;
+  typeId: string;
+  typeOrder: number;
+};

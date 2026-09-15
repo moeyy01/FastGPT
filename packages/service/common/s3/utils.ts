@@ -1,0 +1,343 @@
+import { isAfter } from 'date-fns';
+import { createHash } from 'node:crypto';
+import type { ClientSession } from 'mongoose';
+import { buffer as consumeStreamToBuffer } from 'node:stream/consumers';
+import type { Readable } from 'node:stream';
+import { MongoS3TTL } from './models/ttl';
+import { S3Buckets } from './config/constants';
+import { S3PrivateBucket } from './buckets/private';
+import {
+  S3Sources,
+  type UploadImage2S3BucketParams,
+  UploadImage2S3BucketParamsSchema
+} from './contracts/type';
+import { S3PublicBucket } from './buckets/public';
+import { getNanoid } from '@fastgpt/global/common/string/tools';
+import path from 'node:path';
+import type { ParsedFileContentS3KeyParams } from './sources/dataset/type';
+import { encodeS3ObjectKey } from './keySanitizer';
+import { createOpaqueS3FileKey, getS3ParsedPrefix } from './opaqueKey';
+import { encodeS3Filename, getS3UploadContentDisposition } from './filename';
+import { assertStorageObjectKey } from '@fastgpt-sdk/storage';
+
+// S3文件名最大长度配置
+export const S3_FILENAME_MAX_LENGTH = 50;
+
+/**
+ * 将 S3 下载流读取为 Buffer。
+ *
+ * 普通小文件可以直接用 node:stream/consumers；但 archive/Skill 包这类受环境变量限制的对象，
+ * 需要在读取过程中按 chunk 检查上限并提前销毁流，避免异常对象被完整读入内存。
+ */
+export async function readStreamToBuffer(params: {
+  stream: Readable;
+  maxBytes?: number;
+  exceededMessage?: string;
+  signal?: AbortSignal;
+  /** 在当前累计字节写入 chunks 前同步执行，用于流式资源记账或硬限制。 */
+  onReadBytes?: (readBytes: number) => void;
+}): Promise<Buffer> {
+  const { stream, maxBytes, exceededMessage, signal, onReadBytes } = params;
+
+  const createAbortError = () => {
+    const error = new Error('File stream reading was aborted');
+    error.name = 'AbortError';
+    return error;
+  };
+  if (signal?.aborted) {
+    stream.destroy();
+    throw createAbortError();
+  }
+  const onAbort = () => stream.destroy(createAbortError());
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    if (maxBytes === undefined && !onReadBytes) {
+      return await consumeStreamToBuffer(stream);
+    }
+
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+
+    for await (const chunk of stream) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalSize += buffer.length;
+
+      if (maxBytes !== undefined && totalSize > maxBytes) {
+        stream.destroy();
+        throw new Error(
+          exceededMessage ?? `S3 object exceeds maximum allowed size (${maxBytes} bytes)`
+        );
+      }
+
+      try {
+        onReadBytes?.(totalSize);
+      } catch (error) {
+        stream.destroy(error instanceof Error ? error : undefined);
+        throw error;
+      }
+
+      chunks.push(buffer);
+    }
+
+    return Buffer.concat(chunks, totalSize);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * 截断文件名，确保不超过最大长度，同时保留扩展名
+ * @param filename 原始文件名
+ * @param maxLength 最大长度限制
+ * @returns 截断后的文件名
+ */
+export function truncateFilename(
+  filename: string,
+  maxLength: number = S3_FILENAME_MAX_LENGTH
+): string {
+  if (!filename) return filename;
+
+  // 如果文件名长度已经符合要求，直接返回
+  if (filename.length <= maxLength) {
+    return filename;
+  }
+
+  const extension = path.extname(filename); // 包含点的扩展名，如 ".pdf"
+  const nameWithoutExt = path.basename(filename, extension); // 不包含扩展名的文件名
+
+  // 计算名称部分的最大长度（总长度减去扩展名长度）
+  const maxNameLength = maxLength - extension.length;
+
+  // 如果扩展名本身就很长导致没有空间放名称，则截断扩展名
+  if (maxNameLength <= 0) {
+    // 保留扩展名的开头部分，至少保留一个点
+    const truncatedExt = extension.substring(0, Math.min(maxLength, extension.length));
+    return truncatedExt;
+  }
+
+  // 截断文件名部分
+  const truncatedName = nameWithoutExt.substring(0, maxNameLength);
+
+  return truncatedName + extension;
+}
+
+export function removeS3TTL({
+  key,
+  bucketName,
+  session
+}: {
+  key: string[] | string;
+  bucketName: keyof typeof S3Buckets;
+  session?: ClientSession;
+}) {
+  if (!key) return;
+
+  if (Array.isArray(key)) {
+    return MongoS3TTL.deleteMany(
+      {
+        minioKey: { $in: key },
+        bucketName: S3Buckets[bucketName]
+      },
+      { session }
+    );
+  }
+
+  if (typeof key === 'string') {
+    return MongoS3TTL.deleteOne(
+      {
+        minioKey: key,
+        bucketName: S3Buckets[bucketName]
+      },
+      { session }
+    );
+  }
+}
+
+export async function uploadImage2S3Bucket(
+  bucketName: keyof typeof S3Buckets,
+  params: UploadImage2S3BucketParams
+) {
+  const {
+    base64Img,
+    buffer: inputBuffer,
+    filename,
+    mimetype,
+    uploadKey,
+    expiredTime
+  } = UploadImage2S3BucketParamsSchema.parse(params);
+
+  const bucket = bucketName === 'private' ? new S3PrivateBucket() : new S3PublicBucket();
+
+  const buffer = (() => {
+    if (inputBuffer) return inputBuffer;
+    const base64Data = base64Img?.split(',')[1] || base64Img;
+    if (!base64Data) {
+      throw new Error('base64Img or buffer is required');
+    }
+    return Buffer.from(base64Data, 'base64');
+  })();
+
+  await bucket.client.uploadObject({
+    key: uploadKey,
+    body: buffer,
+    contentType: mimetype,
+    contentDisposition: getS3UploadContentDisposition({ filename, type: 'attachment' }),
+    metadata: {
+      uploadTime: new Date().toISOString(),
+      originFilename: encodeS3Filename(filename)
+    }
+  });
+
+  const now = new Date();
+  if (expiredTime && isAfter(expiredTime, now)) {
+    await MongoS3TTL.create({
+      minioKey: uploadKey,
+      bucketName: bucket.bucketName,
+      expiredTime: expiredTime
+    });
+  }
+
+  return uploadKey;
+}
+
+/**
+ * 保留历史的 filename-based 格式化能力，供旧业务数据和兼容测试使用。
+ * 新上传对象必须使用 createOpaqueS3FileKey，不能重新依赖该函数生成 object key。
+ */
+export const getFormatedFilename = (filename?: string) => {
+  if (!filename) {
+    return {
+      formatedFilename: getNanoid(12),
+      extension: ''
+    };
+  }
+
+  const id = getNanoid(6);
+  // 先截断文件名，再进行格式化
+  const truncatedFilename = truncateFilename(filename);
+  // 移除扩展名
+  const extension = path.extname(truncatedFilename);
+  let name = path.basename(truncatedFilename, extension);
+
+  // 移除末尾的 (_随机数)
+  const splitName = name.split('_');
+  if (splitName.length > 1 && splitName[splitName.length - 1]?.length === 6) {
+    splitName.pop();
+    name = splitName.join('_');
+  }
+
+  return {
+    formatedFilename: `${name}_${id}`,
+    extension: extension.replace('.', '')
+  };
+};
+
+export const getFileS3Key = {
+  // temp/avatar/chat/dataset 生成调用都会创建新的 opaque key；已有 key 必须传给 s3Key，
+  // 不要尝试用相同 scope 和 filename 重新计算 object key。
+  // 临时的文件路径（比如 evaluation)
+  temp: ({ teamId, filename }: { teamId: string; filename?: string }) => {
+    const { objectKey, parsedPrefix } = createOpaqueS3FileKey({
+      prefix: [S3Sources.temp, teamId],
+      filename
+    });
+    return {
+      fileKey: objectKey,
+      fileParsedPrefix: parsedPrefix
+    };
+  },
+
+  avatar: ({ teamId, filename }: { teamId: string; filename?: string }) => {
+    const { objectKey } = createOpaqueS3FileKey({
+      prefix: [S3Sources.avatar, teamId],
+      filename
+    });
+    return { fileKey: objectKey };
+  },
+
+  // 对话中上传的文件的解析结果的图片的 Key
+  chat: ({
+    appId,
+    chatId,
+    uId,
+    filename
+  }: {
+    chatId: string;
+    uId: string;
+    appId: string;
+    filename?: string;
+  }) => {
+    const prefix = [S3Sources.chat, appId, uId, chatId].filter(Boolean);
+    const { objectKey, parsedPrefix } = createOpaqueS3FileKey({
+      prefix,
+      filename
+    });
+    return {
+      fileKey: objectKey,
+      fileParsedPrefix: parsedPrefix
+    };
+  },
+
+  // 上传数据集的文件的解析结果的图片的 Key
+  dataset: (params: ParsedFileContentS3KeyParams) => {
+    const { datasetId, filename } = params;
+    const { objectKey, parsedPrefix } = createOpaqueS3FileKey({
+      prefix: [S3Sources.dataset, datasetId],
+      filename
+    });
+    return {
+      fileKey: objectKey,
+      fileParsedPrefix: parsedPrefix
+    };
+  },
+
+  s3Key: (key: string) => {
+    assertStorageObjectKey(key);
+    return {
+      fileKey: key,
+      fileParsedPrefix: getS3ParsedPrefix(key)
+    };
+  },
+
+  rawText: ({
+    hash,
+    customPdfParse,
+    sangforFileParseConfig
+  }: {
+    hash: string;
+    customPdfParse?: boolean;
+    sangforFileParseConfig?: Record<string, unknown>;
+  }) => {
+    // 解析配置纳入缓存 key,避免同文件不同开关共享缓存;未传配置保持旧 key 格式
+    const configSuffix = sangforFileParseConfig
+      ? `-${createHash('md5')
+          .update(
+            JSON.stringify(sangforFileParseConfig, (_key, value) =>
+              value instanceof Object && !Array.isArray(value)
+                ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+                : value
+            )
+          )
+          .digest('hex')}`
+      : '';
+    return encodeS3ObjectKey(
+      [S3Sources.rawText, `${hash}${customPdfParse ? '-true' : ''}${configSuffix}`].join('/')
+    );
+  }
+};
+
+/**
+ * Check if a key is a valid S3 object key
+ * @param key - The key to check
+ * @param source - The source of the key
+ * @returns True if the key is a valid S3 object key
+ */
+export function isS3ObjectKey<T extends keyof typeof S3Sources>(
+  key: string | undefined | null,
+  source: T
+): key is `${T}/${string}` {
+  return typeof key === 'string' && key.startsWith(`${S3Sources[source]}/`);
+}
+
+export { encodeS3ObjectKey } from './keySanitizer';

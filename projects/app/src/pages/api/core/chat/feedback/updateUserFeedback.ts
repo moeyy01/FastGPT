@@ -1,51 +1,59 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { jsonRes } from '@fastgpt/service/common/response';
-import { connectToDatabase } from '@/service/mongo';
 import { MongoChatItem } from '@fastgpt/service/core/chat/chatItemSchema';
-import { UpdateChatFeedbackProps } from '@fastgpt/global/core/chat/api';
-import { authChatCrud } from '@/service/support/permission/auth/chat';
-import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
+import { authChatTargetCrud } from '@/service/support/permission/auth/chat';
+import { NextAPI } from '@/service/middleware/entry';
+import { type ApiRequestProps } from '@fastgpt/next/type';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
+import { updateChatFeedbackCount } from '@fastgpt/service/core/chat/controller';
+import { MongoAppChatLog } from '@fastgpt/service/core/app/logs/chatLogsSchema';
+import { ChatRoleEnum, ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  UpdateUserFeedbackBodySchema,
+  UpdateUserFeedbackResponseSchema,
+  type UpdateUserFeedbackResponseType
+} from '@fastgpt/global/openapi/core/chat/feedback/api';
+import { buildChatSourceQuery } from '@fastgpt/service/core/chat/source';
 
-/* 初始化我的聊天框，需要身份验证 */
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: ApiRequestProps): Promise<UpdateUserFeedbackResponseType> {
   const {
-    appId,
+    sourceType,
+    sourceId,
     chatId,
-    chatItemId,
-    shareId,
-    teamId,
-    teamToken,
-    outLinkUid,
+    dataId,
     userBadFeedback,
-    userGoodFeedback
-  } = req.body as UpdateChatFeedbackProps;
+    userGoodFeedback,
+    outLinkAuthData
+  } = parseApiInput({
+    req,
+    bodySchema: UpdateUserFeedbackBodySchema
+  }).body;
 
-  try {
-    await connectToDatabase();
+  const authRes = await authChatTargetCrud({
+    req,
+    authToken: true,
+    authApiKey: true,
+    sourceType,
+    sourceId,
+    chatId,
+    outLinkAuthData
+  });
+  const resolvedSourceId = authRes.sourceId;
+  const chatSourceQuery = buildChatSourceQuery({ sourceType, sourceId: resolvedSourceId });
 
-    await authChatCrud({
-      req,
-      authToken: true,
-      authApiKey: true,
-      appId,
-      teamId,
-      teamToken,
-      chatId,
-      shareId,
-      outLinkUid,
-      per: ReadPermissionVal
-    });
+  const chatItem = await MongoChatItem.findOne({
+    ...chatSourceQuery,
+    chatId,
+    dataId,
+    obj: ChatRoleEnum.AI
+  });
+  if (!chatItem) {
+    return Promise.reject('Chat item not found');
+  }
 
-    if (!chatItemId) {
-      throw new Error('chatItemId is required');
-    }
-
-    await MongoChatItem.findOneAndUpdate(
-      {
-        appId,
-        chatId,
-        dataId: chatItemId
-      },
+  await mongoSessionRun(async (session) => {
+    // Update ChatItem feedback
+    await MongoChatItem.updateOne(
+      { ...chatSourceQuery, chatId, dataId, obj: ChatRoleEnum.AI },
       {
         $unset: {
           ...(userBadFeedback === undefined && { userBadFeedback: '' }),
@@ -55,14 +63,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ...(userBadFeedback !== undefined && { userBadFeedback }),
           ...(userGoodFeedback !== undefined && { userGoodFeedback })
         }
-      }
+      },
+      { session }
     );
 
-    jsonRes(res);
-  } catch (err) {
-    jsonRes(res, {
-      code: 500,
-      error: err
+    // Update Chat table feedback statistics (redundant fields for performance)
+    await updateChatFeedbackCount({
+      sourceType,
+      sourceId: resolvedSourceId,
+      chatId,
+      session
     });
-  }
+
+    // Update ChatLog table statistics (data analytics table)
+    if (sourceType === ChatSourceTypeEnum.app && chatItem.obj === ChatRoleEnum.AI) {
+      const goodFeedbackDelta = (() => {
+        if (!userGoodFeedback && chatItem.userGoodFeedback) {
+          return -1;
+        } else if (userGoodFeedback && !chatItem.userGoodFeedback) {
+          return 1;
+        }
+        return 0;
+      })();
+
+      const badFeedbackDelta = (() => {
+        if (!userBadFeedback && chatItem.userBadFeedback) {
+          return -1;
+        } else if (userBadFeedback && !chatItem.userBadFeedback) {
+          return 1;
+        }
+        return 0;
+      })();
+
+      await MongoAppChatLog.findOneAndUpdate(
+        {
+          teamId: authRes.teamId,
+          appId: resolvedSourceId,
+          chatId
+        },
+        {
+          $inc: {
+            goodFeedbackCount: goodFeedbackDelta,
+            badFeedbackCount: badFeedbackDelta
+          }
+        },
+        {
+          sort: { createTime: -1 }
+        }
+      );
+    }
+  });
+
+  return UpdateUserFeedbackResponseSchema.parse(undefined);
 }
+
+export default NextAPI(handler);

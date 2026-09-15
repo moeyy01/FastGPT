@@ -1,42 +1,27 @@
 import { detectFileEncoding } from '@fastgpt/global/common/file/tools';
 import { PassThrough } from 'stream';
 
-export const gridFsStream2Buffer = (stream: NodeJS.ReadableStream) => {
-  return new Promise<Buffer>((resolve, reject) => {
-    let tmpBuffer: Buffer = Buffer.from([]);
-
-    stream.on('data', (chunk) => {
-      tmpBuffer = Buffer.concat([tmpBuffer, chunk]);
-    });
-    stream.on('end', () => {
-      resolve(tmpBuffer);
-    });
-    stream.on('error', (err) => {
-      reject(err);
-    });
-  });
-};
-
 export const stream2Encoding = async (stream: NodeJS.ReadableStream) => {
-  const start = Date.now();
   const copyStream = stream.pipe(new PassThrough());
 
   /* get encoding */
   const buffer = await (() => {
     return new Promise<Buffer>((resolve, reject) => {
-      let tmpBuffer: Buffer = Buffer.from([]);
+      const chunks: Uint8Array[] = [];
+      let totalLength = 0;
 
       stream.on('data', (chunk) => {
-        if (tmpBuffer.length < 200) {
-          tmpBuffer = Buffer.concat([tmpBuffer, chunk]);
+        if (totalLength < 200) {
+          chunks.push(chunk);
+          totalLength += chunk.length;
 
-          if (tmpBuffer.length >= 200) {
-            resolve(tmpBuffer);
+          if (totalLength >= 200) {
+            resolve(Buffer.concat(chunks));
           }
         }
       });
       stream.on('end', () => {
-        resolve(tmpBuffer);
+        resolve(Buffer.concat(chunks));
       });
       stream.on('error', (err) => {
         reject(err);
@@ -45,7 +30,7 @@ export const stream2Encoding = async (stream: NodeJS.ReadableStream) => {
   })();
 
   const enc = detectFileEncoding(buffer);
-  console.log('Get encoding time', Date.now() - start, enc);
+
   return {
     encoding: enc,
     stream: copyStream

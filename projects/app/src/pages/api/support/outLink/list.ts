@@ -1,20 +1,21 @@
 import { MongoOutLink } from '@fastgpt/service/support/outLink/schema';
 import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { ManagePermissionVal } from '@fastgpt/global/support/permission/constant';
-import type { ApiRequestProps } from '@fastgpt/service/type/next';
+import type { ApiRequestProps } from '@fastgpt/next/type';
 import { NextAPI } from '@/service/middleware/entry';
-import { OutLinkSchema } from '@fastgpt/global/support/outLink/type';
-export type OutLinkListQuery = {
-  appId: string;
-  type: string;
-};
-export type OutLinkListBody = {};
-export type OutLinkListResponse = OutLinkSchema[];
+import {
+  OutLinkListQuerySchema,
+  OutLinkListResponseSchema,
+  type OutLinkListResponseType
+} from '@fastgpt/global/openapi/support/outLink/api';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
 
-async function handler(
-  req: ApiRequestProps<OutLinkListBody, OutLinkListQuery>
-): Promise<OutLinkListResponse> {
-  const { appId, type } = req.query;
+// 查询应用的所有 OutLink
+export async function handler(req: ApiRequestProps): Promise<OutLinkListResponseType> {
+  const { appId, type } = parseApiInput({
+    req,
+    querySchema: OutLinkListQuerySchema
+  }).query;
   await authApp({
     req,
     authToken: true,
@@ -29,6 +30,7 @@ async function handler(
     _id: -1
   });
 
-  return data;
+  return OutLinkListResponseSchema.parse(data);
 }
+
 export default NextAPI(handler);

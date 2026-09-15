@@ -1,19 +1,23 @@
-import React, { useState } from 'react';
-import { ModalBody, useTheme, ModalFooter, Button, Box, Card, Flex, Grid } from '@chakra-ui/react';
+import React, { useRef } from 'react';
+import { useTheme, Button, Box, Card, Flex, Grid } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 import Avatar from '@fastgpt/web/components/common/Avatar';
 import MyIcon from '@fastgpt/web/components/common/Icon';
 import { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
 import DatasetSelectModal, { useDatasetSelect } from '@/components/core/dataset/SelectModal';
 import dynamic from 'next/dynamic';
-import { AdminFbkType } from '@fastgpt/global/core/chat/type.d';
+import { type AdminFbkType } from '@fastgpt/global/core/chat/type';
 import SelectCollections from '@/web/core/dataset/components/SelectCollections';
 import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import { useVirtualGridList } from '@fastgpt/web/hooks/useVirtualGridList';
 
-const InputDataModal = dynamic(() => import('@/pages/dataset/detail/components/InputDataModal'));
+const InputDataModal = dynamic(
+  () => import('@/pageComponents/dataset/detail/components/InputDataModal')
+);
 
 export type AdminMarkType = {
-  dataId?: string;
+  feedbackDataId?: string;
   datasetId?: string;
   collectionId?: string;
   q: string;
@@ -33,7 +37,16 @@ const SelectMarkCollection = ({
 }) => {
   const { t } = useTranslation();
   const theme = useTheme();
-  const { paths, setParentId, datasets, isFetching } = useDatasetSelect();
+  const { paths, setParentId, datasets, isFetching, ScrollData, parentId } = useDatasetSelect();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const { gridRef, renderVirtualGridItems } = useVirtualGridList({
+    list: datasets,
+    listKey: `mark-dataset-select-${parentId}`,
+    scrollContainerRef,
+    defaultColumnCount: 3,
+    estimatedRowHeight: 80,
+    estimatedRowGap: 12
+  });
 
   return (
     <>
@@ -44,54 +57,62 @@ const SelectMarkCollection = ({
           paths={paths}
           onClose={onClose}
           setParentId={setParentId}
-          isLoading={isFetching}
+          isLoading={isFetching && datasets.length === 0}
           tips={t('common:core.chat.Select dataset Desc')}
         >
-          <ModalBody flex={'1 0 0'} overflowY={'auto'}>
+          {datasets.length === 0 && <EmptyTip text={t('chat:empty_directory')}></EmptyTip>}
+          <ScrollData
+            ScrollContainerRef={scrollContainerRef}
+            flex={1}
+            minH={0}
+            isLoading={isFetching}
+            showLoadingOverlay={false}
+          >
             <Grid
+              ref={gridRef}
               display={'grid'}
               gridTemplateColumns={['repeat(1,1fr)', 'repeat(2,1fr)', 'repeat(3,1fr)']}
               gridGap={3}
               userSelect={'none'}
             >
-              {datasets.map((item) =>
-                (() => {
-                  return (
-                    <Card
-                      key={item._id}
-                      p={3}
-                      border={theme.borders.base}
-                      boxShadow={'sm'}
-                      h={'80px'}
-                      cursor={'pointer'}
-                      _hover={{
-                        boxShadow: 'md'
-                      }}
-                      onClick={() => {
-                        if (item.type === DatasetTypeEnum.folder) {
-                          setParentId(item._id);
-                        } else {
-                          setAdminMarkData({ ...adminMarkData, datasetId: item._id });
-                        }
-                      }}
-                    >
-                      <Flex alignItems={'center'} h={'38px'}>
-                        <Avatar src={item.avatar} w={['24px', '28px', '32px']}></Avatar>
-                        <Box ml={3} fontWeight={'bold'} fontSize={['md', 'lg']}>
-                          {item.name}
-                        </Box>
-                      </Flex>
-                      <Flex justifyContent={'flex-end'} alignItems={'center'} fontSize={'sm'}>
-                        <MyIcon mr={1} name="kbTest" w={'12px'} />
-                        <Box color={'myGray.500'}>{item.vectorModel.name}</Box>
-                      </Flex>
-                    </Card>
-                  );
-                })()
-              )}
+              {renderVirtualGridItems((item) => (
+                <Card
+                  key={item._id}
+                  data-virtual-item=""
+                  p={3}
+                  border={theme.borders.base}
+                  boxShadow={'sm'}
+                  h={'80px'}
+                  cursor={'pointer'}
+                  _hover={{
+                    boxShadow: 'md'
+                  }}
+                  onClick={() => {
+                    if (item.type === DatasetTypeEnum.folder) {
+                      setParentId(item._id);
+                    } else {
+                      setAdminMarkData({ ...adminMarkData, datasetId: item._id });
+                    }
+                  }}
+                >
+                  <Flex alignItems={'center'} h={'38px'}>
+                    <Avatar src={item.avatar} w={'2rem'} borderRadius={'sm'}></Avatar>
+                    <MyTooltip label={item.name} showOnlyWhenOverflow>
+                      <Box ml={3} className="textEllipsis">
+                        {item.name}
+                      </Box>
+                    </MyTooltip>
+                  </Flex>
+                  <Flex justifyContent={'flex-end'} alignItems={'center'} fontSize={'sm'}>
+                    <MyIcon mr={1} name="kbTest" w={'12px'} />
+                    <Box color={'myGray.500'}>
+                      {item.vectorModel?.name ?? t('dataset:index_model_unavailable')}
+                    </Box>
+                  </Flex>
+                </Card>
+              ))}
             </Grid>
-            {datasets.length === 0 && <EmptyTip text={'这个目录已经没东西可选了~'}></EmptyTip>}
-          </ModalBody>
+          </ScrollData>
         </DatasetSelectModal>
       )}
 
@@ -109,20 +130,18 @@ const SelectMarkCollection = ({
             });
           }}
           CustomFooter={
-            <ModalFooter>
-              <Button
-                variant={'whiteBase'}
-                mr={2}
-                onClick={() => {
-                  setAdminMarkData({
-                    ...adminMarkData,
-                    datasetId: undefined
-                  });
-                }}
-              >
-                {t('common:common.Last Step')}
-              </Button>
-            </ModalFooter>
+            <Button
+              variant={'whiteBase'}
+              mr={2}
+              onClick={() => {
+                setAdminMarkData({
+                  ...adminMarkData,
+                  datasetId: undefined
+                });
+              }}
+            >
+              {t('common:last_step')}
+            </Button>
           }
         />
       )}
@@ -137,7 +156,7 @@ const SelectMarkCollection = ({
             });
           }}
           collectionId={adminMarkData.collectionId}
-          dataId={adminMarkData.dataId}
+          dataId={adminMarkData.feedbackDataId}
           defaultValue={{
             q: adminMarkData.q,
             a: adminMarkData.a
@@ -153,7 +172,7 @@ const SelectMarkCollection = ({
             }
 
             onSuccess({
-              dataId: data.dataId,
+              feedbackDataId: data.dataId,
               datasetId: adminMarkData.datasetId,
               collectionId: adminMarkData.collectionId,
               q: data.q,

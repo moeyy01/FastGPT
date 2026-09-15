@@ -1,21 +1,17 @@
-import type { NextApiRequest } from 'next';
 import { NextAPI } from '@/service/middleware/entry';
 import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
 import { authDatasetData } from '@fastgpt/service/support/permission/dataset/auth';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  GetDatasetDataDetailQuerySchema,
+  GetDatasetDataDetailResponseSchema,
+  type GetDatasetDataDetailResponse
+} from '@fastgpt/global/openapi/core/dataset/data/api';
 
-export type Response = {
-  id: string;
-  q: string;
-  a: string;
-  source: string;
-};
+async function handler(req: ApiRequestProps): Promise<GetDatasetDataDetailResponse> {
+  const { id: dataId } = parseApiInput({ req, querySchema: GetDatasetDataDetailQuerySchema }).query;
 
-async function handler(req: NextApiRequest) {
-  const { id: dataId } = req.query as {
-    id: string;
-  };
-
-  // 凭证校验
   const { datasetData } = await authDatasetData({
     req,
     authToken: true,
@@ -24,7 +20,7 @@ async function handler(req: NextApiRequest) {
     per: ReadPermissionVal
   });
 
-  return datasetData;
+  return GetDatasetDataDetailResponseSchema.parse(datasetData);
 }
 
 export default NextAPI(handler);

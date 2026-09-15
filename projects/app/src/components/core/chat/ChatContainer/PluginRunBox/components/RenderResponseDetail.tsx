@@ -1,20 +1,32 @@
-import { ResponseBox } from '../../../components/WholeResponseModal';
+import { WorkflowToolResponseBox } from '../../../components/WholeResponseModal/WorkflowToolResponseBox';
 import React from 'react';
 import { useContextSelector } from 'use-context-selector';
 import { PluginRunContext } from '../context';
-import { Box } from '@chakra-ui/react';
+import { useTranslation } from 'next-i18next';
+import { ChatRecordContext } from '@/web/core/chat/context/chatRecordContext';
+import { ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
 
 const RenderResponseDetail = () => {
-  const { histories, isChatting } = useContextSelector(PluginRunContext, (v) => v);
+  const { t } = useTranslation();
 
-  const responseData = histories?.[1]?.responseData || [];
+  const chatRecords = useContextSelector(ChatRecordContext, (v) => v.chatRecords);
+  const isChatting = useContextSelector(PluginRunContext, (v) => v.isChatting);
+
+  // 流式响应可能更新记录对象本身，直接读取最新的 AI 记录，避免按数组引用缓存旧结果。
+  const aiRecord = [...chatRecords].reverse().find((item) => item.obj === ChatRoleEnum.AI);
+  const responseData = aiRecord?.responseData ?? [];
 
   return isChatting ? (
-    <>{'进行中'}</>
+    <>{t('chat:in_progress')}</>
   ) : (
-    <Box flex={'1 0 0'} h={'100%'} overflow={'auto'}>
-      <ResponseBox response={responseData} showDetail={true} />
-    </Box>
+    <>
+      {responseData.length > 0 ? (
+        <WorkflowToolResponseBox response={responseData} dataId={aiRecord?.dataId} />
+      ) : (
+        <EmptyTip text={t('chat:response.no_workflow_response')} />
+      )}
+    </>
   );
 };
 

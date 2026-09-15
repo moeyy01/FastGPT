@@ -1,33 +1,52 @@
 import React from 'react';
 import MyEditor, { type Props as EditorProps } from './Editor';
-import { Button, ModalBody, ModalFooter, useDisclosure } from '@chakra-ui/react';
-import MyModal from '../../MyModal';
+import { Button, useDisclosure } from '@chakra-ui/react';
+import MyModal from '../../../v2/common/MyModal';
 import { useTranslation } from 'next-i18next';
 
-type Props = Omit<EditorProps, 'resize'> & {};
+type Props = Omit<EditorProps, 'resize'> & {
+  language?: string;
+  resize?: boolean;
+};
+function getLanguage(language: string | undefined): string {
+  let fullName: string;
+  switch (language) {
+    case 'py':
+      fullName = 'python';
+      break;
+    case 'js':
+      fullName = 'javascript';
+      break;
+    case 'sh':
+    case 'shell':
+    case 'bash':
+      fullName = 'shell';
+      break;
+    default:
+      fullName = `javascript`;
+      break;
+  }
+  return fullName;
+}
 
-const CodeEditor = (props: Props) => {
+const CodeEditor = ({ resize = true, ...props }: Props) => {
   const { t } = useTranslation();
   const { isOpen, onOpen, onClose } = useDisclosure();
-
+  const fullName = getLanguage(props.language);
   return (
     <>
-      <MyEditor {...props} resize onOpenModal={onOpen} />
+      <MyEditor {...props} resize={resize} onOpenModal={onOpen} language={fullName} />
       <MyModal
         isOpen={isOpen}
         onClose={onClose}
-        iconSrc="modal/edit"
         title={t('common:code_editor')}
-        w={'full'}
+        size={'md'}
+        h={'85vh'}
+        isCentered
+        bodyStyles={{ flex: '1 0 0', minH: 0, overflow: 'auto' }}
+        footer={<Button onClick={onClose}>{t('common:Confirm')}</Button>}
       >
-        <ModalBody>
-          <MyEditor {...props} bg={'myGray.50'} defaultHeight={600} />
-        </ModalBody>
-        <ModalFooter>
-          <Button mr={2} onClick={onClose} px={6}>
-            {t('common:common.Confirm')}
-          </Button>
-        </ModalFooter>
+        <MyEditor {...props} bg={'myGray.50'} height={'100%'} language={fullName} />
       </MyModal>
     </>
   );

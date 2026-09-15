@@ -1,90 +1,75 @@
+import { FixedTableContainer } from '@fastgpt/web/components/common/FixedTable';
 import React, { useMemo, useState } from 'react';
-import {
-  Box,
-  Button,
-  ModalFooter,
-  ModalBody,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  NumberIncrementStepper,
-  NumberDecrementStepper,
-  Flex,
-  Switch,
-  Input,
-  FormControl,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  TableContainer,
-  useDisclosure
-} from '@chakra-ui/react';
+import { Box, Flex, Table, Thead, Tr, Th, Td, Tbody } from '@chakra-ui/react';
 import { SmallAddIcon } from '@chakra-ui/icons';
-import { VariableInputEnum, variableMap } from '@fastgpt/global/core/workflow/constants';
-import type { VariableItemType } from '@fastgpt/global/core/app/type.d';
+import {
+  VariableInputEnum,
+  WorkflowIOValueTypeEnum
+} from '@fastgpt/global/core/workflow/constants';
+import type { VariableItemType } from '@fastgpt/global/core/app/variable/type';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import { useForm } from 'react-hook-form';
-import { useFieldArray } from 'react-hook-form';
-import { customAlphabet } from 'nanoid';
-const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz1234567890', 6);
-import MyModal from '@fastgpt/web/components/common/MyModal';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import { useTranslation } from 'next-i18next';
-import { useToast } from '@fastgpt/web/hooks/useToast';
-import MyRadio from '@/components/common/MyRadio';
 import { formatEditorVariablePickerIcon } from '@fastgpt/global/core/workflow/utils';
 import ChatFunctionTip from './Tip';
-import FormLabel from '@fastgpt/web/components/common/MyBox/FormLabel';
+import MyIconButton from '@fastgpt/web/components/common/Icon/button';
+import DndDrag, {
+  Draggable,
+  getDraggableItemProps,
+  type DraggableProvided,
+  type DraggableStateSnapshot
+} from '@fastgpt/web/components/common/DndDrag';
+import VariableEditModal from './VariableEditModal';
+import AppConfigItem, { AppConfigItemAction } from './AppConfigItem';
+
+export const defaultVariable: VariableItemType = {
+  key: '',
+  label: '',
+  type: VariableInputEnum.input,
+  description: '',
+  required: true,
+  valueType: WorkflowIOValueTypeEnum.string,
+
+  // file select
+  canSelectFile: true,
+  canSelectImg: true,
+  canSelectVideo: false,
+  canSelectAudio: false,
+  canSelectCustomFileExtension: false,
+  customFileExtensionList: [],
+  canLocalUpload: true,
+  canUrlUpload: false,
+  maxFiles: 5,
+
+  // time
+  timeGranularity: 'day',
+  timeRangeStart: undefined,
+  timeRangeEnd: undefined,
+
+  // dataset select
+  datasetOptions: []
+};
+
+export const addVariable = () => {
+  return { ...defaultVariable };
+};
 
 const VariableEdit = ({
   variables = [],
-  onChange
+  onChange,
+  zoom = 1
 }: {
   variables?: VariableItemType[];
   onChange: (data: VariableItemType[]) => void;
+  zoom?: number;
 }) => {
   const { t } = useTranslation();
-  const { toast } = useToast();
-  const [refresh, setRefresh] = useState(false);
-
-  const VariableTypeList = useMemo(
-    () =>
-      Object.entries(variableMap).map(([key, value]) => ({
-        title: t(value.title as any),
-        icon: value.icon,
-        value: key
-      })),
-    [t]
-  );
-
-  const { isOpen: isOpenEdit, onOpen: onOpenEdit, onClose: onCloseEdit } = useDisclosure();
-  const {
-    reset: resetEdit,
-    register: registerEdit,
-    getValues: getValuesEdit,
-    setValue: setValuesEdit,
-    control: editVariableController,
-    handleSubmit: handleSubmitEdit,
-    watch
-  } = useForm<{ variable: VariableItemType }>();
-
-  const variableType = watch('variable.type');
-
-  const {
-    fields: selectEnums,
-    append: appendEnums,
-    remove: removeEnums
-  } = useFieldArray({
-    control: editVariableController,
-    name: 'variable.enums'
-  });
+  const [editingVariable, setEditingVariable] = useState<VariableItemType | null>(null);
 
   const formatVariables = useMemo(() => {
     const results = formatEditorVariablePickerIcon(variables);
-    return results.map((item) => {
-      const variable = variables.find((variable) => variable.key === item.key);
+    return results.map<VariableItemType & { icon?: string }>((item) => {
+      const variable = variables.find((variable) => variable.key === item.key)!;
       return {
         ...variable,
         icon: item.icon
@@ -93,260 +78,150 @@ const VariableEdit = ({
   }, [variables]);
 
   return (
-    <Box>
-      <Flex alignItems={'center'}>
-        <MyIcon name={'core/app/simpleMode/variable'} w={'20px'} />
-        <FormLabel ml={2}>{t('common:core.module.Variable')}</FormLabel>
-        <ChatFunctionTip type={'variable'} />
-        <Box flex={1} />
-        <Button
-          variant={'transparentBase'}
-          leftIcon={<SmallAddIcon />}
-          iconSpacing={1}
-          size={'sm'}
-          mr={'-5px'}
-          onClick={() => {
-            resetEdit({ variable: addVariable() });
-            onOpenEdit();
-          }}
-        >
-          {t('common:common.Add New')}
-        </Button>
-      </Flex>
-      {formatVariables.length > 0 && (
-        <Box mt={2} borderRadius={'md'} overflow={'hidden'} borderWidth={'1px'} borderBottom="none">
-          <TableContainer>
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th
-                    fontSize={'mini'}
-                    borderRadius={'none !important'}
-                    w={'18px !important'}
-                    p={0}
-                  />
-                  <Th fontSize={'mini'}>{t('common:core.module.variable.variable name')}</Th>
-                  <Th fontSize={'mini'}>{t('common:core.module.variable.key')}</Th>
-                  <Th fontSize={'mini'}>{t('common:common.Require Input')}</Th>
-                  <Th fontSize={'mini'} borderRadius={'none !important'}></Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {formatVariables.map((item) => (
-                  <Tr key={item.id}>
-                    <Td textAlign={'center'} p={0} pl={3}>
-                      <MyIcon name={item.icon as any} w={'14px'} color={'myGray.500'} />
-                    </Td>
-                    <Td>{item.label}</Td>
-                    <Td>{item.key}</Td>
-                    <Td>{item.required ? '✔' : ''}</Td>
-                    <Td>
-                      <MyIcon
-                        mr={3}
-                        name={'common/settingLight'}
-                        w={'16px'}
-                        cursor={'pointer'}
-                        onClick={() => {
-                          resetEdit({ variable: item });
-                          onOpenEdit();
-                        }}
-                      />
-                      <MyIcon
-                        name={'delete'}
-                        w={'16px'}
-                        cursor={'pointer'}
-                        onClick={() =>
-                          onChange(variables.filter((variable) => variable.id !== item.id))
-                        }
-                      />
-                    </Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          </TableContainer>
-        </Box>
-      )}
-      <MyModal
-        iconSrc="core/app/simpleMode/variable"
-        title={t('common:core.module.Variable Setting')}
-        isOpen={isOpenEdit}
-        onClose={onCloseEdit}
-        maxW={['90vw', '500px']}
-      >
-        <ModalBody>
-          {variableType !== VariableInputEnum.custom && (
-            <Flex alignItems={'center'}>
-              <FormLabel w={'70px'}>{t('common:common.Require Input')}</FormLabel>
-              <Switch {...registerEdit('variable.required')} />
-            </Flex>
-          )}
-          <Flex mt={5} alignItems={'center'}>
-            <FormLabel w={'80px'}>{t('common:core.module.variable.variable name')}</FormLabel>
-            <Input
-              {...registerEdit('variable.label', {
-                required: t('common:core.module.variable.variable name is required')
-              })}
-            />
-          </Flex>
-          <Flex mt={5} alignItems={'center'}>
-            <FormLabel w={'80px'}>{t('common:core.module.variable.key')}</FormLabel>
-            <Input
-              {...registerEdit('variable.key', {
-                required: t('common:core.module.variable.key is required')
-              })}
-            />
-          </Flex>
-
-          <FormLabel mt={5} mb={2}>
-            {t('common:core.workflow.Variable.Variable type')}
-          </FormLabel>
-          <MyRadio
-            gridGap={4}
-            gridTemplateColumns={'repeat(2,1fr)'}
-            value={variableType}
-            list={VariableTypeList}
-            color={'myGray.600'}
-            hiddenCircle
-            onChange={(e) => {
-              setValuesEdit('variable.type', e as any);
-              setRefresh(!refresh);
+    <Box className="nodrag">
+      {/* Row box */}
+      <AppConfigItem
+        icon={'core/app/simpleMode/variable'}
+        label={t('common:core.module.Variable')}
+        tip={<ChatFunctionTip type={'variable'} />}
+        action={
+          <AppConfigItemAction
+            tooltip={t('common:add_new')}
+            leftIcon={<SmallAddIcon />}
+            onClick={() => {
+              setEditingVariable(addVariable());
             }}
-          />
-
-          {/* desc */}
-          {variableMap[variableType]?.desc && (
-            <Box mt={2} fontSize={'sm'} color={'myGray.500'} whiteSpace={'pre-wrap'}>
-              {t(variableMap[variableType].desc as any)}
-            </Box>
-          )}
-
-          {variableType === VariableInputEnum.input && (
-            <>
-              <FormLabel mt={5} mb={2}>
-                {t('common:core.module.variable.text max length')}
-              </FormLabel>
-              <Box>
-                <NumberInput max={500} min={1} step={1} position={'relative'}>
-                  <NumberInputField
-                    {...registerEdit('variable.maxLen', {
-                      min: 1,
-                      max: 500,
-                      valueAsNumber: true
-                    })}
-                    max={500}
-                  />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </Box>
-            </>
-          )}
-
-          {variableType === VariableInputEnum.select && (
-            <>
-              <Box mt={5} mb={2}>
-                {t('common:core.module.variable.variable options')}
-              </Box>
-              <Box>
-                {selectEnums.map((item, i) => (
-                  <Flex key={item.id} mb={2} alignItems={'center'}>
-                    <FormControl>
-                      <Input
-                        {...registerEdit(`variable.enums.${i}.value`, {
-                          required: t(
-                            'common:core.module.variable.variable option is value is required'
-                          )
-                        })}
-                      />
-                    </FormControl>
-                    {selectEnums.length > 1 && (
-                      <MyIcon
-                        ml={3}
-                        name={'delete'}
-                        w={'16px'}
-                        cursor={'pointer'}
-                        p={2}
-                        borderRadius={'md'}
-                        _hover={{ bg: 'red.100' }}
-                        onClick={() => removeEnums(i)}
-                      />
-                    )}
-                  </Flex>
-                ))}
-              </Box>
-              <Button
-                variant={'solid'}
-                w={'100%'}
-                textAlign={'left'}
-                leftIcon={<SmallAddIcon />}
-                bg={'myGray.100 !important'}
-                onClick={() => appendEnums({ value: '' })}
-              >
-                {t('common:core.module.variable add option')}
-              </Button>
-            </>
-          )}
-        </ModalBody>
-
-        <ModalFooter>
-          <Button variant={'whiteBase'} mr={3} onClick={onCloseEdit}>
-            {t('common:common.Close')}
-          </Button>
-          <Button
-            onClick={handleSubmitEdit(({ variable }) => {
-              variable.key = variable.key.trim();
-
-              // check select
-              if (variable.type === VariableInputEnum.select) {
-                const enums = variable.enums.filter((item) => item.value);
-                if (enums.length === 0) {
-                  toast({
-                    status: 'warning',
-                    title: t('common:core.module.variable.variable option is required')
-                  });
-                  return;
-                }
-              }
-              const onChangeVariable = [...variables];
-              // update
-              if (variable.id) {
-                const index = variables.findIndex((item) => item.id === variable.id);
-                onChangeVariable[index] = variable;
-              } else {
-                onChangeVariable.push({
-                  ...variable,
-                  id: nanoid()
-                });
-              }
-              onChange(onChangeVariable);
-              onCloseEdit();
-            })}
           >
-            {getValuesEdit('variable.id')
-              ? t('common:common.Confirm Update')
-              : t('common:common.Add New')}
-          </Button>
-        </ModalFooter>
-      </MyModal>
+            {t('common:add_new')}
+          </AppConfigItemAction>
+        }
+      />
+      {/* Form render */}
+      {formatVariables.length > 0 && (
+        <FixedTableContainer bodyBg="white" flush mt={2} borderRadius={'md'} borderWidth={'1px'}>
+          <Table variant={'workflow'} w={'100%'} sx={{ tableLayout: 'fixed' }}>
+            <Thead>
+              <Tr>
+                <Th pl={'24px !important'} pr={'8px !important'}>
+                  {t('workflow:Variable_name')}
+                </Th>
+                <Th w={'2.5rem'} whiteSpace={'nowrap'} px={'8px !important'}>
+                  {t('common:Required_input')}
+                </Th>
+                <Th w={'4.9rem'} whiteSpace={'nowrap'} pl={'8px !important'} pr={'24px !important'}>
+                  {t('common:Operation')}
+                </Th>
+              </Tr>
+            </Thead>
+            <DndDrag<VariableItemType>
+              onDragEndCb={onChange}
+              dataList={formatVariables}
+              renderClone={(provided, snapshot, rubric) => (
+                <TableItem
+                  provided={provided}
+                  snapshot={snapshot}
+                  item={formatVariables[rubric.source.index]}
+                  onEdit={setEditingVariable}
+                  onChange={onChange}
+                  variables={variables}
+                />
+              )}
+              zoom={zoom}
+            >
+              {({ provided }) => (
+                <Tbody {...provided.droppableProps} ref={provided.innerRef}>
+                  {formatVariables.map((item, index) => (
+                    <Draggable key={item.key} draggableId={item.key} index={index}>
+                      {(provided, snapshot) => (
+                        <TableItem
+                          provided={provided}
+                          snapshot={snapshot}
+                          item={item}
+                          onEdit={setEditingVariable}
+                          onChange={onChange}
+                          variables={variables}
+                        />
+                      )}
+                    </Draggable>
+                  ))}
+                </Tbody>
+              )}
+            </DndDrag>
+          </Table>
+        </FixedTableContainer>
+      )}
+
+      {/* Edit modal */}
+      {editingVariable && (
+        <VariableEditModal
+          onClose={() => setEditingVariable(null)}
+          variable={editingVariable}
+          variables={variables}
+          onChange={onChange}
+        />
+      )}
     </Box>
   );
 };
 
-export default React.memo(VariableEdit);
+const TableItem = ({
+  provided,
+  snapshot,
+  item,
+  onEdit,
+  onChange,
+  variables
+}: {
+  provided: DraggableProvided;
+  snapshot: DraggableStateSnapshot;
+  item: VariableItemType & {
+    icon?: string;
+  };
+  onEdit: (variable: VariableItemType) => void;
+  onChange: (data: VariableItemType[]) => void;
+  variables: VariableItemType[];
+}) => {
+  const handleEdit = () => {
+    const formattedItem = {
+      ...item,
+      list:
+        item.list ||
+        item.enums?.map((item: { value: string }) => ({ label: item.value, value: item.value })) ||
+        []
+    };
+    onEdit(formattedItem);
+  };
+  const { draggableItemProps, dragHandleProps } = getDraggableItemProps(provided, snapshot);
 
-export const defaultVariable: VariableItemType = {
-  id: nanoid(),
-  key: 'key',
-  label: 'label',
-  type: VariableInputEnum.input,
-  required: true,
-  maxLen: 50,
-  enums: [{ value: '' }]
+  return (
+    <Tr {...draggableItemProps} {...dragHandleProps}>
+      <Td fontWeight={'medium'} pl={'24px !important'} pr={'8px !important'}>
+        <Flex alignItems={'center'}>
+          <MyIcon name={item.icon as any} w={'16px'} color={'myGray.400'} mr={1} flexShrink={0} />
+          <Box flex={1} minW={0}>
+            <MyTooltip label={item.label} showOnlyWhenOverflow>
+              <Box className={'textEllipsis'}>{item.label}</Box>
+            </MyTooltip>
+          </Box>
+        </Flex>
+      </Td>
+      <Td px={'8px !important'}>
+        <Flex alignItems={'center'}>
+          {item.required ? <MyIcon name={'check'} w={'16px'} color={'myGray.900'} mr={2} /> : ''}
+        </Flex>
+      </Td>
+      <Td pl={'8px !important'} pr={'24px !important'}>
+        <Flex>
+          <MyIconButton icon={'common/settingLight'} onClick={handleEdit} />
+          <MyIconButton
+            icon={'delete'}
+            hoverColor={'red.500'}
+            onClick={() => onChange(variables.filter((variable) => variable.key !== item.key))}
+          />
+        </Flex>
+      </Td>
+    </Tr>
+  );
 };
-export const addVariable = () => {
-  const newVariable = { ...defaultVariable, key: '', id: '' };
-  return newVariable;
-};
+
+export default React.memo(VariableEdit);

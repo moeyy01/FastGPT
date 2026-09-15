@@ -1,25 +1,30 @@
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
 import { NextAPI } from '@/service/middleware/entry';
 import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
 import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
 import { MongoDataset } from '@fastgpt/service/core/dataset/schema';
 import { MongoDatasetData } from '@fastgpt/service/core/dataset/data/schema';
+import { MongoDatasetCollection } from '@fastgpt/service/core/dataset/collection/schema';
 import { MongoDatasetTraining } from '@fastgpt/service/core/dataset/training/schema';
 import { createTrainingUsage } from '@fastgpt/service/support/wallet/usage/controller';
 import { UsageSourceEnum } from '@fastgpt/global/support/wallet/usage/constants';
-import { getLLMModel, getVectorModel } from '@fastgpt/service/core/ai/model';
-import { TrainingModeEnum } from '@fastgpt/global/core/dataset/constants';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
+
+import { getDatasetImageIndexCapability } from '@fastgpt/service/core/dataset/utils';
+import { type ApiRequestProps } from '@fastgpt/next/type';
 import { OwnerPermissionVal } from '@fastgpt/global/support/permission/constant';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  RebuildEmbeddingBodySchema,
+  RebuildEmbeddingResponseSchema,
+  type RebuildEmbeddingResponse
+} from '@fastgpt/global/openapi/core/dataset/training/api';
+import { seedDatasetRebuildTasks } from '@/service/core/dataset/queues/rebuild';
 
-export type rebuildEmbeddingBody = {
-  datasetId: string;
-  vectorModel: string;
-};
-
-export type Response = {};
-
-async function handler(req: ApiRequestProps<rebuildEmbeddingBody>): Promise<Response> {
-  const { datasetId, vectorModel } = req.body;
+async function handler(req: ApiRequestProps): Promise<RebuildEmbeddingResponse> {
+  const { datasetId, vectorModelId } = parseApiInput({
+    req,
+    bodySchema: RebuildEmbeddingBodySchema
+  }).body;
 
   const { teamId, tmbId, dataset } = await authDataset({
     req,
@@ -28,9 +33,11 @@ async function handler(req: ApiRequestProps<rebuildEmbeddingBody>): Promise<Resp
     datasetId,
     per: OwnerPermissionVal
   });
+  const modelHandle = await getModelHandle();
+  const vectorModelData = modelHandle.getEmbeddingModelData({ modelId: vectorModelId });
 
   // check vector model
-  if (!vectorModel || dataset.vectorModel === vectorModel) {
+  if (String(dataset.vectorModelId || '') === vectorModelData.modelId) {
     return Promise.reject('vectorModel 不合法');
   }
 
@@ -44,13 +51,29 @@ async function handler(req: ApiRequestProps<rebuildEmbeddingBody>): Promise<Resp
     return Promise.reject('数据集正在训练或者重建中，请稍后再试');
   }
 
-  const { billId } = await createTrainingUsage({
+  const vlmModelData = modelHandle.getVlmModelData(
+    {
+      modelId: dataset.vlmModelId ? String(dataset.vlmModelId) : undefined,
+      model: dataset.vlmModel
+    },
+    { optional: true }
+  );
+  const { availableVlmModel, supportImageIndex } = getDatasetImageIndexCapability({
+    vectorModel: vectorModelData,
+    vlmModel: vlmModelData
+  });
+
+  const { usageId } = await createTrainingUsage({
     teamId,
     tmbId,
     appName: '切换索引模型',
     billSource: UsageSourceEnum.training,
-    vectorModel: getVectorModel(dataset.vectorModel)?.name,
-    agentModel: getLLMModel(dataset.agentModel)?.name
+    vectorModelId: vectorModelData.modelId!,
+    agentModelId: modelHandle.getLLMModelData({
+      modelId: dataset.agentModelId ? String(dataset.agentModelId) : undefined,
+      model: dataset.agentModel
+    }).modelId,
+    vllmModelId: availableVlmModel?.modelId
   });
 
   // update vector model and dataset.data rebuild field
@@ -58,10 +81,27 @@ async function handler(req: ApiRequestProps<rebuildEmbeddingBody>): Promise<Resp
     await MongoDataset.findByIdAndUpdate(
       datasetId,
       {
-        vectorModel
+        $set: {
+          vectorModelId: vectorModelData.modelId,
+          ...(!supportImageIndex && { 'chunkSettings.imageIndex': false })
+        }
       },
       { session }
     );
+    if (!supportImageIndex) {
+      await MongoDatasetCollection.updateMany(
+        {
+          teamId,
+          datasetId
+        },
+        {
+          $set: {
+            imageIndex: false
+          }
+        },
+        { session }
+      );
+    }
     await MongoDatasetData.updateMany(
       {
         teamId,
@@ -78,65 +118,16 @@ async function handler(req: ApiRequestProps<rebuildEmbeddingBody>): Promise<Resp
     );
   });
 
-  // get 10 init dataset.data
-  const max = global.systemEnv?.vectorMaxProcess || 10;
-  const arr = new Array(max * 2).fill(0);
+  await seedDatasetRebuildTasks({
+    teamId,
+    tmbId,
+    datasetId,
+    billId: String(usageId),
+    vectorModel: vectorModelData,
+    vlmModel: vlmModelData
+  });
 
-  for await (const _ of arr) {
-    try {
-      const hasNext = await mongoSessionRun(async (session) => {
-        // get next dataset.data
-        const data = await MongoDatasetData.findOneAndUpdate(
-          {
-            rebuilding: true,
-            teamId,
-            datasetId
-          },
-          {
-            $unset: {
-              rebuilding: null
-            },
-            updateTime: new Date()
-          },
-          {
-            session
-          }
-        ).select({
-          _id: 1,
-          collectionId: 1
-        });
-
-        if (data) {
-          await MongoDatasetTraining.create(
-            [
-              {
-                teamId,
-                tmbId,
-                datasetId,
-                collectionId: data.collectionId,
-                billId,
-                mode: TrainingModeEnum.chunk,
-                model: vectorModel,
-                q: '1',
-                dataId: data._id
-              }
-            ],
-            {
-              session
-            }
-          );
-        }
-
-        return !!data;
-      });
-
-      if (!hasNext) {
-        break;
-      }
-    } catch (error) {}
-  }
-
-  return {};
+  return RebuildEmbeddingResponseSchema.parse(undefined);
 }
 
 export default NextAPI(handler);

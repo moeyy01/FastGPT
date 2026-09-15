@@ -1,20 +1,101 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { clientInitData } from '@/web/common/system/staticData';
-import { useTranslation } from 'next-i18next';
 import { useRouter } from 'next/router';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
-import type { FastGPTFeConfigsType } from '@fastgpt/global/common/system/types/index.d';
-import { change2DefaultLng, setLngStore } from '@/web/common/utils/i18n';
+import type { FastGPTFeConfigsType } from '@fastgpt/global/common/system/types/index';
 import { useMemoizedFn, useMount } from 'ahooks';
 import { TrackEventName } from '../common/system/constants';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { useUserStore } from '../support/user/useUserStore';
+import {
+  setBdVId,
+  setFastGPTSem,
+  initFastGPTSemSourceDomain,
+  setMsclkid,
+  setUtmParams,
+  setUtmWorkflow
+} from '../support/marketing/utils';
+import { type ShortUrlParams } from '@fastgpt/global/support/marketing/type';
+import { setCouponCode } from '@/web/support/marketing/utils';
+import { appClientEnv } from '@/web/common/system/env';
+
+type MarketingQueryParams = {
+  bd_vid?: string;
+  msclkid?: string;
+  k?: string;
+  search?: string;
+  visitor_id?: string;
+  sourceDomain?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_content?: string;
+  utm_workflow?: string;
+  couponCode?: string;
+};
+
+const MARKETING_PARAMS: (keyof MarketingQueryParams)[] = [
+  'bd_vid',
+  'msclkid',
+  'k',
+  'visitor_id',
+  'sourceDomain',
+  'utm_source',
+  'utm_medium',
+  'utm_content',
+  'utm_workflow',
+  'couponCode'
+];
 
 export const useInitApp = () => {
   const router = useRouter();
-  const { hiId } = router.query as { hiId?: string };
-  const { i18n } = useTranslation();
+  const {
+    bd_vid,
+    msclkid,
+    k,
+    search,
+    visitor_id,
+    sourceDomain,
+    utm_source,
+    utm_medium,
+    utm_content,
+    utm_workflow,
+    couponCode
+  } = router.query as MarketingQueryParams;
+
   const { loadGitStar, setInitd, feConfigs } = useSystemStore();
+  const { userInfo } = useUserStore();
   const [scripts, setScripts] = useState<FastGPTFeConfigsType['scripts']>([]);
-  const [title, setTitle] = useState(process.env.SYSTEM_NAME || 'AI');
+  const [title, setTitle] = useState(appClientEnv.systemName);
+
+  const getPathWithoutMarketingParams = () => {
+    const filteredQuery = { ...router.query };
+    const hasMarketingParams = MARKETING_PARAMS.some((param) =>
+      Object.prototype.hasOwnProperty.call(filteredQuery, param)
+    );
+
+    if (!hasMarketingParams) {
+      return;
+    }
+
+    MARKETING_PARAMS.forEach((param) => {
+      delete filteredQuery[param];
+    });
+
+    const newQuery = new URLSearchParams();
+    Object.entries(filteredQuery).forEach(([key, value]) => {
+      if (value) {
+        if (Array.isArray(value)) {
+          value.forEach((v) => newQuery.append(key, v));
+        } else {
+          newQuery.append(key, value);
+        }
+      }
+    });
+
+    return `${router.pathname}${newQuery.toString() ? `?${newQuery.toString()}` : ''}${
+      window.location.hash
+    }`;
+  };
 
   const initFetch = useMemoizedFn(async () => {
     const {
@@ -38,19 +119,7 @@ export const useInitApp = () => {
     setInitd();
   });
 
-  const initUserLanguage = useMemoizedFn(() => {
-    // get default language
-    const targetLng = change2DefaultLng(i18n.language);
-    if (targetLng) {
-      setLngStore(targetLng);
-      router.replace(router.asPath, undefined, { locale: targetLng });
-    }
-  });
-
   useMount(() => {
-    initFetch();
-    initUserLanguage();
-
     const errorTrack = (event: ErrorEvent) => {
       window.umami?.track(TrackEventName.windowError, {
         device: {
@@ -70,9 +139,44 @@ export const useInitApp = () => {
     };
   });
 
-  useEffect(() => {
-    hiId && localStorage.setItem('inviterId', hiId);
-  }, [hiId]);
+  useRequest(initFetch, {
+    refreshDeps: [userInfo?.username],
+    manual: false,
+    pollingInterval: 300000 // 5 minutes refresh
+  });
+
+  // Marketing data track
+  useMount(() => {
+    setBdVId(bd_vid);
+    setMsclkid(msclkid);
+    setUtmWorkflow(utm_workflow);
+    initFastGPTSemSourceDomain(sourceDomain);
+
+    const utmParams: ShortUrlParams = {
+      ...(utm_source && { shortUrlSource: utm_source }),
+      ...(utm_medium && { shortUrlMedium: utm_medium }),
+      ...(utm_content && { shortUrlContent: utm_content })
+    };
+    if (utm_workflow) {
+      setUtmParams(utmParams);
+    }
+
+    setFastGPTSem({
+      keyword: k,
+      search,
+      visitor_id,
+      ...utmParams
+    });
+
+    if (couponCode) {
+      setCouponCode(couponCode);
+    }
+
+    const newPath = getPathWithoutMarketingParams();
+    if (newPath) {
+      router.replace(newPath);
+    }
+  });
 
   return {
     feConfigs,

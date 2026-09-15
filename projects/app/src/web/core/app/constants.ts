@@ -1,12 +1,14 @@
 import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
-import { AppDetailType } from '@fastgpt/global/core/app/type.d';
-import type { FeishuType, OutLinkEditType } from '@fastgpt/global/support/outLink/type.d';
+import { type AppDetailType } from '@fastgpt/global/core/app/type';
+import type {
+  DingtalkAppType,
+  FeishuAppType,
+  OutLinkEditType
+} from '@fastgpt/global/support/outLink/type';
 import { AppPermission } from '@fastgpt/global/support/permission/app/controller';
-import { NullPermission } from '@fastgpt/global/support/permission/constant';
-
 export const defaultApp: AppDetailType = {
   _id: '',
-  name: '应用加载中',
+  name: 'AI',
   type: AppTypeEnum.simple,
   avatar: '/icon/logo.svg',
   intro: '',
@@ -15,47 +17,39 @@ export const defaultApp: AppDetailType = {
   chatConfig: {},
   teamId: '',
   tmbId: '',
-  teamTags: [],
   edges: [],
   version: 'v2',
-  defaultPermission: NullPermission,
   permission: new AppPermission(),
   inheritPermission: false
 };
 
 export const defaultOutLinkForm: OutLinkEditType = {
   name: '',
-  responseDetail: false,
+  showRunningStatus: true,
+  showSkillReferences: false,
+  showCite: false,
+  showFullText: false,
+  canDownloadSource: false,
   limit: {
     QPM: 100,
     maxUsagePoints: -1
   }
 };
 
-// export const defaultWecomOutLinkForm: OutLinkConfigEditType = {
-//   name: '',
-//   wecomConfig: {
-//     ReplyLimit: false,
-//     defaultResponse: '',
-//     immediateResponse: false,
-//     WXWORK_TOKEN: '',
-//     WXWORK_AESKEY: '',
-//     WXWORK_SECRET: '',
-//     WXWORD_ID: ''
-//   },
-//   limit: {
-//     QPM: 100,
-//     maxUsagePoints: -1
-//   }
-// };
-
-export const defaultFeishuOutLinkForm: OutLinkEditType<FeishuType> = {
+export const defaultFeishuOutLinkForm: OutLinkEditType<FeishuAppType> = {
   name: '',
   limit: {
     QPM: 100,
     maxUsagePoints: -1
-  },
-  responseDetail: false
+  }
+};
+
+export const defaultDingtalkOutlinkForm: OutLinkEditType<DingtalkAppType> = {
+  name: '',
+  limit: {
+    QPM: 100,
+    maxUsagePoints: -1
+  }
 };
 
 export enum TTSTypeEnum {
@@ -63,3 +57,5 @@ export enum TTSTypeEnum {
   web = 'web',
   model = 'model'
 }
+
+export const workflowStartNodeId = 'workflowStartNodeId';

@@ -1,34 +1,210 @@
-import axios from 'axios';
+import { axios } from '../../common/api/axios';
 import { MongoOutLink } from './schema';
 import { FastGPTProUrl } from '../../common/system/constants';
-import { ChatHistoryItemResType } from '@fastgpt/global/core/chat/type';
+import {
+  type ChatHistoryItemResType,
+  type UserChatItemValueItemType
+} from '@fastgpt/global/core/chat/type';
+import { getLogger, LogCategories } from '../../common/logger';
+import { Readable } from 'node:stream';
+import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { getS3ChatSource } from '../../common/s3/sources/chat';
 
-export const addOutLinkUsage = async ({
+const logger = getLogger(LogCategories.MODULE.OUTLINK.TOOLS);
+
+/**
+ * Combine and clean multiple queries into one.
+ */
+export const composeOutLinkQuery = (
+  ...queries: UserChatItemValueItemType[][]
+): UserChatItemValueItemType[] => {
+  const items = queries.flat();
+  const content = items
+    .flatMap((item) => (item.text?.content ? [item.text.content] : []))
+    .join('\n');
+
+  return [
+    ...(content ? [{ text: { content } }] : []),
+    ...items.flatMap((item) => (item.file ? [{ file: item.file }] : []))
+  ];
+};
+
+/**
+ * Cite the text content of a query and preserve anything else.
+ */
+export const citeOutLinkQuery = (query: UserChatItemValueItemType[]): UserChatItemValueItemType[] =>
+  composeOutLinkQuery(query).map((item) =>
+    item.text?.content
+      ? {
+          text: { content: `<Cite>${item.text.content}</Cite>` }
+        }
+      : item
+  );
+
+/**
+ * Indicates an outlink file download stream exceeds the size limit.
+ * Stream.Readable.destroy needs this Error.
+ */
+export class OutLinkFileSizeExceededError extends Error {
+  readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
+    super(`OutLink file exceeds maximum allowed size (${maxBytes} bytes)`);
+    this.name = 'OutLinkFileSizeExceededError';
+    this.maxBytes = maxBytes;
+  }
+}
+
+/**
+ * 将外部渠道下载流包装为带字节和可选时长限制的 Readable。
+ * 下游停止消费时会同步销毁源流。
+ */
+export const createOutLinkFileLimitStream = ({
+  source,
+  maxBytes,
+  timeoutMs
+}: {
+  source: Readable;
+  maxBytes: number;
+  timeoutMs?: number;
+}) => {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+    throw new Error('maxBytes must be a finite positive number');
+  }
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    throw new Error('timeoutMs must be a finite positive number');
+  }
+
+  return Readable.from(
+    (async function* () {
+      let totalBytes = 0;
+      const timeout =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              source.destroy(new Error('OutLink file download timeout'));
+            }, timeoutMs);
+
+      try {
+        for await (const chunk of source) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += buffer.length;
+
+          if (totalBytes > maxBytes) {
+            const error = new OutLinkFileSizeExceededError(maxBytes);
+            source.destroy(error);
+            throw error;
+          }
+
+          yield chunk;
+        }
+      } finally {
+        if (timeout) clearTimeout(timeout);
+        if (!source.destroyed) {
+          source.destroy();
+        }
+      }
+    })(),
+    { objectMode: false }
+  );
+};
+
+/** Uploads a bounded outlink file to the app chat source. */
+export const uploadOutLinkFile = async ({
+  source,
+  contentLength,
+  maxBytes,
+  timeoutMs,
+  appId,
+  chatId,
+  userId,
+  filename,
+  contentType
+}: {
+  source: Readable | Buffer;
+  contentLength?: number;
+  maxBytes: number;
+  timeoutMs?: number;
+  appId: string;
+  chatId: string;
+  userId: string;
+  filename: string;
+  contentType?: string;
+}) => {
+  const destroySource = () => {
+    if (source instanceof Readable && !source.destroyed) source.destroy();
+  };
+  if (
+    (Number.isFinite(contentLength) && (contentLength as number) > maxBytes) ||
+    (Buffer.isBuffer(source) && source.length > maxBytes)
+  ) {
+    destroySource();
+    throw new OutLinkFileSizeExceededError(maxBytes);
+  }
+
+  if (Buffer.isBuffer(source)) {
+    return getS3ChatSource().uploadChatFile({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: appId,
+      body: source,
+      chatId,
+      uId: userId,
+      filename,
+      contentType
+    });
+  }
+
+  const limitedStream = createOutLinkFileLimitStream({ source, maxBytes, timeoutMs });
+  let sizeError: OutLinkFileSizeExceededError | undefined;
+  limitedStream.once('error', (error) => {
+    if (error instanceof OutLinkFileSizeExceededError) sizeError = error;
+  });
+
+  try {
+    return await getS3ChatSource().uploadChatFile({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: appId,
+      body: limitedStream,
+      chatId,
+      uId: userId,
+      filename,
+      contentType
+    });
+  } catch (error) {
+    throw sizeError ?? error;
+  } finally {
+    destroySource();
+  }
+};
+
+export const addOutLinkUsage = ({
   shareId,
   totalPoints
 }: {
   shareId: string;
   totalPoints: number;
 }) => {
-  MongoOutLink.findOneAndUpdate(
+  return MongoOutLink.findOneAndUpdate(
     { shareId },
     {
       $inc: { usagePoints: totalPoints },
       lastTime: new Date()
     }
   ).catch((err) => {
-    console.log('update shareChat error', err);
+    logger.error('Failed to update outlink usage', { shareId, error: err });
   });
 };
 
 export const pushResult2Remote = async ({
-  outLinkUid,
   shareId,
+  chatId,
+  outLinkUid,
   appName,
   flowResponses
 }: {
+  shareId: string;
+  chatId: string;
   outLinkUid?: string; // raw id, not parse
-  shareId?: string;
   appName: string;
   flowResponses?: ChatHistoryItemResType[];
 }) => {
@@ -46,8 +222,11 @@ export const pushResult2Remote = async ({
       data: {
         token: outLinkUid,
         appName,
-        responseData: flowResponses
+        responseData: flowResponses,
+        chatId
       }
     });
-  } catch (error) {}
+  } catch (error) {
+    logger.error('Failed to push outlink result to remote hook', { shareId, error });
+  }
 };

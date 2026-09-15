@@ -1,0 +1,418 @@
+'use client';
+import { serviceSideProps } from '@/web/common/i18n/utils';
+import DashboardContainer from '@/pageComponents/dashboard/Container';
+import { Box, Button, Flex, Grid, HStack } from '@chakra-ui/react';
+import { useRouter } from 'next/router';
+import { useTranslation } from 'next-i18next';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { type ParentIdType } from '@fastgpt/global/common/parentFolder/type';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import { type TemplateTypeSchemaType } from '@fastgpt/global/core/app/type';
+import type { AppFormEditFormType } from '@fastgpt/global/core/app/formEdit/type';
+import type { AppTemplateListItemType } from '@fastgpt/global/openapi/core/app/template/api';
+import { form2AppWorkflow } from '@/pageComponents/app/detail/Edit/SimpleApp/utils';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { getTemplateMarketItemDetail } from '@/web/core/app/api/template';
+import { postCreateApp } from '@/web/core/app/api';
+import { webPushTrack } from '@/web/common/middle/tracks/utils';
+import Avatar from '@fastgpt/web/components/common/Avatar';
+
+import dynamic from 'next/dynamic';
+import SearchInput from '@fastgpt/web/components/common/Input/SearchInput';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import { usePersistedFilters } from '@fastgpt/web/hooks/usePersistedFilters';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import { appTypeTagMap } from '@/pageComponents/dashboard/constant';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import { getAppDetailRoute, isWorkflowAppType } from '@/web/core/app/utils';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { buildFilterStorageKey } from '@/web/common/filter/storageKey';
+import TemplateCategoryFilter from '@/pageComponents/dashboard/agent/filters/TemplateCategoryFilter';
+import {
+  AppListFiltersStoreSchema,
+  defaultAppListFiltersStore,
+  type TemplateMarketFilterType
+} from '@/pageComponents/dashboard/agent/filters/utils';
+const UseGuideModal = dynamic(() => import('@/components/common/Modal/UseGuideModal'), {
+  ssr: false
+});
+
+const TemplateMarket = ({
+  templateList,
+  templateTags,
+  MenuIcon
+}: {
+  templateList: AppTemplateListItemType[];
+  templateTags: TemplateTypeSchemaType[];
+  MenuIcon: JSX.Element;
+}) => {
+  const router = useRouter();
+  const { t } = useTranslation();
+  const { isPc } = useSystem();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const { parentId } = router.query as { parentId?: ParentIdType };
+  const [searchKey, setSearchKey] = useState('');
+  const { userInfo } = useUserStore();
+  const teamId = userInfo?.team.teamId;
+  const filterKey = teamId ? buildFilterStorageKey({ teamId }) : '';
+  const [filterStore, setFilterStore] = usePersistedFilters({
+    key: filterKey,
+    schema: AppListFiltersStoreSchema,
+    defaultValue: defaultAppListFiltersStore
+  });
+  const categoryFilter = filterStore.templateMarket;
+  const setCategoryFilter = useCallback(
+    (next: TemplateMarketFilterType) => {
+      setFilterStore((prev) => ({ ...prev, templateMarket: next }));
+    },
+    [setFilterStore]
+  );
+
+  const selectableTags = useMemo(
+    () => templateTags.filter((tag) => templateList.some((item) => item.tags.includes(tag.typeId))),
+    [templateList, templateTags]
+  );
+
+  const tagsWithTemplates = useMemo(() => {
+    const groups = selectableTags.map((tag) => ({
+      ...tag,
+      templates: templateList.filter((template) => template.tags.includes(tag.typeId))
+    }));
+    if (categoryFilter.mode !== 'selected') return groups;
+    if (categoryFilter.tagIds.length === 0) return [];
+    const selected = new Set(categoryFilter.tagIds);
+    return groups.filter((item) => selected.has(item.typeId));
+  }, [categoryFilter, selectableTags, templateList]);
+
+  const { runAsync: onUseTemplate, loading: isCreating } = useRequest(
+    async (template: AppTemplateListItemType) => {
+      const templateDetail = await getTemplateMarketItemDetail(template.templateId);
+
+      if (template.type === AppTypeEnum.simple) {
+        // TODO: 特殊类型
+        const completeWorkflow = form2AppWorkflow(
+          templateDetail.workflow as unknown as AppFormEditFormType,
+          t
+        );
+        templateDetail.workflow = completeWorkflow;
+      }
+
+      const appType = template.type as AppTypeEnum;
+      const appId = await postCreateApp({
+        parentId,
+        avatar: template.avatar,
+        name: template.name,
+        type: appType,
+        modules: templateDetail.workflow.nodes || [],
+        edges: templateDetail.workflow.edges || [],
+        chatConfig: templateDetail.workflow.chatConfig,
+        templateId: templateDetail.templateId
+      });
+
+      webPushTrack.useAppTemplate({
+        id: appId,
+        name: template.name
+      });
+
+      return { appId, appType };
+    },
+    {
+      onSuccess({ appId, appType }) {
+        router.push(
+          getAppDetailRoute({
+            appId,
+            openSystemConfig: isWorkflowAppType(appType)
+          })
+        );
+      },
+      successToast: t('common:create_success'),
+      errorToast: t('common:create_failed')
+    }
+  );
+
+  const TemplateCard = useCallback(
+    ({ item }: { item: AppTemplateListItemType }) => {
+      const { t } = useTranslation();
+      const icon = appTypeTagMap[item.type as keyof typeof appTypeTagMap]?.icon;
+
+      return (
+        <MyBox
+          key={item.templateId}
+          w={'100%'}
+          minWidth={0}
+          py={3}
+          px={6}
+          border={'1px solid'}
+          borderColor={'myGray.250'}
+          borderRadius={'lg'}
+          display={'flex'}
+          flexDirection={'column'}
+          gap={4}
+          position={'relative'}
+          overflow={'hidden'}
+          bgImage={item.isPromoted ? "url('/imgs/app/templateBg.svg')" : 'none'}
+          bgSize={'105% auto'}
+          bgPosition={'top'}
+          bgRepeat={'no-repeat'}
+          _hover={{
+            boxShadow: '0 1px 2px 0 rgba(19, 51, 107, 0.10), 0 0 1px 0 rgba(19, 51, 107, 0.15)'
+          }}
+        >
+          <HStack>
+            <Avatar src={item.avatar} borderRadius={'4px'} w={10} h={10} />
+            <Box flex={1} />
+            <Flex w={10} h={10} justifyContent={'center'} alignItems={'center'}>
+              <MyIcon name={icon as any} w={4} color={'myGray.900'} />
+            </Flex>
+          </HStack>
+          <Box w={'100%'} minWidth={0}>
+            <Flex
+              color={'myGray.900'}
+              fontWeight={'medium'}
+              fontSize={'18px'}
+              alignItems={'center'}
+              gap={'7px'}
+            >
+              {item.name}
+              {item.isPromoted && (
+                <Box
+                  p={'1px'}
+                  bgGradient={'linear(201deg, #E6B3FF 13.74%, #006AFF 89.76%)'}
+                  borderRadius={'full'}
+                  flexShrink={0}
+                >
+                  <Box
+                    px={1.5}
+                    fontSize={'10px'}
+                    bg={'myGray.25'}
+                    borderRadius={'full'}
+                    color={'myGray.900'}
+                  >
+                    {t('app:template.recommended')}
+                  </Box>
+                </Box>
+              )}
+            </Flex>
+            <MyTooltip
+              label={item.isPromoted ? item.recommendText || item.intro : item.intro}
+              shouldWrapChildren={false}
+              placement={'top'}
+              hasArrow={false}
+              offset={[0, 3]}
+            >
+              <Box
+                w={'100%'}
+                minWidth={0}
+                color={'myGray.500'}
+                fontSize={item.isPromoted ? '16px' : '14px'}
+                fontWeight={item.isPromoted ? 'medium' : 'normal'}
+                overflow={'hidden'}
+                textOverflow={'ellipsis'}
+                whiteSpace={'nowrap'}
+              >
+                {(item.isPromoted ? item.recommendText || item.intro : item.intro) ||
+                  t('app:templateMarket.no_intro')}
+              </Box>
+            </MyTooltip>
+          </Box>
+
+          <Flex justifyContent={'space-between'} alignItems={'center'}>
+            {(item.userGuide?.type === 'markdown' && item.userGuide?.content) ||
+            (item.userGuide?.type === 'link' && item.userGuide?.link) ? (
+              <UseGuideModal
+                title={item.name}
+                iconSrc={item.avatar}
+                text={item.userGuide?.content}
+                link={item.userGuide?.link}
+              >
+                {({ onClick }) => (
+                  <Flex
+                    cursor={'pointer'}
+                    color={'myGray.500'}
+                    gap={1}
+                    fontSize={'14px'}
+                    onClick={onClick}
+                    _hover={{
+                      color: 'primary.600'
+                    }}
+                  >
+                    <MyIcon name="book" w={4} />
+                    {t('app:templateMarket.template_guide')}
+                  </Flex>
+                )}
+              </UseGuideModal>
+            ) : (
+              <Box></Box>
+            )}
+            <Button
+              variant={'transparentBase'}
+              px={5}
+              py={2.5}
+              rounded={'sm'}
+              color={'primary.700'}
+              onClick={() => onUseTemplate(item)}
+            >
+              {t('app:templateMarket.Use')}
+            </Button>
+          </Flex>
+        </MyBox>
+      );
+    },
+    [onUseTemplate]
+  );
+
+  const searchedTemplates = useMemo(() => {
+    return templateList.filter((template) => {
+      if (categoryFilter.mode === 'selected') {
+        if (categoryFilter.tagIds.length === 0) return false;
+        if (!template.tags.some((tag) => categoryFilter.tagIds.includes(tag))) return false;
+      }
+      return `${template.name}${template.intro}`.includes(searchKey);
+    });
+  }, [categoryFilter, searchKey, templateList]);
+
+  return (
+    <MyBox ref={containerRef} h={'100%'} isLoading={isCreating}>
+      <Flex flexDirection={'column'} h={'100%'} py={6}>
+        <Flex alignItems={'center'} gap={3} px={6} mb={5} flexShrink={0}>
+          {!isPc && MenuIcon}
+          <Box fontSize={'lg'} color={'myGray.900'} fontWeight={'medium'} flexShrink={0}>
+            {t('app:template_market')}
+          </Box>
+          <Box flex={1} />
+          {isPc && (
+            <Flex alignItems={'center'} gap={3} flexShrink={0}>
+              <TemplateCategoryFilter
+                tags={selectableTags}
+                value={categoryFilter}
+                onChange={setCategoryFilter}
+              />
+              <SearchInput
+                h={9}
+                w={240}
+                bg={'white'}
+                placeholder={t('app:templateMarket.Search_template')}
+                value={searchKey}
+                onChange={(e) => setSearchKey(e.target.value)}
+              />
+            </Flex>
+          )}
+        </Flex>
+        <Box flex={'1 1 0'} minH={0} px={6} overflow={'auto'}>
+          {!isPc && (
+            <Flex mb={5} direction={'column'} gap={3}>
+              <SearchInput
+                h={9}
+                bg={'white'}
+                placeholder={t('app:templateMarket.Search_template')}
+                value={searchKey}
+                onChange={(e) => setSearchKey(e.target.value)}
+              />
+              <TemplateCategoryFilter
+                tags={selectableTags}
+                value={categoryFilter}
+                onChange={setCategoryFilter}
+              />
+            </Flex>
+          )}
+
+          {searchKey ? (
+            <>
+              <Box fontSize={'lg'} color={'myGray.900'} mb={4}>
+                {t('common:xx_search_result', { key: searchKey })}
+              </Box>
+              {(() => {
+                if (searchedTemplates.length > 0) {
+                  return (
+                    <Grid
+                      gridTemplateColumns={[
+                        '1fr',
+                        'repeat(2,1fr)',
+                        'repeat(3,1fr)',
+                        'repeat(3,1fr)',
+                        'repeat(4,1fr)'
+                      ]}
+                      gridGap={4}
+                      alignItems={'stretch'}
+                      pb={5}
+                    >
+                      {searchedTemplates.map((item) => (
+                        <TemplateCard key={item.templateId} item={item} />
+                      ))}
+                    </Grid>
+                  );
+                }
+
+                return <EmptyTip text={t('app:template_market_empty_data')} />;
+              })()}
+            </>
+          ) : (
+            <Flex flexDirection={'column'} gap={5}>
+              {tagsWithTemplates.length === 0 ? (
+                <EmptyTip text={t('app:template_market_empty_data')} />
+              ) : (
+                tagsWithTemplates.map((item) => {
+                  return (
+                    <Box key={item.typeId}>
+                      <Box
+                        id={item.typeId}
+                        color={'myGray.900'}
+                        mb={4}
+                        fontWeight={'medium'}
+                        fontSize={'14px'}
+                      >
+                        {t(item.typeName as any)}
+                      </Box>
+                      <Grid
+                        gridTemplateColumns={[
+                          '1fr',
+                          'repeat(2,1fr)',
+                          'repeat(3,1fr)',
+                          'repeat(3,1fr)',
+                          'repeat(4,1fr)',
+                          'repeat(5,1fr)'
+                        ]}
+                        gridGap={4}
+                      >
+                        {item.templates.map((item) => (
+                          <TemplateCard key={item.templateId} item={item} />
+                        ))}
+                      </Grid>
+                    </Box>
+                  );
+                })
+              )}
+            </Flex>
+          )}
+        </Box>
+      </Flex>
+    </MyBox>
+  );
+};
+
+const TemplateMarketContainer = () => {
+  return (
+    <DashboardContainer>
+      {({ templateTags, templateList, MenuIcon }) => (
+        <TemplateMarket
+          templateTags={templateTags}
+          templateList={templateList}
+          MenuIcon={MenuIcon}
+        />
+      )}
+    </DashboardContainer>
+  );
+};
+
+export default TemplateMarketContainer;
+
+export async function getServerSideProps(content: any) {
+  return {
+    props: {
+      ...(await serviceSideProps(content, ['app']))
+    }
+  };
+}

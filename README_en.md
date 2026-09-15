@@ -1,171 +1,198 @@
 <div align="center">
 
-<a href="https://fastgpt.in/"><img src="/.github/imgs/logo.svg" width="120" height="120" alt="fastgpt logo"></a>
+<a href="https://fastgpt.io/?source=github&utm_source=github&utm_medium=referral&utm_campaign=github_home&utm_content=logo"><img src="/.github/imgs/logo.svg" width="120" height="120" alt="fastgpt logo"></a>
 
 # FastGPT
 
 <p align="center">
   <a href="./README_en.md">English</a> |
   <a href="./README.md">简体中文</a> |
-  <a href="./README_ja.md">日语</a>
+  <a href="./README_id.md">Bahasa Indonesia</a> |
+  <a href="./README_th.md">ไทย</a> |
+  <a href="./README_vi.md">Tiếng Việt</a> |
+  <a href="./README_ja.md">日本語</a>
 </p>
 
-FastGPT is a knowledge-based platform built on the LLMs, offers a comprehensive suite of out-of-the-box capabilities such as data processing, RAG retrieval, and visual AI workflow orchestration, letting you easily develop and deploy complex question-answering systems without the need for extensive setup or configuration. 
+FastGPT is an AI Agent building platform that provides out-of-the-box capabilities for data processing and model invocation. It also enables workflow orchestration through Flow visualization, allowing you to achieve complex application scenarios!
 
 </div>
 
 <p align="center">
-  <a href="https://fastgpt.in/">
-    <img height="21" src="https://img.shields.io/badge/Try it Online-d4eaf7?style=flat-square&logo=spoj&logoColor=7d09f1" alt="cloud">
+  <a href="https://fastgpt.io/?source=github&utm_source=github&utm_medium=referral&utm_campaign=github_home&utm_content=cloud_badge">
+    <img height="21" src="https://img.shields.io/badge/Online_Usage-d4eaf7?style=flat-square&logo=spoj&logoColor=7d09f1" alt="cloud">
   </a>
-  <a href="https://doc.fastgpt.in/docs/intro">
-    <img height="21" src="https://img.shields.io/badge/Documents-7d09f1?style=flat-square" alt="document">
+  <a href="https://doc.fastgpt.io/guide/getting-started">
+    <img height="21" src="https://img.shields.io/badge/Documentation-7d09f1?style=flat-square" alt="document">
   </a>
-  <a href="https://doc.fastgpt.in/docs/development">
-    <img height="21" src="https://img.shields.io/badge/Local Development-%23d4eaf7?style=flat-square&logo=xcode&logoColor=7d09f1" alt="development">
+  <a href="https://doc.fastgpt.io/self-host/dev">
+    <img height="21" src="https://img.shields.io/badge/Local_Development-%23d4eaf7?style=flat-square&logo=xcode&logoColor=7d09f1" alt="development">
   </a>
-  <a href="https://github.com/labring/FastGPT/blob/main/LICENSE">
-    <img height="21" src="https://img.shields.io/badge/License-Apache--2.0-ffffff?style=flat-square&labelColor=d4eaf7&color=7d09f1" alt="license">
+  <a href="#-our-projects--links">
+    <img height="21" src="https://img.shields.io/badge/Related_Projects-7d09f1?style=flat-square" alt="project">
   </a>
 </p>
 
-<div align="center">
-
-  [![discord](https://theme.zdassets.com/theme_assets/678183/cc59daa07820943e943c2fc283b9079d7003ff76.svg)](https://discord.gg/mp68xkZn2Q)
-  
-</div>
-
 https://github.com/labring/FastGPT/assets/15308462/7d3a38df-eb0e-4388-9250-2409bd33f6d4
 
-## 🛸 Use Cloud Services
+## Quick Start
 
-Cloud: [fastgpt.in](https://fastgpt.in/)
+You can quickly start FastGPT using Docker. Run the following command in your terminal and follow the prompts to pull the configuration.
 
-| | |
+```bash
+# Run the command to pull the configuration file
+bash <(curl -fsSL https://doc.fastgpt.io/deploy/install.sh)
+# Start the service
+docker compose up -d
+```
+
+After fully started, you can access FastGPT at `http://localhost:3000`. The default account is `root` and the password is `1234`.
+
+If you encounter any issues, you can [view the complete Docker deployment tutorial](https://doc.fastgpt.io/self-host/deploy/docker)
+
+## 🛸 Usage
+
+- **Cloud Version**  
+  If you don't need private deployment, you can directly use our cloud service at: [fastgpt.io](https://fastgpt.io/?source=github&utm_source=github&utm_medium=referral&utm_campaign=github_home&utm_content=cloud_service_link)
+
+- **Community Self-Hosted Version**  
+  You can quickly deploy using [Docker](https://doc.fastgpt.io/self-host/deploy/docker) or use [Sealos Cloud](https://doc.fastgpt.io/self-host/deploy/sealos) to deploy FastGPT with one click.
+
+- **Commercial Version**  
+  If you need more complete features or in-depth service support, you can choose our [Commercial Version](https://doc.fastgpt.io/guide/version/commercial). In addition to providing complete software, we also offer implementation guidance for specific scenarios. You can submit a [commercial consultation](https://fastgpt.cn/en/contact?source=github&utm_source=github&utm_medium=referral&utm_campaign=github_home&utm_content=commercial_consultation).
+
+## 💡 Core Features
+
+|                                    |                                    |
 | ---------------------------------- | ---------------------------------- |
-| ![Demo](./.github/imgs/intro1.png) | ![Demo](./.github/imgs/intro2.png) |
+| ![Demo](./.github/imgs/intro1.png) | ![Demo](./.github/imgs/intro2.jpg) |
 | ![Demo](./.github/imgs/intro3.png) | ![Demo](./.github/imgs/intro4.png) |
 
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
-</a>
+`1` Application Orchestration
+   - [x] Agent Skill orchestration.
+   - [x] Dialogue workflow, plugin workflow, including basic RPA nodes.
+   - [x] User interaction
+   - [x] Bidirectional MCP
+   - [ ] Assisted workflow generation
 
-## 💡 Features
+`2` Application Debugging
+   - [x] Knowledge base single-point search testing
+   - [x] Reference feedback during conversation with edit and delete capabilities
+   - [x] Complete call chain logs
+   - [x] Application evaluation
+   - [ ] Advanced orchestration DeBug mode
+   - [ ] Application node logs
 
-`1` Application Orchestration Features
+`3` Knowledge Base
+   - [x] Multi-database reuse and mixing
+   - [x] Chunk record modification and deletion
+   - [x] Support for manual input, direct segmentation, QA split import
+   - [x] Support for txt, md, html, pdf, docx, pptx, csv, xlsx (more can be PR'd), support for URL reading & CSV batch import
+   - [x] Hybrid retrieval & reranking
+   - [x] API knowledge base
+   - [ ] 
 
-   - [x] Offers a straightforward mode, eliminating the need for complex orchestration
-   - [x] Provides clear next-step instructions in dialogues
-   - [x] Facilitates workflow orchestration
-   - [x] Tracks references in source files
-   - [x] Encapsulates modules for enhanced reuse at multiple levels
-   - [x] Combines search and reordering functions
-   - [ ] Includes a tool module
-   - [ ] Integrates [Laf](https://github.com/labring/laf) for online HTTP module creation
-   - [ ] Plugin encapsulation capabilities
+`4` Plugin Capabilities
+   - [x] System tool hot updates
+   - [ ] RAG module hot updates
+   - [ ] Agent-loop hot updates
+   - [ ] Real-time AI-generated plugins
 
-`2` Knowledge Base Features
-
-   - [x] Allows for the mixed use of multiple databases
-   - [x] Keeps track of modifications and deletions in data chunks
-   - [x] Enables specific vector models for each knowledge base
-   - [x] Stores original source files
-   - [x] Supports direct input and segment-based QA import
-   - [x] Compatible with a variety of file formats: pdf, docx, txt, html, md, csv
-   - [x] Facilitates URL reading and bulk CSV importing
-   - [ ] Supports PPT and Excel file import
-   - [ ] Features a file reader
-   - [ ] Offers diverse data preprocessing options
-
-`3` Application Debugging Features
-
-   - [x] Enables targeted search testing within the knowledge base
-   - [x] Allows feedback, editing, and deletion during conversations
-   - [x] Presents the full context of interactions
-   - [x] Displays all intermediate values within modules
-   - [ ] Advanced DeBug mode for orchestration
-
-`4` OpenAPI Interface
-
-   - [x] The completions interface (aligned with GPT's chat mode interface)
-   - [x] CRUD operations for the knowledge base
-   - [ ] CRUD operations for conversations
-
-`5` Operational Features
-
-   - [x] Share without requiring login
-   - [x] Easy embedding with Iframe
-   - [x] Customizable chat window embedding with features like default open, drag-and-drop
-   - [x] Centralizes conversation records for review and annotation
-
+`5` Operations Features
+   - [x] Login-free sharing window
+   - [x] One-click Iframe embedding
+   - [x] Unified dialogue record review with data annotation
+   - [x] Application operation logs
 
 <a href="#readme">
     <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
 </a>
 
-## 👨‍💻 Development
+## 💪 Our Projects & Links
 
-Project tech stack: NextJs + TS + ChakraUI + Mongo + Postgres (Vector plugin)
-
-- **⚡ Deployment**
-
-  [![](https://cdn.jsdelivr.net/gh/labring-actions/templates@main/Deploy-on-Sealos.svg)](https://cloud.sealos.io/?openapp=system-fastdeploy%3FtemplateName%3Dfastgpt)
-
-  Give it a 2-4 minute wait after deployment as it sets up the database. Initially, it might be a tad slow since we're using the basic settings.
-
-- [Getting Started with Local Development](https://doc.fastgpt.in/docs/development)
-- [Deploying FastGPT](https://doc.fastgpt.in/docs/installation)
-- [Guide on System Configs](https://doc.fastgpt.in/docs/installation/reference)
-- [Configuring Multiple Models](https://doc.fastgpt.in/docs/installation/reference/models)
-- [Version Updates & Upgrades](https://doc.fastgpt.in/docs/installation/upgrading)
-
-
-## 🏘️ Community & support
-
-+ 🌐 Visit the [FastGPT website](https://fastgpt.in/) for full documentation and useful links.
-+ 💬 Join our [Discord server](https://discord.gg/mp68xkZn2Q) is to chat with FastGPT developers and other FastGPT users. This is a good place to learn about FastGPT, ask questions, and share your experiences.
-+ 🐞 Create [GitHub Issues](https://github.com/labring/FastGPT/issues/new/choose) for bug reports and feature requests.
+- [Quick Start Local Development](https://doc.fastgpt.io/self-host/dev/)
+- [OpenAPI Documentation](https://cloud.fastgpt.io/apidoc/systemopenapi)
+- [FastGPT-plugin](https://github.com/labring/fastgpt-plugin)
+- [AI Proxy: Model Aggregation Load Balancing Service](https://github.com/labring/aiproxy)
+- [Sealos: Quick Cluster Application Deployment](https://github.com/labring/sealos)
 
 <a href="#readme">
     <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
 </a>
 
-## 👀 Others
+## 🌿 Third-party Ecosystem
 
-- [FastGPT FAQ](https://kjqvjse66l.feishu.cn/docx/HtrgdT0pkonP4kxGx8qcu6XDnGh)
-- [Docker Deployment Tutorial Video](https://www.bilibili.com/video/BV1jo4y147fT/)
-- [Official Account Integration Video Tutorial](https://www.bilibili.com/video/BV1xh4y1t7fy/)
-- [FastGPT Knowledge Base Demo](https://www.bilibili.com/video/BV1Wo4y1p7i1/)
+- [AI Proxy: Large Model Aggregation Service](https://sealos.run/aiproxy/?k=fastgpt-github/)
+- [SiliconCloud - Open Source Model Online Experience Platform](https://cloud.siliconflow.cn/i/TR9Ym0c4)
 
 <a href="#readme">
     <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
 </a>
 
-## 💪 Related Projects
+## 🏘️ Community
 
-- [Laf: 3-minute quick access to third-party applications](https://github.com/labring/laf)
-- [Sealos: Rapid deployment of cluster applications](https://github.com/labring/sealos)
-- [One API: Multi-model management, supports Azure, Wenxin Yiyuan, etc.](https://github.com/songquanpeng/one-api)
-- [TuShan: Build a backend management system in 5 minutes](https://github.com/msgbyte/tushan)
+Join our Feishu group:
+
+![](https://oss.laf.run/otnvvf-imgs/fastgpt-feishu2.png)
 
 <a href="#readme">
     <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
 </a>
 
-## 🤝 Third-party Ecosystem
+## 🤝 Contributors
 
-- [luolinAI: Enterprise WeChat bot, ready to use](https://github.com/luolin-ai/FastGPT-Enterprise-WeChatbot)
+We warmly welcome contributions in various forms. If you're interested in contributing code, check out our GitHub [Issues](https://github.com/labring/FastGPT/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc) and show us your brilliant ideas!
 
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
+<a href="https://github.com/labring/FastGPT/graphs/contributors" target="_blank">
+  <table>
+    <tr>
+      <th colspan="2">
+        <br><img src="https://contrib.rocks/image?repo=labring/FastGPT"><br><br>
+      </th>
+    </tr>
+    <tr>
+      <td>
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/compose-org-active-contributors/thumbnail.png?activity=active&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=2x3&color_scheme=dark">
+          <img alt="Active participants of labring - past 28 days" src="https://next.ossinsight.io/widgets/official/compose-org-active-contributors/thumbnail.png?activity=active&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=2x3&color_scheme=light">
+        </picture>
+      </td>
+      <td rowspan="2">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/compose-org-participants-growth/thumbnail.png?activity=new&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=4x7&color_scheme=dark">
+            <img alt="New trends of labring" src="https://next.ossinsight.io/widgets/official/compose-org-participants-growth/thumbnail.png?activity=new&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=4x7&color_scheme=light">
+        </picture>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/compose-org-active-contributors/thumbnail.png?activity=new&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=2x3&color_scheme=dark">
+            <img alt="New participants of labring - past 28 days" src="https://next.ossinsight.io/widgets/official/compose-org-active-contributors/thumbnail.png?activity=new&period=past_28_days&owner_id=102226726&repo_ids=605673387&image_size=2x3&color_scheme=light">
+        </picture>
+      </td>
+    </tr>
+  </table>
 </a>
 
 ## 🌟 Star History
 
 <a href="https://github.com/labring/FastGPT/stargazers" target="_blank" style="display: block" align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=labring/FastGPT&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=labring/FastGPT&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=labring/FastGPT&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=labring/FastGPT&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=labring/FastGPT&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=labring/FastGPT&type=Date" />
   </picture>
 </a>
+
+<a href="#readme">
+    <img src="https://img.shields.io/badge/-Back_to_Top-7d09f1.svg" alt="#" align="right">
+</a>
+
+## License
+
+This repository follows the [FastGPT Open Source License](./LICENSE).
+
+1. Commercial use as backend services is allowed, but SaaS services are not permitted.
+2. Any commercial services without commercial authorization must retain the relevant copyright information.
+3. Please see [FastGPT Open Source License](./LICENSE) for full details.
+4. Contact: Dennis@sealos.io, [View Commercial Pricing](https://doc.fastgpt.io/guide/version/commercial)

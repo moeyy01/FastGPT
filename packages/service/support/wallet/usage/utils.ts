@@ -1,28 +1,26 @@
-import { ModelTypeEnum, getModelMap } from '../../../core/ai/model';
+import { calculateModelPrice } from '@fastgpt/global/core/ai/pricing';
+import type { SystemModelDataType } from '@fastgpt/global/core/ai/model.schema';
 
 export const formatModelChars2Points = ({
   model,
-  tokens = 0,
-  modelType,
+  inputTokens = 0,
+  outputTokens = 0,
   multiple = 1000
 }: {
-  model: string;
-  tokens: number;
-  modelType: `${ModelTypeEnum}`;
+  model: SystemModelDataType;
+  inputTokens?: number;
+  outputTokens?: number;
   multiple?: number;
 }) => {
-  const modelData = getModelMap?.[modelType]?.(model);
-  if (!modelData) {
-    return {
-      totalPoints: 0,
-      modelName: ''
-    };
-  }
-
-  const totalPoints = (modelData.charsPointsPrice || 0) * (tokens / multiple);
+  const { totalPoints } = calculateModelPrice({
+    config: model,
+    inputTokens,
+    outputTokens,
+    multiple
+  });
 
   return {
-    modelName: modelData.name,
+    modelId: model.modelId,
     totalPoints
   };
 };

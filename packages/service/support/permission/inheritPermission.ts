@@ -1,221 +1,127 @@
-import { mongoSessionRun } from '../../common/mongo/sessionRun';
-import { MongoResourcePermission } from './schema';
-import { ClientSession, Model } from 'mongoose';
-import { NullPermission, PerResourceTypeEnum } from '@fastgpt/global/support/permission/constant';
-import { PermissionValueType } from '@fastgpt/global/support/permission/type';
-import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
-import { getResourceAllClbs } from './controller';
+import type { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
+import type { PerResourceTypeEnum } from '@fastgpt/global/support/permission/constant';
+import type { CollaboratorItemType } from '@fastgpt/global/support/permission/collaborator';
+import type { ClientSession, Model } from '../../common/mongo';
+import { getResourceOwnedClbs } from './controller';
+import {
+  moveResourcePermissions,
+  resumeResourcePermissionInheritance,
+  syncResourceTreePermissions,
+  updateResourceCollaborators
+} from './resourcePermissionService';
+import { resourcePermissionRepo } from './repository/resourcePermissionRepo';
+import { calculateInheritedResourceCollaborators } from './resourcePermissionPolicy';
 
 export type SyncChildrenPermissionResourceType = {
   _id: string;
   type: string;
   teamId: string;
   parentId?: ParentIdType;
-};
-export type UpdateCollaboratorItem = {
-  permission: PermissionValueType;
-  tmbId: string;
+  inheritPermission?: boolean;
 };
 
-// sync the permission to all children folders.
+/**
+ * 兼容原有调用入口，按完整 ACL 快照同步所有继承子资源。
+ * 新的父级权限更新必须传入 old/new 快照，避免父级删除后无法推导旧继承位。
+ */
 export async function syncChildrenPermission({
   resource,
-  folderTypeList,
   resourceType,
   resourceModel,
   session,
-
-  defaultPermission,
-  collaborators
+  collaborators,
+  oldParentCollaborators,
+  newParentCollaborators
 }: {
   resource: SyncChildrenPermissionResourceType;
-
-  // when the resource is a folder
-  folderTypeList: string[];
-
-  resourceModel: typeof Model;
+  folderTypeList?: string[];
+  resourceModel: Model<any>;
   resourceType: PerResourceTypeEnum;
-
-  // should be provided when inheritPermission is true
   session: ClientSession;
-
-  defaultPermission?: PermissionValueType;
-  collaborators?: UpdateCollaboratorItem[];
+  collaborators?: CollaboratorItemType[];
+  oldParentCollaborators?: CollaboratorItemType[];
+  newParentCollaborators?: CollaboratorItemType[];
 }) {
-  // only folder has permission
-  const isFolder = folderTypeList.includes(resource.type);
+  const oldCollaborators =
+    oldParentCollaborators ??
+    (await getResourceOwnedClbs({
+      resourceId: resource._id,
+      teamId: resource.teamId,
+      resourceType,
+      session
+    }));
+  const newCollaborators = newParentCollaborators ?? collaborators ?? oldCollaborators;
 
-  if (!isFolder) return;
-
-  // get all folders and the resource permission of the app
-  const allFolders = await resourceModel
-    .find(
-      {
-        teamId: resource.teamId,
-        type: { $in: folderTypeList },
-        inheritPermission: true
-      },
-      '_id parentId'
-    )
-    .lean<SyncChildrenPermissionResourceType[]>()
-    .session(session);
-
-  // bfs to get all children
-  const queue = [String(resource._id)];
-  const children: string[] = [];
-  while (queue.length) {
-    const parentId = queue.shift();
-    const folderChildren = allFolders.filter(
-      (folder) => String(folder.parentId) === String(parentId)
-    );
-    children.push(...folderChildren.map((folder) => folder._id));
-    queue.push(...folderChildren.map((folder) => folder._id));
-  }
-  if (!children.length) return;
-
-  // Sync default permission
-  if (defaultPermission !== undefined) {
-    await resourceModel.updateMany(
-      {
-        _id: { $in: children }
-      },
-      {
-        defaultPermission
-      },
-      { session }
-    );
-  }
-
-  // sync the resource permission
-  if (collaborators) {
-    // Update the collaborators of all children
-    for await (const childId of children) {
-      await syncCollaborators({
-        resourceType,
-        session,
-        collaborators,
-        teamId: resource.teamId,
-        resourceId: childId
-      });
-    }
-  }
+  return syncResourceTreePermissions({
+    resource,
+    resourceModel,
+    resourceType,
+    oldParentCollaborators: oldCollaborators,
+    newParentCollaborators: newCollaborators,
+    session
+  });
 }
 
-/*  Resume the inherit permission of the resource.
-  1. Folder: Sync parent's defaultPermission and clbs, and sync its children.
-  2. Resource: Sync parent's defaultPermission, and delete all its clbs.
-*/
-export async function resumeInheritPermission({
-  resource,
-  folderTypeList,
-  resourceType,
-  resourceModel,
-  session
-}: {
-  resource: SyncChildrenPermissionResourceType;
-  folderTypeList: string[];
-  resourceType: PerResourceTypeEnum;
-  resourceModel: typeof Model;
-  session?: ClientSession;
-}) {
-  const isFolder = folderTypeList.includes(resource.type);
-
-  const fn = async (session: ClientSession) => {
-    const parentResource = await resourceModel
-      .findById(resource.parentId, 'defaultPermission')
-      .lean<SyncChildrenPermissionResourceType & { defaultPermission: PermissionValueType }>()
-      .session(session);
-
-    const parentDefaultPermissionVal = parentResource?.defaultPermission ?? NullPermission;
-
-    // update the resource permission
-    await resourceModel.updateOne(
-      {
-        _id: resource._id
-      },
-      {
-        inheritPermission: true,
-        defaultPermission: parentDefaultPermissionVal
-      },
-      { session }
-    );
-
-    // Folder resource, need to sync children
-    if (isFolder) {
-      const parentClbs = await getResourceAllClbs({
-        resourceId: resource.parentId,
-        teamId: resource.teamId,
-        resourceType,
-        session
-      });
-
-      // sync self
-      await syncCollaborators({
-        resourceType,
-        collaborators: parentClbs,
-        teamId: resource.teamId,
-        resourceId: resource._id,
-        session
-      });
-      // sync children
-      await syncChildrenPermission({
-        resource: {
-          ...resource
-        },
-        resourceModel,
-        folderTypeList,
-        resourceType,
-        session,
-        defaultPermission: parentDefaultPermissionVal,
-        collaborators: parentClbs
-      });
-    } else {
-      // Not folder, delete all clb
-      await MongoResourcePermission.deleteMany({ resourceId: resource._id }, { session });
-    }
-  };
-
-  if (session) {
-    return fn(session);
-  } else {
-    return mongoSessionRun(fn);
-  }
-}
-
-/* 
-  Delete all the collaborators and then insert the new collaborators.
-*/
+/**
+ * 移动资源时重算资源自身 ACL。
+ * `oldParentCollaborators` 由调用方在更新 parentId 前传入，供旧继承位计算使用。
+ */
 export async function syncCollaborators({
   resourceType,
   teamId,
   resourceId,
   collaborators,
+  oldParentCollaborators,
   session
 }: {
   resourceType: PerResourceTypeEnum;
   teamId: string;
   resourceId: string;
-  collaborators: UpdateCollaboratorItem[];
+  collaborators: CollaboratorItemType[];
+  oldParentCollaborators: CollaboratorItemType[];
   session: ClientSession;
 }) {
-  await MongoResourcePermission.deleteMany(
-    {
-      resourceType,
-      teamId,
-      resourceId
-    },
-    { session }
-  );
-  await MongoResourcePermission.insertMany(
-    collaborators.map((item) => ({
-      teamId: teamId,
-      resourceId,
-      resourceType: resourceType,
-      tmbId: item.tmbId,
-      permission: item.permission
-    })),
-    {
-      session
-    }
-  );
+  const oldResourceCollaborators = await resourcePermissionRepo.findByResource({
+    teamId,
+    resourceType,
+    resourceId,
+    session
+  });
+  const newResourceCollaborators = calculateInheritedResourceCollaborators({
+    oldParentCollaborators,
+    newParentCollaborators: collaborators,
+    childCollaborators: oldResourceCollaborators
+  });
+
+  await resourcePermissionRepo.replaceResource({
+    teamId,
+    resourceType,
+    resourceId,
+    collaborators: newResourceCollaborators,
+    session
+  });
+  return newResourceCollaborators;
 }
+
+/** 恢复资源继承并同步完整子树。 */
+export async function resumeInheritPermission({
+  resource,
+  resourceModel,
+  resourceType,
+  session
+}: {
+  resource: SyncChildrenPermissionResourceType;
+  folderTypeList?: string[];
+  resourceType: PerResourceTypeEnum;
+  resourceModel: Model<any>;
+  session?: ClientSession;
+}) {
+  return resumeResourcePermissionInheritance({
+    resource,
+    resourceModel,
+    resourceType,
+    session
+  });
+}
+
+export { moveResourcePermissions, updateResourceCollaborators };

@@ -1,11 +1,27 @@
 import dayjs from 'dayjs';
 import cronParser from 'cron-parser';
+import utc from 'dayjs/plugin/utc.js';
+import timezone from 'dayjs/plugin/timezone.js';
+import { i18nT } from '../i18n/utils';
 
-export const formatTime2YMDHMW = (time?: Date) => dayjs(time).format('YYYY-MM-DD HH:mm:ss dddd');
-export const formatTime2YMDHM = (time?: Date) =>
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+export const formatTime2YMDHMW = (time?: Date | number) =>
+  dayjs(time).format('YYYY-MM-DD HH:mm:ss dddd');
+export const formatTime2YMDHMS = (time?: Date | number) =>
+  time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '';
+export const formatTime2YMDHM = (time?: Date | number) =>
   time ? dayjs(time).format('YYYY-MM-DD HH:mm') : '';
-export const formatTime2YMD = (time?: Date) => (time ? dayjs(time).format('YYYY-MM-DD') : '');
+export const formatTime2YMD = (time?: Date | number) =>
+  time ? dayjs(time).format('YYYY-MM-DD') : '';
 export const formatTime2HM = (time: Date = new Date()) => dayjs(time).format('HH:mm');
+
+/**
+ * 格式化为带时区偏移的 ISO-8601 字符串
+ */
+export const formatToISOWithTimezone = (time?: Date | number) =>
+  time ? dayjs(time).format('YYYY-MM-DDTHH:mm:ss.SSSZ') : '';
 
 /**
  * 格式化时间成聊天格式
@@ -16,7 +32,7 @@ export const formatTimeToChatTime = (time: Date) => {
 
   // 如果传入时间小于60秒，返回刚刚
   if (now.diff(target, 'second') < 60) {
-    return '刚刚';
+    return i18nT('common:just_now');
   }
 
   // 如果时间是今天，展示几时:几分
@@ -26,21 +42,40 @@ export const formatTimeToChatTime = (time: Date) => {
 
   // 如果是昨天，展示昨天
   if (now.subtract(1, 'day').isSame(target, 'day')) {
-    return '昨天';
-  }
-
-  // 如果是前天，展示前天
-  if (now.subtract(2, 'day').isSame(target, 'day')) {
-    return '前天';
+    return i18nT('common:yesterday');
   }
 
   // 如果是今年，展示某月某日
   if (now.isSame(target, 'year')) {
-    return target.format('MM/DD');
+    return target.format('MM-DD');
   }
 
   // 如果是更久之前，展示某年某月某日
-  return target.format('YYYY/M/D');
+  return target.format('YYYY-M-D');
+};
+
+export const formatTimeToChatItemTime = (time: Date) => {
+  const now = dayjs();
+  const target = dayjs(time);
+  const detailTime = target.format('HH#mm');
+
+  // 如果时间是今天，展示几时:几分
+  if (now.isSame(target, 'day')) {
+    return detailTime;
+  }
+
+  // 如果是昨天，展示昨天+几时:几分
+  if (now.subtract(1, 'day').isSame(target, 'day')) {
+    return i18nT('common:yesterday_detail_time');
+  }
+
+  // 如果是今年，展示某月某日+几时:几分
+  if (now.isSame(target, 'year')) {
+    return target.format('MM-DD') + ' ' + detailTime;
+  }
+
+  // 如果是更久之前，展示某年某月某日+几时:几分
+  return target.format('YYYY-M-D') + ' ' + detailTime;
 };
 
 /* cron time parse */
@@ -48,7 +83,7 @@ export const cronParser2Fields = (cronString: string) => {
   try {
     const cronField = cronParser.parseExpression(cronString).fields;
     return cronField;
-  } catch (error) {
+  } catch {
     return null;
   }
 };
@@ -66,9 +101,11 @@ export const getNextTimeByCronStringAndTimezone = ({
       tz: timezone
     };
     const interval = cronParser.parseExpression(cronString, options);
-    const date = interval.next().toString();
+    const date = String(interval.next());
+
     return new Date(date);
   } catch (error) {
-    return new Date('2099');
+    console.log(`getNextTimeByCronStringAndTimezone error: ${cronString}`, error);
+    return new Date();
   }
 };

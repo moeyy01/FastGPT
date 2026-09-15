@@ -1,0 +1,80 @@
+import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
+
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { NextAPI } from '@/service/middleware/entry';
+import { onCreateApp } from '../create';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import { pushTrack } from '@fastgpt/service/common/middle/tracks/utils';
+import { authApp } from '@fastgpt/service/support/permission/app/auth';
+import { TeamAppCreatePermissionVal } from '@fastgpt/global/support/permission/user/constant';
+import { checkTeamAppTypeLimit } from '@fastgpt/service/support/permission/teamLimit';
+import { getHTTPToolSetRuntimeNode } from '@fastgpt/global/core/app/tool/httpTool/utils';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  CreateHttpToolsBodySchema,
+  type CreateHttpToolsBodyType
+} from '@fastgpt/global/openapi/core/app/httpTools/api';
+import {
+  CreateAppResponseSchema,
+  type CreateAppResponseType
+} from '@fastgpt/global/openapi/core/app/common/api';
+import { HttpToolTypeEnum } from '@fastgpt/global/core/app/tool/httpTool/constants';
+import { encodeHttpToolSetNodesForStorage } from '@fastgpt/service/core/app/jsonSchemaStorage';
+
+async function handler(
+  req: ApiRequestProps<CreateHttpToolsBodyType>
+): Promise<CreateAppResponseType> {
+  const {
+    body: { name, avatar, intro, parentId, createType }
+  } = parseApiInput({
+    req,
+    bodySchema: CreateHttpToolsBodySchema
+  });
+
+  const { teamId, tmbId, userId } = parentId
+    ? await authApp({ req, appId: parentId, per: TeamAppCreatePermissionVal, authToken: true })
+    : await authUserPer({ req, authToken: true, per: TeamAppCreatePermissionVal });
+
+  await checkTeamAppTypeLimit({ teamId, appCheckType: 'tool' });
+
+  const httpToolsetId = await mongoSessionRun(async (session) => {
+    const toolSetRuntimeNode = getHTTPToolSetRuntimeNode({
+      name,
+      avatar: avatar ?? undefined,
+      toolList: [],
+      ...(createType === HttpToolTypeEnum.batch && {
+        baseUrl: '',
+        apiSchemaStr: '',
+        customHeaders: '{}',
+        headerSecret: {}
+      })
+    });
+    const httpToolsetId = await onCreateApp({
+      parentId,
+      name,
+      avatar: avatar ?? undefined,
+      intro: intro ?? undefined,
+      teamId,
+      tmbId,
+      type: AppTypeEnum.httpToolSet,
+      modules: [toolSetRuntimeNode],
+      storageModules: encodeHttpToolSetNodesForStorage([toolSetRuntimeNode]),
+      session
+    });
+
+    return httpToolsetId;
+  });
+
+  pushTrack.createApp({
+    type: AppTypeEnum.httpToolSet,
+    appId: httpToolsetId,
+    uid: userId,
+    teamId,
+    tmbId
+  });
+
+  return CreateAppResponseSchema.parse(httpToolsetId);
+}
+
+export default NextAPI(handler);

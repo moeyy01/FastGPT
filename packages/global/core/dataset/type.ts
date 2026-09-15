@@ -1,0 +1,626 @@
+import { EmbeddingSystemModelDataSchema, LLMSystemModelDataSchema } from '../ai/model.schema';
+import {
+  DataChunkSplitModeEnum,
+  DatasetCollectionDataProcessModeEnum,
+  DatasetCollectionTypeEnum,
+  DatasetStatusEnum,
+  DatasetTypeEnum,
+  SearchScoreTypeEnum,
+  TrainingModeEnum,
+  CollectionTrainingStatusEnum,
+  ChunkSettingModeEnum,
+  ChunkTriggerConfigTypeEnum,
+  ParagraphChunkAIModeEnum,
+  DatasetCollectionTagTypeEnum,
+  DatasetCollectionTagTypeMap
+} from './constants';
+import {
+  ApiDatasetServerSchema,
+  APIFileServerSchema,
+  DingtalkServerSchema,
+  FeishuServerSchema,
+  YuqueServerSchema
+} from './apiDataset/type';
+import { SourceMemberSchema } from '../../support/user/type';
+import { DatasetDataIndexTypeEnum } from './data/constants';
+import { ParentIdSchema } from '../../common/parentFolder/type';
+import z from 'zod';
+import { ObjectIdSchema } from '../../common/type/mongo';
+import { PermissionSchema } from '../../support/permission/controller';
+import { NumSchema } from '../../common/zod';
+import { LOGO_ICON } from '../../common/system/constants';
+
+/* ===== Tag Type ===== */
+/** 标签类型枚举 */
+export { DatasetCollectionTagTypeEnum, DatasetCollectionTagTypeMap };
+export type DatasetCollectionTagType = `${DatasetCollectionTagTypeEnum}`;
+
+/** 选项类标签的预设选项，空选项由前端草稿过滤后再提交。 */
+export const DatasetCollectionTagOptionsSchema = z
+  .array(z.string().trim().min(1))
+  .meta({ description: '选项类标签的预设选项' });
+
+/** 旧字符串标签承载记录首次创建时使用的默认名称；身份只由 fromMigration 标识。 */
+export const DEFAULT_TAG = 'default_tag';
+
+/** Collection 标签值字段：string/number 存对应值，datetime 存 UTC 毫秒时间戳，array 存 string 数组 */
+export const CollectionTagValueFieldSchema = z.union([z.string(), z.number(), z.array(z.string())]);
+
+/** Collection API 的兼容标签输入/展示格式：旧标签名或带名称和值的新格式。 */
+export const CollectionTagLabelSchema = z.union([
+  z.string(),
+  z.object({
+    tag: z.string(),
+    value: CollectionTagValueFieldSchema
+  })
+]);
+export type CollectionTagLabelType = z.infer<typeof CollectionTagLabelSchema>;
+
+/** Collection 标签值类型（新格式） */
+export const CollectionTagValueSchema = z.object({
+  tagId: z.string().meta({ description: '引用 dataset_collection_tags_v2._id' }),
+  value: CollectionTagValueFieldSchema.meta({
+    description:
+      '标签值。string/number 类型存对应值，datetime 类型存 UTC 毫秒时间戳，array 类型存 string 数组'
+  })
+});
+export type CollectionTagValueType = z.infer<typeof CollectionTagValueSchema>;
+
+/** 详情页按标签值筛选的单条条件。同一标签多值为 OR，不同标签由调用方做 AND。 */
+export const CollectionTagFilterItemSchema = z.object({
+  tagId: ObjectIdSchema.meta({
+    example: '68ad85a7463006c963799a05',
+    description: '标签 ID'
+  }),
+  values: z
+    .array(z.union([z.string().min(1), z.number().finite()]))
+    .min(1)
+    .meta({
+      example: ['PRD'],
+      description:
+        '选中的标签值。文本/选项为字符串，数字为数值，日期为 UTC 毫秒时间戳。同一标签多值为 OR'
+    })
+});
+export type CollectionTagFilterItem = z.infer<typeof CollectionTagFilterItemSchema>;
+
+/* ===== Chunk ===== */
+export const ChunkSettingsSchema = z.object({
+  trainingType: z
+    .enum(DatasetCollectionDataProcessModeEnum)
+    .optional()
+    .meta({ description: '训练类型' }),
+
+  chunkTriggerType: z
+    .enum(ChunkTriggerConfigTypeEnum)
+    .optional()
+    .meta({ description: '分块触发时机' }),
+  chunkTriggerMinSize: NumSchema.optional().meta({ description: '分块触发最小大小' }),
+
+  dataEnhanceCollectionName: z.boolean().optional().meta({ description: '增加集合名到分块里' }),
+  imageIndex: z.boolean().optional().meta({ description: '图片索引' }),
+  autoIndexes: z.boolean().optional().meta({ description: '自动生成索引' }),
+  indexPrefixTitle: z.boolean().optional().meta({ description: '索引前缀标题' }),
+
+  chunkSettingMode: z
+    .enum(ChunkSettingModeEnum)
+    .optional()
+    .meta({ description: '系统参数/自定义参数' }),
+  chunkSplitMode: z.enum(DataChunkSplitModeEnum).optional().meta({ description: '分块拆分模式' }),
+  paragraphChunkAIMode: z
+    .enum(ParagraphChunkAIModeEnum)
+    .optional()
+    .meta({ description: '段落分块 AI 模式' }),
+  paragraphChunkDeep: NumSchema.optional().meta({ description: '段落分块深度' }),
+  paragraphChunkMinSize: NumSchema.optional().meta({ description: '段落分块最小大小' }),
+  chunkSize: NumSchema.optional().meta({ description: '分块大小' }),
+  chunkSplitter: z.string().optional().meta({ description: '自定义最高优先分割符号' }),
+  indexSize: NumSchema.optional().meta({ description: '索引大小' }),
+  qaPrompt: z.string().optional().meta({ description: 'QA 拆分提示词' })
+});
+export type ChunkSettingsType = z.infer<typeof ChunkSettingsSchema>;
+
+/* ===== Iultmzh file parse config ===== */
+// 外部文档解析服务开关,整体校验、整体存取;仅当 collection 的 customPdfParse=true
+// 且系统配置了 customPdfParse.url 时生效。缺失字段由读取层用固定默认值补全。
+export const sangforFileParseConfigSchema = z
+  .object({
+    keep_header_footer: z.boolean().optional().meta({
+      description: '是否保留页眉页脚,默认删除'
+    }),
+    keep_appendix: z.boolean().optional().meta({
+      description: '是否保留附录,默认删除首个附录标题后的内容'
+    }),
+    image_analysis: z.boolean().optional().meta({
+      description: '是否保留图片识别(含印章)结果,默认关闭'
+    }),
+    chart_analysis: z.boolean().optional().meta({
+      description: '是否保留图表转表格结果(同时保留原图片),默认关闭'
+    })
+  })
+  .meta({ description: '外部文档解析配置' });
+export type IultmzhFileParseConfigType = z.infer<typeof sangforFileParseConfigSchema>;
+
+/* ===== Dataset ===== */
+export const DatasetSchema = z
+  .object({
+    _id: ObjectIdSchema.meta({ description: '数据集 ID' }),
+    parentId: ParentIdSchema.meta({ description: '父级 ID' }),
+    userId: ObjectIdSchema.optional().meta({ description: '用户 ID', deprecated: true }),
+    teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+    tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+    createTime: z.coerce.date().meta({ description: '创建时间' }),
+    updateTime: z.coerce.date().meta({ description: '更新时间' }),
+    inheritPermission: z.boolean().meta({ description: '继承权限' }),
+
+    avatar: z
+      .preprocess((value) => value ?? undefined, z.string().default(LOGO_ICON))
+      .meta({ description: '头像' }),
+    name: z.string().meta({ description: '名称' }),
+    intro: z.string().meta({ description: '简介' }),
+    type: z.enum(DatasetTypeEnum).meta({ description: '数据集类型' }),
+
+    vectorModelId: z.string().optional().meta({ description: '向量模型 ID' }),
+    agentModelId: z.string().optional().meta({ description: 'AI 模型 ID' }),
+    vlmModelId: z.string().optional().meta({ description: '视觉语言模型 ID' }),
+    vectorModel: z.string().optional().meta({ description: '向量模型', deprecated: true }),
+    agentModel: z.string().optional().meta({ description: 'AI 模型', deprecated: true }),
+    vlmModel: z.string().optional().meta({ description: '视觉语言模型', deprecated: true }),
+
+    websiteConfig: z
+      .object({
+        url: z.string().meta({ description: '网站 URL' }),
+        selector: z.string().meta({ description: '网站选择器' })
+      })
+      .optional()
+      .meta({ description: '网站配置' }),
+    chunkSettings: ChunkSettingsSchema.optional().meta({ description: '分块配置' }),
+
+    sangforFileParseConfig: sangforFileParseConfigSchema
+      .optional()
+      .meta({ description: '外部文档解析配置' }),
+
+    apiDatasetServer: ApiDatasetServerSchema.optional().meta({ description: 'API 服务器配置' }),
+
+    deleteTime: z.coerce.date().nullish().meta({ description: '删除时间' }),
+
+    autoSync: z.boolean().optional().meta({ description: '自动同步' }),
+    externalReadUrl: z.string().optional().meta({ description: '外部读取 URL', deprecated: true }),
+    defaultPermission: z.number().optional().meta({ description: '默认权限', deprecated: true }),
+    apiServer: APIFileServerSchema.optional().meta({
+      description: 'API 服务器配置',
+      deprecated: true
+    }),
+    feishuServer: FeishuServerSchema.optional().meta({
+      description: '飞书服务器配置',
+      deprecated: true
+    }),
+    yuqueServer: YuqueServerSchema.optional().meta({
+      description: '语雀服务器配置',
+      deprecated: true
+    }),
+    dingtalkServer: DingtalkServerSchema.optional().meta({
+      description: '钉钉知识库配置',
+      deprecated: true
+    })
+  })
+  .meta({ description: '知识库' });
+export type DatasetSchemaType = z.infer<typeof DatasetSchema>;
+
+/* ===== Collection ===== */
+export const DatasetCollectionSchema = ChunkSettingsSchema.omit({
+  trainingType: true
+}).extend({
+  _id: ObjectIdSchema.meta({ description: '集合 ID' }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  parentId: ParentIdSchema.meta({ description: '父级 ID' }),
+  name: z.string().meta({ description: '名称' }),
+  type: z.enum(DatasetCollectionTypeEnum).meta({ description: '集合类型' }),
+  tags: z
+    .array(z.union([z.string(), CollectionTagValueSchema]))
+    .optional()
+    .meta({ description: '标签。支持混合格式：String(ObjectId) 旧格式 | { tagId, value } 新格式' }),
+
+  createTime: z.coerce.date().meta({ description: '创建时间' }),
+  updateTime: z.coerce.date().meta({ description: '更新时间' }),
+
+  forbid: z.boolean().optional().meta({ description: '是否禁用' }),
+
+  fileId: z.string().optional().meta({ description: '文件 ID' }),
+  rawLink: z.string().optional().meta({ description: '原始链接' }),
+  externalFileId: z.string().optional().meta({ description: '外部文件 ID' }),
+  apiFileId: z.string().optional().meta({ description: 'API 文件 ID' }),
+  apiFileParentId: z.string().optional().meta({ description: 'API 文件父级 ID' }),
+  externalFileUrl: z.string().optional().meta({ description: '外部文件 URL' }),
+
+  rawTextLength: z.number().optional().meta({ description: '原始文本长度' }),
+  hashRawText: z.string().optional().meta({ description: '文本哈希' }),
+
+  metadata: z.record(z.string(), z.any()).optional().meta({ description: '其他元数据' }),
+
+  customPdfParse: z.boolean().optional().meta({ description: '自定义 PDF 解析' }),
+  trainingType: z
+    .enum(DatasetCollectionDataProcessModeEnum)
+    .optional()
+    .meta({ description: '训练类型' })
+});
+export type DatasetCollectionSchemaType = z.infer<typeof DatasetCollectionSchema>;
+
+export const DatasetCollectionTagsSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '标签 ID' }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  tag: z.string().meta({ description: '标签' }),
+  tagType: z.enum(DatasetCollectionTagTypeEnum).default(DatasetCollectionTagTypeEnum.string).meta({
+    description: '标签类型：string(默认)/number/datetime/array'
+  }),
+  options: DatasetCollectionTagOptionsSchema.optional(),
+  fromMigration: z.boolean().optional().meta({
+    description: '标识该记录是旧标签迁移/旧格式输入创建的 default_tag 承载记录'
+  })
+});
+export type DatasetCollectionTagsSchemaType = z.infer<typeof DatasetCollectionTagsSchema>;
+
+/* ===== Data ===== */
+export const DatasetDataIndexItemSchema = z.object({
+  type: z
+    .enum(DatasetDataIndexTypeEnum)
+    .optional()
+    .default(DatasetDataIndexTypeEnum.custom)
+    .meta({ description: '索引类型, 外部接口不需要传，都 custom，其他 type 是系统自动生成的' }),
+  dataId: z
+    .string()
+    .meta({ description: '向量库里数据 ID（可选），可用于相同索引不重复创建，节省一次向量更新' }),
+  text: z.string().meta({
+    description: `默认就是索引的文本内容，特殊的：
+imageEmbedding - 图片的 objectKey/url`
+  })
+});
+const DatasetDataIndexOptionalSchema = DatasetDataIndexItemSchema.omit({
+  dataId: true
+}).extend({
+  dataId: z.string().optional().meta({
+    example: '68ad85a7463006c963799a05',
+    description: '向量库里数据 ID（可选），可用于相同索引不重复创建，节省一次向量更新'
+  })
+});
+export type DatasetDataIndexItemType = z.infer<typeof DatasetDataIndexItemSchema>;
+
+export const DatasetDataFieldSchema = z.object({
+  q: z.string().meta({ description: '问题/主文本' }),
+  a: z.string().optional().meta({ description: '回答/补充文本' }),
+  imageId: z.string().optional().meta({ description: '图片 ID' })
+});
+export type DatasetDataFieldType = z.infer<typeof DatasetDataFieldSchema>;
+
+export const DatasetDataHistorySchema = DatasetDataFieldSchema.extend({
+  updateTime: z.coerce.date().meta({ description: '更新时间' })
+});
+export type DatasetDataHistoryType = z.infer<typeof DatasetDataHistorySchema>;
+
+export const DatasetDataSchema = DatasetDataFieldSchema.extend({
+  _id: ObjectIdSchema.meta({ description: '数据 ID' }),
+  userId: ObjectIdSchema.optional().meta({ description: '用户 ID', deprecated: true }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  collectionId: ObjectIdSchema.meta({ description: '集合 ID' }),
+  chunkIndex: z.int().min(0).meta({ description: '块索引' }),
+  updateTime: z.coerce.date().meta({ description: '更新时间' }),
+  history: z.array(DatasetDataHistorySchema).optional().meta({ description: '历史版本' }),
+  forbid: z.boolean().optional().meta({ description: '是否禁用' }),
+  fullTextToken: z.string().meta({ description: '全文 token' }),
+  indexes: z.array(DatasetDataIndexItemSchema).meta({ description: '向量索引' }),
+  rebuilding: z.boolean().optional().meta({ description: '重建中' }),
+  synonymVersion: z.number().int().nonnegative().optional().meta({ description: '同义词索引版本' }),
+  synonymRebuildingVersion: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .meta({ description: '正在重建的同义词版本' }),
+  imageDescMap: z.record(z.string(), z.string()).optional().meta({ description: '图片描述映射' }),
+  metadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' })
+});
+export type DatasetDataSchemaType = z.infer<typeof DatasetDataSchema>;
+
+export const DatasetDataTextSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '数据文本 ID' }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  collectionId: ObjectIdSchema.meta({ description: '集合 ID' }),
+  dataId: ObjectIdSchema.meta({ description: '数据 ID' }),
+  fullTextToken: z.string().meta({ description: '全文 token' })
+});
+export type DatasetDataTextSchemaType = z.infer<typeof DatasetDataTextSchema>;
+
+/* ===== Training ===== */
+export const DatasetTrainingSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '训练 ID' }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  collectionId: ObjectIdSchema.meta({ description: '集合 ID' }),
+  billId: z.string().meta({ description: '账单 ID' }),
+  expireAt: z.coerce.date().meta({ description: '过期时间' }),
+  lockTime: z.coerce.date().meta({ description: '锁定时间' }),
+  mode: z.enum(TrainingModeEnum).meta({ description: '训练模式' }),
+  synonymVersion: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .meta({ description: '任务目标同义词版本' }),
+  dataId: ObjectIdSchema.optional().meta({ description: '数据 ID' }),
+  q: z.string().meta({ description: '问题/主文本' }),
+  a: z.string().meta({ description: '回答/补充文本' }),
+  imageId: z.string().optional().meta({ description: '图片 ID' }),
+  imageDescMap: z.record(z.string(), z.string()).optional().meta({ description: '图片描述映射' }),
+  dataMetadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' }),
+  chunkIndex: z.number().meta({ description: '块索引' }),
+  indexSize: z.number().optional().meta({ description: '索引大小' }),
+  weight: z.number().meta({ description: '权重' }),
+  indexes: z
+    .array(DatasetDataIndexItemSchema.omit({ dataId: true }))
+    .meta({ description: '向量索引' }),
+  retryCount: z.number().meta({ description: '重试次数' }),
+  errorMsg: z.string().optional().meta({ description: '错误信息' }),
+
+  userId: ObjectIdSchema.optional().meta({ description: '用户 ID', deprecated: true })
+});
+export type DatasetTrainingSchemaType = z.infer<typeof DatasetTrainingSchema>;
+
+export const CollectionWithDatasetSchema = DatasetCollectionSchema.extend({
+  dataset: DatasetSchema
+});
+export type CollectionWithDatasetType = z.infer<typeof CollectionWithDatasetSchema>;
+
+export const CollectionTrainingStatusSchema = z.object({
+  trainingAmount: z.number().optional().default(0).meta({ description: '剩余训练数量' }),
+  activeTrainingAmount: z
+    .number()
+    .optional()
+    .default(0)
+    .meta({ description: '仍会继续处理的训练数量' }),
+  finalErrorAmount: z.number().optional().default(0).meta({ description: '最终/阻塞异常训练数量' }),
+  hasError: z.boolean().optional().default(false).meta({ description: '是否存在最终/阻塞异常' }),
+  slowestTrainingMode: z.enum(TrainingModeEnum).optional().meta({ description: '最慢训练阶段' }),
+  slowestTrainingStatus: z
+    .enum(CollectionTrainingStatusEnum)
+    .optional()
+    .default(CollectionTrainingStatusEnum.ready)
+    .meta({ description: '最慢训练阶段状态' })
+});
+export type CollectionTrainingStatusType = z.infer<typeof CollectionTrainingStatusSchema>;
+
+/* ====== service type ===== */
+
+/* ================= dataset ===================== */
+export const DatasetSimpleItemSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  avatar: DatasetSchema.shape.avatar,
+  name: z.string().meta({ description: '名称' }),
+  vectorModel: EmbeddingSystemModelDataSchema.meta({ description: '向量模型' })
+});
+export type DatasetSimpleItemType = z.infer<typeof DatasetSimpleItemSchema>;
+export const DatasetListItemSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+  avatar: DatasetSchema.shape.avatar,
+  createTime: z.coerce.date().meta({ description: '创建时间' }),
+  updateTime: z.coerce.date().meta({ description: '更新时间' }),
+  name: z.string().meta({ description: '名称' }),
+  intro: z.string().meta({ description: '简介' }),
+  type: z.enum(DatasetTypeEnum).meta({ description: '数据集类型' }),
+  permission: PermissionSchema,
+  vectorModel: EmbeddingSystemModelDataSchema.optional().meta({
+    description: '向量模型；目录或模型已删除时为空，已停用模型仍返回展示数据'
+  }),
+  inheritPermission: z.boolean().meta({ description: '继承权限' }),
+  private: z.boolean().optional().meta({ description: '是否私有' }),
+  sourceMember: SourceMemberSchema.optional().meta({ description: '来源成员' })
+});
+export type DatasetListItemType = z.infer<typeof DatasetListItemSchema>;
+
+export const DatasetItemSchema = DatasetSchema.omit({
+  // 详情不展示创建时间，避免历史记录尚未补齐该字段时阻断详情读取；列表使用独立 Schema。
+  createTime: true,
+  vectorModel: true,
+  agentModel: true,
+  vlmModel: true
+}).extend({
+  status: z.enum(DatasetStatusEnum).meta({ description: '状态' }),
+  errorMsg: z.string().optional().meta({ description: '错误信息' }),
+  vectorModel: EmbeddingSystemModelDataSchema.optional().meta({
+    description: '向量模型；模型已删除时为空，已停用模型仍返回展示数据'
+  }),
+  agentModel: LLMSystemModelDataSchema.optional().meta({
+    description: 'AI 模型；模型已删除时为空，已停用模型仍返回展示数据'
+  }),
+  vlmModel: LLMSystemModelDataSchema.optional().meta({ description: '视觉语言模型' }),
+  permission: PermissionSchema
+});
+export type DatasetItemType = z.infer<typeof DatasetItemSchema>;
+
+/* ================= tag ===================== */
+export const DatasetTagSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '标签 ID' }),
+  tag: z.string().meta({ description: '标签' }),
+  tagType: z.enum(DatasetCollectionTagTypeEnum).default(DatasetCollectionTagTypeEnum.string).meta({
+    description: '标签类型：string(默认)/number/datetime/array'
+  }),
+  options: DatasetCollectionTagOptionsSchema.optional(),
+  fromMigration: z.boolean().optional().meta({
+    description: '是否为旧标签数据的系统承载定义'
+  })
+});
+export type DatasetTagType = z.infer<typeof DatasetTagSchema>;
+
+export const TagUsageSchema = z.object({
+  tagId: z.string().meta({ description: '标签 ID' }),
+  collections: z.array(z.string()).meta({ description: '集合 ID' })
+});
+export type TagUsageType = z.infer<typeof TagUsageSchema>;
+
+/* ================= collection ===================== */
+export const DatasetCollectionItemSchema = CollectionWithDatasetSchema.extend({
+  // 详情接口的 tags 由 collectionTagsToTagLabel 解析为标签名格式（string | { tag, value }），区别于存储格式（string | { tagId, value }）
+  tags: z
+    .array(CollectionTagLabelSchema)
+    .optional()
+    .meta({ description: '标签。string 为标签名；新格式为 { tag, value }' }),
+  sourceName: z.string().meta({ description: '来源名称' }),
+  sourceId: z.string().optional().meta({ description: '来源 ID' }),
+  file: z
+    .object({
+      filename: z.string().optional().meta({ description: '文件名' }),
+      contentLength: z.number().optional().meta({ description: '文件长度' })
+    })
+    .optional()
+    .meta({ description: '文件信息' }),
+  permission: PermissionSchema,
+  indexAmount: z.number().meta({ description: '索引数量' }),
+  errorCount: z.number().optional().meta({ description: '错误数量' })
+}).merge(CollectionTrainingStatusSchema);
+export type DatasetCollectionItemType = z.infer<typeof DatasetCollectionItemSchema>;
+
+/* ================= data ===================== */
+export const DatasetDataItemSchema = DatasetDataFieldSchema.extend({
+  id: ObjectIdSchema.meta({ description: '数据 ID' }),
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  collectionId: ObjectIdSchema.meta({ description: '集合 ID' }),
+  imagePreivewUrl: z.string().optional().meta({ description: '图片预览 URL' }),
+  updateTime: z.coerce.date().meta({ description: '更新时间' }),
+  sourceName: z.string().meta({ description: '来源名称' }),
+  sourceId: z.string().optional().meta({ description: '来源 ID' }),
+  chunkIndex: z.number().meta({ description: '块索引' }),
+  indexes: z.array(DatasetDataIndexItemSchema).meta({ description: '向量索引' }),
+  imageDescMap: z.record(z.string(), z.string()).optional().meta({ description: '图片描述映射' }),
+  isOwner: z.boolean().meta({ description: '是否为 owner' }),
+  metadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' })
+});
+export type DatasetDataItemType = z.infer<typeof DatasetDataItemSchema>;
+
+// Update dataset data
+export const UpdateDatasetDataPropsSchema = z.object({
+  dataId: ObjectIdSchema.meta({
+    example: '68ad85a7463006c963799a05',
+    description: '数据 ID'
+  }),
+  q: z.string().meta({
+    example: '什么是 FastGPT？',
+    description: '问题/主文本'
+  }),
+  a: z.string().optional().meta({
+    example: 'FastGPT 是一个 AI Agent 构建平台',
+    description: '回答/补充文本'
+  }),
+  indexes: z.array(DatasetDataIndexOptionalSchema).optional().meta({
+    description: '向量索引列表'
+  }),
+  imageId: z.string().optional().meta({
+    description: '图片 ID'
+  }),
+  indexPrefix: z.string().optional().meta({
+    description: '索引前缀标题'
+  }),
+  metadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' })
+});
+export type UpdateDatasetDataPropsType = z.infer<typeof UpdateDatasetDataPropsSchema>;
+
+// Create dataset data
+export const CreateDatasetDataPropsSchema = z.object({
+  teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+  tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+  datasetId: ObjectIdSchema.meta({ description: '数据集 ID' }),
+  collectionId: ObjectIdSchema.meta({ description: '集合 ID' }),
+  chunkIndex: z.int().min(0).optional().meta({ description: '块索引' }),
+  q: z.string().meta({ description: '问题/主文本' }),
+  a: z.string().optional().meta({ description: '回答/补充文本' }),
+  imageId: z.string().optional().meta({ description: '图片 ID' }),
+  indexes: z
+    .array(DatasetDataIndexItemSchema.omit({ dataId: true }))
+    .optional()
+    .meta({ description: '向量索引列表' }),
+  indexPrefix: z.string().optional().meta({ description: '索引前缀标题' }),
+  metadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' })
+});
+export type CreateDatasetDataPropsType = z.infer<typeof CreateDatasetDataPropsSchema>;
+
+/* --------------- file ---------------------- */
+export const DatasetFileSchema = z.object({
+  _id: ObjectIdSchema.meta({ description: '文件 ID' }),
+  length: z.number().meta({ description: '文件长度' }),
+  chunkSize: z.number().meta({ description: '块大小' }),
+  uploadDate: z.coerce.date().meta({ description: '上传时间' }),
+  filename: z.string().meta({ description: '文件名' }),
+  contentType: z.string().meta({ description: '文件类型' }),
+  metadata: z
+    .object({
+      teamId: ObjectIdSchema.meta({ description: '团队 ID' }),
+      tmbId: ObjectIdSchema.meta({ description: '团队成员 ID' }),
+      uid: z.string().meta({ description: '用户 ID' }),
+      encoding: z.string().optional().meta({ description: '编码' })
+    })
+    .meta({ description: '其他元数据' })
+});
+export type DatasetFileSchemaType = z.infer<typeof DatasetFileSchema>;
+
+/* ============= search =============== */
+export const SearchDataResponseItemSchema = DatasetDataItemSchema.omit({
+  teamId: true,
+  indexes: true,
+  isOwner: true,
+  metadata: true
+})
+  .extend({
+    score: z
+      .array(
+        z.object({
+          type: z.enum(SearchScoreTypeEnum).meta({ description: '评分类型' }),
+          value: z.number().meta({ description: '评分值' }),
+          index: z.number().meta({ description: '索引' })
+        })
+      )
+      .meta({ description: '评分列表' }),
+    metadata: z.record(z.string(), z.any()).optional().meta({ description: '自定义元数据' })
+  })
+  .meta({ description: '搜索数据响应项' });
+export type SearchDataResponseItemType = z.infer<typeof SearchDataResponseItemSchema>;
+
+export const SearchDataResponseQuoteItemSchema = SearchDataResponseItemSchema.pick({
+  id: true,
+  chunkIndex: true,
+  datasetId: true,
+  collectionId: true,
+  sourceId: true,
+  sourceName: true,
+  score: true
+}).meta({ description: '搜索数据引用响应项（精简）' });
+export type SearchDataResponseQuoteItemType = z.infer<typeof SearchDataResponseQuoteItemSchema>;
+
+export const SearchDataResponseQuoteListItemSchema = z.union([
+  SearchDataResponseItemSchema,
+  SearchDataResponseQuoteItemSchema
+]);
+export type SearchDataResponseQuoteListItemType = z.infer<
+  typeof SearchDataResponseQuoteListItemSchema
+>;
+
+export const DatasetCiteItemSchema = z
+  .object({
+    _id: ObjectIdSchema.meta({ description: '数据 ID' }),
+    q: z.string().meta({ description: '问题/主文本' }),
+    a: z.string().optional().meta({ description: '回答/补充文本' }),
+    imagePreivewUrl: z.string().optional().meta({ description: '图片预览 URL' }),
+    history: DatasetDataSchema.shape.history.optional(),
+    updateTime: DatasetDataSchema.shape.updateTime,
+    index: DatasetDataSchema.shape.chunkIndex,
+    updated: z.boolean().optional().meta({ description: '是否已更新' })
+  })
+  .meta({
+    description: '知识库引用数据列表'
+  });
+export type DatasetCiteItemType = z.infer<typeof DatasetCiteItemSchema>;

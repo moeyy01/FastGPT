@@ -1,0 +1,160 @@
+---
+title: MCP 发布
+description: 快速了解 FastGPT MCP server
+---
+
+## MCP server 介绍
+
+MCP 协议（Model Context Protocol），是由 Anthropic 在 2024 年 11 月初发布的协议。它的目的在于统一 AI 模型与外部系统之间的通信方式，从而简化 AI 模型与外部系统之间的通信问题。随着 OpenAI 官宣支持 MCP 协议，越来越多的 AI 厂商开始支持 MCP 协议。
+
+MCP 协议主要包含 Client 和 Server 两部分。简单来说，Client 是使用 AI 模型的一方，它通过 MCP Client 可以给模型提供一些调用外部系统的能能力；Server 是提供外部系统调用的一方，也就是实际运行外部系统的一方。
+
+FastGPT MCP Server 功能允许你选择 `多个` 在 FastGPT 上构建好的应用，以 MCP 协议对外提供调用 FastGPT 应用的能力。
+
+FastGPT 支持 `Streamable HTTP` 协议；私有化部署还可以通过独立的 MCP Server 服务提供兼容的 `SSE` 协议。
+
+## FastGPT 使用 MCP server
+
+### 1. 创建 MCP server
+
+登录 FastGPT 后，打开 `工作台`，点击 `MCP server`，即可进入管理页面，这里可以看到你创建的所有 MCP server，以及他们管理的应用数量。
+
+![创建 MCP server](/imgs/mcp_server1.png)
+
+可以自定义 MCP server 名称和选择关联的应用
+
+|                            |                            |
+| -------------------------- | -------------------------- |
+| ![](/imgs/mcp_server2.png) | ![](/imgs/mcp_server3.png) |
+
+### 2. 获取 MCP server 地址
+
+创建好 MCP server 后，可以直接点击 `开始使用`，即可获取 MCP server 访问地址。
+
+|                            |                            |
+| -------------------------- | -------------------------- |
+| ![](/imgs/mcp_server4.png) | ![](/imgs/mcp_server5.png) |
+
+### 3. 使用 MCP server
+
+可以在支持 MCP 协议的客户端使用这些地址，来调用 FastGPT 应用，例如：`Cursor`、`Cherry Studio`。下面以 Cursor 为例，介绍如何使用 MCP server。
+
+打开 Cursor 配置页面，点击 MCP 即可进入 MCP 配置页面，可以点击新建 MCP server 按钮，会跳转到一个 JSON 配置文件，将第二步的 `接入脚本` 复制到 `json 文件` 中，保存文件。
+
+此时返回 Cursor 的 MCP 管理页面，即可看到你创建的 MCP server，记得设成 `enabled` 状态。
+
+|                            |                            |                            |
+| -------------------------- | -------------------------- | -------------------------- |
+| ![](/imgs/mcp_server6.png) | ![](/imgs/mcp_server7.png) | ![](/imgs/mcp_server8.png) |
+
+打开 Cursor 的对话框，切换成 `Agent` 模型，只有这个模型，cursor 才会调用 MCP server。  
+发送一个关于 `fastgpt` 的问题后，可以看到，cursor 调用了一个 MCP 工具（描述为：查询 fastgpt 知识库），也就是调用 FastGPT 应用去进行处理该问题，并返回了结果。
+
+|                            |                             |
+| -------------------------- | --------------------------- |
+| ![](/imgs/mcp_server9.png) | ![](/imgs/mcp_server10.png) |
+
+## 配置身份代理
+
+身份代理允许调用方指定团队成员来执行 MCP 工具。工具执行时会校验该成员对目标应用的读取权限，对话记录和运行记录也归属该成员。适合由网关或统一 MCP 客户端代表不同团队成员发起调用的场景。
+
+### 前提条件
+
+- 只有团队所有者可以为 MCP server 开启身份代理。
+- 被代理用户必须是当前团队内未离开的成员，并且拥有目标应用的读取权限。
+- MCP 发布地址中的 key 是执行凭证，请勿写入公开代码或发送给无关人员。
+
+### 1. 开启身份代理
+
+创建或编辑 MCP server，在发布配置中打开 `身份代理`，然后保存。
+
+未携带身份代理请求头时，工具仍以 MCP server 发布者的身份执行。
+
+### 2. 配置代理身份请求头
+
+身份信息需要放在 MCP transport 请求头中，不要放入工具参数。支持以下请求头：
+
+| 请求头                          | 值                   | 说明                           |
+| ------------------------------- | -------------------- | ------------------------------ |
+| `x-fastgpt-auth-proxy-username` | 团队成员的登录用户名 | 推荐使用，通常为成员的登录邮箱 |
+| `x-fastgpt-auth-proxy-tmb-id`   | FastGPT 团队成员 ID  | 适合已经保存团队成员 ID 的系统 |
+
+两个请求头任选一个即可。同时提供时，必须指向同一团队成员。
+
+支持自定义请求头的 MCP 客户端可以在第 2 步复制的配置中增加 `headers`。以下示例使用 `Streamable HTTP` 地址和登录用户名：
+
+```json
+{
+  "mcpServers": {
+    "fastgpt": {
+      "url": "https://fastgpt.example.com/api/mcp/app/<MCP_KEY>/mcp",
+      "headers": {
+        "x-fastgpt-auth-proxy-username": "member@example.com"
+      }
+    }
+  }
+}
+```
+
+使用团队成员 ID 时，将 `headers` 替换为：
+
+```json
+{
+  "x-fastgpt-auth-proxy-tmb-id": "<TEAM_MEMBER_ID>"
+}
+```
+
+SSE 地址使用相同的请求头。SSE 服务会在建立连接时保存代理身份，因此修改请求头后需要断开并重新连接；`Streamable HTTP` 会逐次读取请求头。
+
+### 3. 验证配置
+
+在 MCP 客户端调用一个已发布工具。调用成功表示代理成员仍在当前团队，并且拥有目标应用的读取权限。
+
+工具列表可以正常显示、工具执行却提示无权限时，依次检查：
+
+1. MCP server 是否已开启 `身份代理`。
+2. 请求头中的用户名或团队成员 ID 是否正确。
+3. 同时传入两个请求头时，它们是否对应同一成员。
+4. 该成员是否仍在发布 MCP server 的团队中。
+5. 该成员是否拥有被调用应用的读取权限。
+
+工具列表只公开工具名称和参数等元数据；FastGPT 会在每次工具执行时重新校验成员状态和应用权限。
+
+## 私有化部署 MCP server 问题
+
+私有化部署版本的 FastGPT，需要升级到 `v4.9.6` 及以上版本才可使用 MCP server 功能。
+
+### 修改 docker-compose.yml 文件
+
+在 `docker-compose.yml` 文件中，加入 `fastgpt-mcp-server` 服务:
+
+```yml
+fastgpt-mcp-server:
+  container_name: fastgpt-mcp-server
+  image: ghcr.io/labring/fastgpt-mcp_server:latest
+  ports:
+    - 3005:3000
+  networks:
+    - fastgpt
+  restart: always
+  environment:
+    - FASTGPT_ENDPOINT=http://fastgpt:3000
+```
+
+### 修改 FastGPT 容器环境变量
+
+在 FastGPT 容器中配置 `SSE_MCP_SERVER_PROXY_ENDPOINT`，值为客户端可访问的 `fastgpt-mcp-server` 地址，末尾不要携带 `/`，例如:
+
+```yaml
+environment:
+  SSE_MCP_SERVER_PROXY_ENDPOINT: https://mcp.fastgpt.cn
+```
+
+### 重启 FastGPT 容器
+
+修改环境变量后，需要重启 FastGPT 服务。启动后，可以在工作台看到 MCP server 服务选项。
+
+```bash
+docker-compose down
+docker-compose up -d
+```

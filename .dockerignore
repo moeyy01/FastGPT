@@ -5,8 +5,10 @@ npm-debug.log
 README.md
 .next
 .git
+projects/volume-manager/dist
 
 .yalc/
 yalc.lock
 testApi/
 *.local.*
+*.local

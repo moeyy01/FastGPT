@@ -1,9 +1,8 @@
 export enum EventNameEnum {
   sendQuestion = 'sendQuestion',
   editQuestion = 'editQuestion',
-
-  requestWorkflowStore = 'requestWorkflowStore',
-  receiveWorkflowStore = 'receiveWorkflowStore'
+  openQuoteReader = 'openQuoteReader',
+  refreshFeedback = 'refreshFeedback'
 }
 
 export const eventBus = {

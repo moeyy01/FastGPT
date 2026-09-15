@@ -1,0 +1,88 @@
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
+import { getDatasetModelReference } from '@fastgpt/service/core/dataset/model';
+import { NextAPI } from '@/service/middleware/entry';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
+import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
+import { rawText2Chunks } from '@fastgpt/service/core/dataset/read';
+import {
+  computedCollectionChunkSettings,
+  getLLMMaxChunkSize,
+  maxPreviewChunkCount
+} from '@fastgpt/global/core/dataset/training/utils';
+
+import { replaceS3KeysToPreviewUrls } from '@fastgpt/service/common/s3/utils/preview';
+import { addDays } from 'date-fns';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  GetRawTextPreviewChunksBodySchema,
+  GetPreviewChunksResponseSchema,
+  type GetRawTextPreviewChunksBody,
+  type GetRawTextPreviewChunksResponse
+} from '@fastgpt/global/openapi/core/dataset/file/api';
+
+async function handler(
+  req: ApiRequestProps<GetRawTextPreviewChunksBody>
+): Promise<GetRawTextPreviewChunksResponse> {
+  const { datasetId, rawText, overlapRatio, ...chunkSettings } = parseApiInput({
+    req,
+    bodySchema: GetRawTextPreviewChunksBodySchema
+  }).body;
+
+  const { dataset } = await authDataset({
+    req,
+    authApiKey: true,
+    authToken: true,
+    datasetId,
+    per: WritePermissionVal
+  });
+  const modelHandle = await getModelHandle();
+  const formatChunkSettings = computedCollectionChunkSettings({
+    ...chunkSettings,
+    llmModel: modelHandle.getLLMModelData(getDatasetModelReference(dataset, 'agent')),
+    vectorModel: modelHandle.getEmbeddingModelData(getDatasetModelReference(dataset, 'embedding'))
+  });
+
+  const chunks = await rawText2Chunks({
+    rawText,
+    chunkTriggerType: formatChunkSettings.chunkTriggerType,
+    chunkTriggerMinSize: formatChunkSettings.chunkTriggerMinSize,
+    chunkSize: formatChunkSettings.chunkSize,
+    paragraphChunkDeep: formatChunkSettings.paragraphChunkDeep,
+    paragraphChunkMinSize: formatChunkSettings.paragraphChunkMinSize,
+    maxSize: getLLMMaxChunkSize(
+      modelHandle.getLLMModelData(getDatasetModelReference(dataset, 'agent'))
+    ),
+    overlapRatio,
+    customReg: formatChunkSettings.chunkSplitter ? [formatChunkSettings.chunkSplitter] : [],
+    chunkSettingMode: formatChunkSettings.chunkSettingMode,
+    trainingType: formatChunkSettings.trainingType,
+    maxChunks: maxPreviewChunkCount
+  });
+
+  const previewChunks = chunks.slice(0, 10);
+  const previewTexts = previewChunks.flatMap(({ q, a }) => [q, a]);
+  const previewTextsWithUrls = await replaceS3KeysToPreviewUrls(
+    previewTexts,
+    addDays(new Date(), 1)
+  );
+  const chunksWithPreviewUrls = previewChunks.map((chunk, index) => ({
+    q: previewTextsWithUrls[index * 2] ?? chunk.q,
+    a: previewTextsWithUrls[index * 2 + 1] ?? chunk.a
+  }));
+
+  return GetPreviewChunksResponseSchema.parse({
+    chunks: chunksWithPreviewUrls,
+    total: chunks.length
+  });
+}
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb'
+    }
+  }
+};
+
+export default NextAPI(handler);

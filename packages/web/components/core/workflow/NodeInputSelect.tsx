@@ -1,124 +1,175 @@
-import React, { useMemo, useRef } from 'react';
-import MyMenu, { type Props as MyMenuProps } from '../../common/MyMenu';
+import React, { useMemo } from 'react';
+import MyMenu, { type MenuItemType } from '../../common/MyMenu';
 import {
   FlowNodeInputMap,
   FlowNodeInputTypeEnum
 } from '@fastgpt/global/core/workflow/node/constant';
-import { Box, Button, Flex, useTheme } from '@chakra-ui/react';
+import { Box, Button, useTheme } from '@chakra-ui/react';
 import MyIcon from '../../common/Icon';
 import { useTranslation } from 'next-i18next';
-import { useConfirm } from '../../../hooks/useConfirm';
+import type { IconNameType } from '../../common/Icon/type';
+
+export const getSelectedRenderTypeState = ({
+  renderTypeList,
+  selectedType
+}: {
+  renderTypeList: FlowNodeInputTypeEnum[];
+  selectedType: FlowNodeInputTypeEnum;
+}) => {
+  const nextRenderTypeList = renderTypeList.includes(selectedType)
+    ? renderTypeList
+    : [selectedType, ...renderTypeList];
+  return {
+    renderTypeList: nextRenderTypeList,
+    selectedType
+  };
+};
 
 const NodeInputSelect = ({
   renderTypeList,
-  renderTypeIndex = 0,
-  onChange
+  selectedType,
+  onChange,
+  isAgentGeneratedMode = false
 }: {
   renderTypeList: string[];
-  renderTypeIndex?: number;
+  selectedType?: string;
   onChange: (e: string) => void;
+  isAgentGeneratedMode?: boolean;
 }) => {
   const { t } = useTranslation();
-  const { openConfirm, ConfirmModal } = useConfirm({
-    title: t('common:core.workflow.Change input type tip')
-  });
-  const renderType = renderTypeList[renderTypeIndex];
+  const renderType = selectedType ?? renderTypeList[0];
   const theme = useTheme();
 
-  const inputList = useRef([
-    {
-      type: FlowNodeInputTypeEnum.reference,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.reference].icon,
-      title: t('common:core.workflow.inputType.Reference')
-    },
-    {
-      type: FlowNodeInputTypeEnum.input,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.input].icon,
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.numberInput,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.numberInput].icon,
+  const inputList = useMemo(
+    () => [
+      {
+        type: FlowNodeInputTypeEnum.reference,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.reference].icon,
+        title: t('common:core.workflow.inputType.Reference')
+      },
+      {
+        type: FlowNodeInputTypeEnum.agentGenerated,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.agentGenerated].icon,
+        title: t('common:core.workflow.inputType.agentGeneratedManaged')
+      },
+      {
+        type: FlowNodeInputTypeEnum.input,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.input].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.numberInput,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.numberInput].icon,
 
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.switch,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.switch].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.textarea,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.textarea].icon,
-
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.JSONEditor,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.JSONEditor].icon,
-
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.addInputParam,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.addInputParam].icon,
-
-      title: t('common:core.workflow.inputType.dynamicTargetInput')
-    },
-    {
-      type: FlowNodeInputTypeEnum.selectApp,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectApp].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.selectLLMModel,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectLLMModel].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.settingLLMModel,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.settingLLMModel].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.selectDataset,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectDataset].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.selectDatasetParamsModal,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectDatasetParamsModal].icon,
-
-      title: t('common:core.workflow.inputType.Manual select')
-    },
-    {
-      type: FlowNodeInputTypeEnum.settingDatasetQuotePrompt,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.settingDatasetQuotePrompt].icon,
-
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.hidden,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.hidden].icon,
-
-      title: t('common:core.workflow.inputType.Manual input')
-    },
-    {
-      type: FlowNodeInputTypeEnum.custom,
-      icon: FlowNodeInputMap[FlowNodeInputTypeEnum.custom].icon,
-
-      title: t('common:core.workflow.inputType.Manual input')
-    }
-  ]);
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.switch,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.switch].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.select,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.select].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.multipleSelect,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.multipleSelect].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.textarea,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.textarea].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.JSONEditor,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.JSONEditor].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.addInputParam,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.addInputParam].icon,
+        title: t('common:core.workflow.inputType.dynamicTargetInput')
+      },
+      {
+        type: FlowNodeInputTypeEnum.selectLLMModel,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectLLMModel].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.settingLLMModel,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.settingLLMModel].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.selectDataset,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectDataset].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.selectDatasetParamsModal,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectDatasetParamsModal].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.settingDatasetQuotePrompt,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.settingDatasetQuotePrompt].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.hidden,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.hidden].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.custom,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.custom].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.selectSkill,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectSkill].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.selectTool,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.selectTool].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.fileSelect,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.fileSelect].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.timePointSelect,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.timePointSelect].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.timeRangeSelect,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.timeRangeSelect].icon,
+        title: t('common:core.workflow.inputType.Manual select')
+      },
+      {
+        type: FlowNodeInputTypeEnum.password,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.password].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      },
+      {
+        type: FlowNodeInputTypeEnum.datasetTagFilter,
+        icon: FlowNodeInputMap[FlowNodeInputTypeEnum.datasetTagFilter].icon,
+        title: t('common:core.workflow.inputType.Manual input')
+      }
+    ],
+    [t]
+  );
 
   const renderList = useMemo(
     () =>
-      inputList.current.map((input) => ({
+      inputList.map((input) => ({
         label: input.title,
         icon: input.icon,
         renderType: input.type,
@@ -128,33 +179,89 @@ const NodeInputSelect = ({
           onChange(input.type);
         }
       })),
-    [renderType]
+    [inputList, onChange, renderType]
   );
 
   const filterMenuList = useMemo(
-    () => renderList.filter((item) => renderTypeList.includes(item.renderType)),
+    () =>
+      renderList
+        .filter((item) => renderTypeList.includes(item.renderType))
+        .map((item) => ({
+          ...item,
+          type: 'gray' as MenuItemType,
+          menuItemStyles: {
+            fontWeight: 'medium',
+            minH: 7,
+            h: 7,
+            px: 1,
+            py: 0,
+            mb: 0,
+            borderRadius: 'xs'
+          }
+        })),
     [renderTypeList, renderList]
   );
   const renderTypeData = useMemo(
-    () => inputList.current.find((item) => item.type === renderType) || inputList.current[0],
-    [renderType]
+    () => inputList.find((item) => item.type === renderType) || inputList[0],
+    [inputList, renderType]
   );
+  const shouldShowActiveCheck =
+    isAgentGeneratedMode || renderTypeList.includes(FlowNodeInputTypeEnum.agentGenerated);
 
   return (
     <MyMenu
-      offset={[-0.5, -0.5]}
+      offset={[-0.5, 0.5]}
+      trigger="click"
+      size="mini"
+      width={isAgentGeneratedMode ? 116 : 'auto'}
       Button={
         <Button
-          size={'xs'}
-          leftIcon={<MyIcon name={renderTypeData.icon as any} w={'14px'} />}
+          leftIcon={
+            <MyIcon name={renderTypeData.icon as any} w={'14px'} color={'primary.600'} mr={-0.5} />
+          }
+          rightIcon={
+            <MyIcon
+              name={'common/select'}
+              w={'0.8rem'}
+              color={'myGray.500'}
+              mx={-1}
+              sx={{
+                'button:hover &': {
+                  color: 'primary.600'
+                }
+              }}
+            />
+          }
           variant={'grayBase'}
           border={theme.borders.base}
-          borderRadius={'xs'}
+          borderColor={'myGray.200'}
+          borderRadius={'sm'}
+          px={'8px'}
+          fontSize={'mini'}
+          color={'myGray.600'}
+          bg={'myGray.100'}
+          minH={'28px'}
+          h={'28px'}
+          w={renderType === FlowNodeInputTypeEnum.datasetTagFilter ? '90px' : undefined}
         >
-          <Box fontWeight={'medium'}>{renderTypeData.title}</Box>
+          {renderTypeData.title}
         </Button>
       }
-      menuList={[{ children: filterMenuList }]}
+      menuList={[
+        {
+          children: filterMenuList.map((item) => ({
+            ...item,
+            label: (
+              <Box display={'flex'} alignItems={'center'} justifyContent={'space-between'} gap={3}>
+                <Box>{item.label}</Box>
+                {shouldShowActiveCheck && item.isActive && (
+                  <MyIcon name={'common/check' as IconNameType} w={'14px'} color={'primary.600'} />
+                )}
+              </Box>
+            )
+          }))
+        }
+      ]}
     />
   );
 };

@@ -1,174 +1,327 @@
-import { useState, useRef, useTransition, useEffect } from 'react';
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *
+ */
+
+import type { CSSProperties } from 'react';
+import React, { Fragment, useEffect, useMemo, useState, useTransition, useRef } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin';
+import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
+import { ListPlugin } from '@lexical/react/LexicalListPlugin';
+import { CheckListPlugin } from '@lexical/react/LexicalCheckListPlugin';
+import { TabIndentationPlugin } from '@lexical/react/LexicalTabIndentationPlugin';
 import LexicalErrorBoundary from '@lexical/react/LexicalErrorBoundary';
+import { HeadingNode, QuoteNode } from '@lexical/rich-text';
+import { ListItemNode, ListNode } from '@lexical/list';
+import { CodeHighlightNode, CodeNode } from '@lexical/code';
 import VariableLabelPickerPlugin from './plugins/VariableLabelPickerPlugin';
-import { Box } from '@chakra-ui/react';
+import ListDisplayFixPlugin from './plugins/ListDisplayFixPlugin';
+import { Box, Flex } from '@chakra-ui/react';
 import styles from './index.module.scss';
 import VariablePlugin from './plugins/VariablePlugin';
 import { VariableNode } from './plugins/VariablePlugin/node';
-import { EditorState, LexicalEditor } from 'lexical';
+import type { LexicalEditor } from 'lexical';
 import OnBlurPlugin from './plugins/OnBlurPlugin';
-import MyIcon from '../../Icon';
-import { EditorVariableLabelPickerType, EditorVariablePickerType } from './type.d';
+import type { FormPropsType } from './type';
+import { type EditorVariableLabelPickerType, type EditorVariablePickerType } from './type';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
 import FocusPlugin from './plugins/FocusPlugin';
-import { textToEditorState } from './utils';
+import { textToEditorState, editorStateToText } from './utils';
 import { MaxLengthPlugin } from './plugins/MaxLengthPlugin';
 import { VariableLabelNode } from './plugins/VariableLabelPlugin/node';
 import VariableLabelPlugin from './plugins/VariableLabelPlugin';
-import { useDeepCompareEffect } from 'ahooks';
-import VariablePickerPlugin from './plugins/VariablePickerPlugin';
+import MarkdownPlugin from './plugins/MarkdownPlugin';
+import MyIcon from '../../Icon';
+import ListExitPlugin from './plugins/ListExitPlugin';
+import KeyDownPlugin from './plugins/KeyDownPlugin';
+import EditablePlugin from './plugins/EditablePlugin';
+import SkillPickerPlugin from './plugins/SkillPickerPlugin';
+import type { SkillLabelItemType } from './plugins/SkillLabelPlugin';
+import SkillLabelPlugin from './plugins/SkillLabelPlugin';
+import { SkillNode } from './plugins/SkillLabelPlugin/node';
+import type { SkillOptionItemType } from './plugins/SkillPickerPlugin';
+
+const Placeholder = ({ children, padding }: { children: React.ReactNode; padding: string }) => (
+  <Box
+    position={'absolute'}
+    top={0}
+    left={0}
+    right={0}
+    bottom={0}
+    p={padding}
+    pointerEvents={'none'}
+    overflow={'hidden'}
+  >
+    <Box
+      color={'myGray.400'}
+      fontSize={'mini'}
+      userSelect={'none'}
+      whiteSpace={'pre-wrap'}
+      wordBreak={'break-all'}
+      h={'100%'}
+    >
+      {children}
+    </Box>
+  </Box>
+);
+
+export type EditorProps = {
+  isRichText?: boolean;
+  variables?: EditorVariablePickerType[];
+  variableLabels?: EditorVariableLabelPickerType[];
+  onAddToolFromEditor?: (toolKey: string) => Promise<string>;
+  onRemoveToolFromEditor?: (toolId: string) => void;
+  onConfigureTool?: (toolId: string) => void;
+
+  value: string;
+
+  skillOption?: SkillOptionItemType;
+  onRemoveSkill?: (id: string) => void;
+  onClickSkill?: (id: string) => void;
+  selectedSkills?: SkillLabelItemType[];
+
+  showOpenModal?: boolean;
+  minH?: number;
+  maxH?: number;
+  maxLength?: number;
+  placeholder?: string;
+  placeholderPadding?: string;
+  isInvalid?: boolean;
+  isDisabled?: boolean;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+  ExtensionPopover?: ((e: {
+    onChangeText: (text: string) => void;
+    iconButtonStyle: Record<string, any>;
+  }) => React.ReactNode)[];
+  boxStyle?: CSSProperties;
+};
 
 export default function Editor({
-  h = 200,
+  isRichText = false,
+  minH = 200,
+  maxH = 400,
   maxLength,
-  showResize = true,
   showOpenModal = true,
   onOpenModal,
-  variables,
-  variableLabels,
+
+  // {{}} 类型，已弃用
+  variables = [],
+  // /选择变量
+  variableLabels = [],
+  // @选择技能
+  skillOption,
+  selectedSkills,
+  onClickSkill,
+  onRemoveSkill,
+
   onChange,
+  onChangeText,
   onBlur,
-  value,
+  value = '',
   placeholder = '',
-  isFlow
-}: {
-  h?: number;
-  maxLength?: number;
-  showResize?: boolean;
-  showOpenModal?: boolean;
-  onOpenModal?: () => void;
-  variables: EditorVariablePickerType[];
-  variableLabels: EditorVariableLabelPickerType[];
-  onChange?: (editorState: EditorState, editor: LexicalEditor) => void;
-  onBlur?: (editor: LexicalEditor) => void;
-  value?: string;
-  placeholder?: string;
-  isFlow?: boolean;
-}) {
+  placeholderPadding = '12px 14px',
+  bg = 'white',
+  isInvalid,
+  isDisabled = false,
+  onKeyDown,
+  ExtensionPopover,
+  boxStyle
+}: EditorProps &
+  FormPropsType & {
+    onOpenModal?: () => void;
+    onChange: (editor: LexicalEditor) => void;
+    onChangeText?: ((text: string) => void) | undefined;
+    onBlur?: (editor: LexicalEditor) => void;
+  }) {
   const [key, setKey] = useState(getNanoid(6));
-  const [_, startSts] = useTransition();
-  const [height, setHeight] = useState(h);
+  const [, startSts] = useTransition();
   const [focus, setFocus] = useState(false);
+  const [scrollHeight, setScrollHeight] = useState(0);
+  const editorOutputRef = useRef(value);
+  const pendingSkillsRef = useRef<Map<string, SkillLabelItemType>>(new Map());
 
   const initialConfig = {
-    namespace: 'promptEditor',
-    nodes: [VariableNode, VariableLabelNode],
-    editorState: textToEditorState(value),
+    namespace: isRichText ? 'richPromptEditor' : 'promptEditor',
+    nodes: [
+      VariableNode,
+      VariableLabelNode,
+      SkillNode,
+      // Only register rich text nodes when in rich text mode
+      ...(isRichText
+        ? [HeadingNode, ListNode, ListItemNode, QuoteNode, CodeNode, CodeHighlightNode]
+        : [])
+    ],
+    editorState: textToEditorState(value, isRichText),
     onError: (error: Error) => {
-      throw error;
+      console.error('Lexical errror', error);
     }
   };
 
-  const initialY = useRef(0);
-  const handleMouseDown = (e: React.MouseEvent) => {
-    initialY.current = e.clientY;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaY = e.clientY - initialY.current;
-      setHeight((prevHeight) => (prevHeight + deltaY < h * 0.5 ? h * 0.5 : prevHeight + deltaY));
-      initialY.current = e.clientY;
-    };
-
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  };
-
-  useDeepCompareEffect(() => {
-    if (focus) return;
+  // 变量插件会同步 props；仅在外部文本值变化时重建编辑器。
+  useEffect(() => {
+    if (value === editorOutputRef.current) return;
     setKey(getNanoid(6));
-  }, [value, variables, variableLabels]);
+  }, [value]);
+
+  const showFullScreenIcon = useMemo(() => {
+    return showOpenModal && scrollHeight > maxH;
+  }, [showOpenModal, scrollHeight, maxH]);
+
+  const iconButtonStyle = useMemo(
+    () => ({
+      position: 'absolute' as const,
+      bottom: 1,
+      right: showFullScreenIcon ? '34px' : 2,
+      zIndex: 10,
+      cursor: 'pointer',
+      borderRadius: '6px',
+      background: 'rgba(255, 255, 255, 0.01)',
+      backdropFilter: 'blur(6.6666669845581055px)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      w: 6,
+      h: 6
+    }),
+    [showFullScreenIcon]
+  );
 
   return (
     <Box
+      className="nowheel"
       position={'relative'}
       width={'full'}
-      h={`${height}px`}
       cursor={'text'}
       color={'myGray.700'}
+      bg={focus ? 'white' : bg}
+      borderRadius={'md'}
     >
       <LexicalComposer initialConfig={initialConfig} key={key}>
-        <PlainTextPlugin
-          contentEditable={
-            <ContentEditable
-              className={isFlow ? styles.contentEditable_isFlow : styles.contentEditable}
+        {/* Text type */}
+        {isRichText ? (
+          <RichTextPlugin
+            contentEditable={
+              <ContentEditable
+                className={`${
+                  isDisabled
+                    ? styles.contentEditable_disabled
+                    : isInvalid
+                      ? styles.contentEditable_invalid
+                      : styles.contentEditable
+                } ${styles.richText}`}
+                style={{
+                  minHeight: `${minH}px`,
+                  maxHeight: `${maxH}px`,
+                  ...boxStyle
+                }}
+              />
+            }
+            placeholder={<Placeholder padding={placeholderPadding}>{placeholder}</Placeholder>}
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+        ) : (
+          <PlainTextPlugin
+            contentEditable={
+              <ContentEditable
+                className={
+                  isDisabled
+                    ? styles.contentEditable_disabled
+                    : isInvalid
+                      ? styles.contentEditable_invalid
+                      : styles.contentEditable
+                }
+                style={{
+                  minHeight: `${minH}px`,
+                  maxHeight: `${maxH}px`,
+                  ...boxStyle
+                }}
+              />
+            }
+            placeholder={<Placeholder padding={placeholderPadding}>{placeholder}</Placeholder>}
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+        )}
+
+        <>
+          {/* Basic Plugin */}
+          <>
+            <HistoryPlugin />
+            <MaxLengthPlugin maxLength={maxLength || 999999} />
+            <FocusPlugin focus={focus} setFocus={setFocus} />
+            <KeyDownPlugin onKeyDown={onKeyDown} />
+            <OnBlurPlugin onBlur={onBlur} />
+            <OnChangePlugin
+              ignoreSelectionChange
+              onChange={(editorState, editor) => {
+                editorOutputRef.current = editorStateToText(editor);
+                const rootElement = editor.getRootElement();
+                setScrollHeight(rootElement?.scrollHeight || 0);
+                startSts(() => {
+                  onChange?.(editor);
+                });
+              }}
             />
-          }
-          placeholder={
-            <Box
-              position={'absolute'}
-              top={0}
-              left={0}
-              right={0}
-              bottom={0}
-              py={3}
-              px={4}
-              pointerEvents={'none'}
-              overflow={'overlay'}
-            >
-              <Box
-                color={'myGray.400'}
-                fontSize={'mini'}
-                userSelect={'none'}
-                whiteSpace={'pre-wrap'}
-                wordBreak={'break-all'}
-                h={'100%'}
-              >
-                {placeholder}
-              </Box>
-            </Box>
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <HistoryPlugin />
-        <MaxLengthPlugin maxLength={maxLength || 999999} />
-        <FocusPlugin focus={focus} setFocus={setFocus} />
-        <OnChangePlugin
-          onChange={(editorState, editor) => {
-            startSts(() => {
-              onChange?.(editorState, editor);
-            });
-          }}
-        />
-        <VariableLabelPlugin variables={variableLabels} />
-        <VariableLabelPickerPlugin variables={variableLabels} isFocus={focus} />
-        <VariablePlugin variables={variables} />
-        <VariablePickerPlugin variables={variableLabels.length > 0 ? [] : variables} />
-        <OnBlurPlugin onBlur={onBlur} />
+            <EditablePlugin isDisabled={isDisabled || !onChangeText} />
+          </>
+
+          {/* 定制交互插件 */}
+          {variables.length > 0 && (
+            <>
+              <VariablePlugin variables={variables} />
+              {/* <VariablePickerPlugin variables={variables} /> */}
+            </>
+          )}
+
+          {variableLabels.length > 0 && (
+            <>
+              <VariableLabelPlugin variables={variableLabels} />
+              <VariableLabelPickerPlugin variables={variableLabels} isFocus={focus} />
+            </>
+          )}
+
+          {skillOption && onClickSkill && onRemoveSkill && selectedSkills && (
+            <>
+              <SkillLabelPlugin
+                selectedSkills={selectedSkills}
+                onClickSkill={onClickSkill}
+                onRemoveSkill={onRemoveSkill}
+                pendingSkillsRef={pendingSkillsRef}
+              />
+              <SkillPickerPlugin
+                skillOption={skillOption}
+                isFocus={focus}
+                pendingSkillsRef={pendingSkillsRef}
+              />
+            </>
+          )}
+
+          {isRichText && (
+            <>
+              <ListDisplayFixPlugin />
+              <TabIndentationPlugin />
+              <ListPlugin />
+              <CheckListPlugin />
+              <ListExitPlugin />
+              <MarkdownPlugin />
+            </>
+          )}
+        </>
       </LexicalComposer>
-      {showResize && (
-        <Box
-          position={'absolute'}
-          right={'0'}
-          bottom={'-1'}
-          zIndex={9}
-          cursor={'ns-resize'}
-          px={'2px'}
-          onMouseDown={handleMouseDown}
-        >
-          <MyIcon name={'common/editor/resizer'} width={'14px'} height={'14px'} />
-        </Box>
-      )}
-      {showOpenModal && (
-        <Box
-          zIndex={10}
-          position={'absolute'}
-          bottom={0}
-          right={2}
-          cursor={'pointer'}
-          onClick={onOpenModal}
-        >
-          <MyIcon name={'common/fullScreenLight'} w={'14px'} color={'myGray.600'} />
-        </Box>
+
+      {onChangeText &&
+        ExtensionPopover?.map((renderPopover, index) => (
+          <Fragment key={index}>{renderPopover({ iconButtonStyle, onChangeText })}</Fragment>
+        ))}
+      {showFullScreenIcon && (
+        <Flex onClick={onOpenModal} {...iconButtonStyle} right={2}>
+          <MyIcon name={'common/fullScreenLight'} w={'1rem'} color={'myGray.500'} />
+        </Flex>
       )}
     </Box>
   );

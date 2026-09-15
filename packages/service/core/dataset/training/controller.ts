@@ -1,195 +1,294 @@
 import { MongoDatasetTraining } from './schema';
 import type {
-  PushDatasetDataChunkProps,
-  PushDatasetDataProps,
-  PushDatasetDataResponse
-} from '@fastgpt/global/core/dataset/api.d';
+  PushDataChunkType,
+  PushDataResponseType
+} from '@fastgpt/global/openapi/core/dataset/data/api';
 import { TrainingModeEnum } from '@fastgpt/global/core/dataset/constants';
-import { simpleText } from '@fastgpt/global/common/string/tools';
-import { ClientSession } from '../../../common/mongo';
-import { getLLMModel, getVectorModel } from '../../ai/model';
-import { addLog } from '../../../common/system/log';
-import { getCollectionWithDataset } from '../controller';
+import { type ClientSession } from '../../../common/mongo';
+import { isImageEmbeddingModel } from '../../ai/model';
+import type {
+  EmbeddingSystemModelDataType,
+  LLMSystemModelDataType
+} from '@fastgpt/global/core/ai/model.schema';
+import { mongoSessionRun } from '../../../common/mongo/sessionRun';
+import { i18nT } from '@fastgpt/global/common/i18n/utils';
+import { getLLMMaxChunkSize } from '../../../../global/core/dataset/training/utils';
+import { retryFn } from '@fastgpt/global/common/system/utils';
+import { getLogger, LogCategories } from '../../../common/logger';
+import { checkTimerLock, deleteTimerLock } from '../../../common/system/timerLock/utils';
+import { BLOCKED_LOCK_TIME } from './query';
 
-export const lockTrainingDataByTeamId = async (teamId: string): Promise<any> => {
+const logger = getLogger(LogCategories.MODULE.DATASET.TRAINING);
+
+export const lockTrainingDataByTeamId = async (
+  teamId: string,
+  currentTrainingId?: string
+): Promise<any> => {
+  const timerId = `lock_training_data--${teamId}`;
+  const errorMsg = i18nT('common:code_error.team_error.ai_points_not_enough');
+
+  const lockCurrentTraining = () => {
+    if (!currentTrainingId) return Promise.resolve();
+
+    return MongoDatasetTraining.updateOne(
+      {
+        teamId,
+        _id: currentTrainingId
+      },
+      {
+        lockTime: BLOCKED_LOCK_TIME,
+        errorMsg
+      }
+    );
+  };
+
+  // 5 分钟闸门：并发/多节点调用时，只有首个抢到锁的会执行；TTL 作为兜底
+  const acquired = await checkTimerLock({ timerId, lockMinuted: 30 });
+  if (!acquired) {
+    // 其它 worker 已在执行团队级锁定时，当前已领取任务仍需要单独标记，避免最后一次重试被扣到 0 后不可见。
+    await lockCurrentTraining().catch((error) => {
+      logger.error('lock current training data failed', { teamId, currentTrainingId, error });
+    });
+    return;
+  }
+
   try {
     await MongoDatasetTraining.updateMany(
       {
-        teamId
+        teamId,
+        $or: [
+          { retryCount: { $gt: 0 } },
+          ...(currentTrainingId ? [{ _id: currentTrainingId }] : [])
+        ]
       },
       {
-        lockTime: new Date('2999/5/5')
+        lockTime: BLOCKED_LOCK_TIME,
+        errorMsg
       }
     );
-  } catch (error) {}
+  } catch (error) {
+    logger.error('lockTrainingDataByTeamId failed', { teamId, error });
+  } finally {
+    // 执行完立即释放锁
+    await deleteTimerLock({ timerId }).catch(() => {});
+  }
 };
 
-export const pushDataListToTrainingQueueByCollectionId = async ({
-  collectionId,
-  ...props
-}: {
-  teamId: string;
-  tmbId: string;
-  session?: ClientSession;
-} & PushDatasetDataProps) => {
-  const {
-    datasetId: { _id: datasetId, agentModel, vectorModel }
-  } = await getCollectionWithDataset(collectionId);
-  return pushDataListToTrainingQueue({
-    ...props,
-    datasetId,
-    collectionId,
-    agentModel,
-    vectorModel
-  });
-};
-
-export async function pushDataListToTrainingQueue({
+/**
+ * 按训练阶段写入待处理数据。辅助模型对象只用于分块上限，缺失时不额外丢弃上游已分块的数据。
+ * 解析队列可显式传入 VLM 配置状态，将可用性校验留给实际图片处理阶段；其他调用方保持原有检查。
+ */
+export const pushDataListToTrainingQueue = async ({
   teamId,
   tmbId,
   datasetId,
   collectionId,
   agentModel,
   vectorModel,
+  vlmModel,
+  vlmModelConfigured = !!vlmModel,
   data,
-  prompt,
   billId,
-  trainingMode = TrainingModeEnum.chunk,
+  mode = TrainingModeEnum.chunk,
+  indexSize,
   session
 }: {
   teamId: string;
   tmbId: string;
   datasetId: string;
-  agentModel: string;
-  vectorModel: string;
-  session?: ClientSession;
-} & PushDatasetDataProps): Promise<PushDatasetDataResponse> {
-  const checkModelValid = async () => {
-    const agentModelData = getLLMModel(agentModel);
-    if (!agentModelData) {
-      return Promise.reject(`File model ${agentModel} is inValid`);
-    }
-    const vectorModelData = getVectorModel(vectorModel);
-    if (!vectorModelData) {
-      return Promise.reject(`Vector model ${vectorModel} is inValid`);
-    }
+  collectionId: string;
 
-    if (trainingMode === TrainingModeEnum.chunk) {
+  data: PushDataChunkType[];
+  mode?: TrainingModeEnum;
+
+  agentModel?: LLMSystemModelDataType;
+  vectorModel: EmbeddingSystemModelDataType;
+  vlmModel?: LLMSystemModelDataType;
+  /** 是否配置了 VLM 引用，不代表模型当前可用；未传时沿用模型对象是否存在的判断。 */
+  vlmModelConfigured?: boolean;
+
+  indexSize?: number;
+
+  billId: string;
+  session?: ClientSession;
+}): Promise<PushDataResponseType> => {
+  const vectorModelData = vectorModel;
+  const agentModelData = agentModel;
+
+  const { maxToken, weight } = await (async () => {
+    if (mode === TrainingModeEnum.chunk) {
       return {
-        maxToken: vectorModelData.maxToken * 1.3,
-        model: vectorModelData.model,
-        weight: vectorModelData.weight
+        maxToken: Infinity,
+        weight: vectorModelData.config.weight
       };
     }
-
-    if (trainingMode === TrainingModeEnum.qa || trainingMode === TrainingModeEnum.auto) {
+    if (mode === TrainingModeEnum.qa || mode === TrainingModeEnum.auto) {
       return {
-        maxToken: agentModelData.maxContext * 0.8,
-        model: agentModelData.model,
+        maxToken: agentModelData ? getLLMMaxChunkSize(agentModelData) : Infinity,
+        weight: 0
+      };
+    }
+    if (mode === TrainingModeEnum.image || mode === TrainingModeEnum.imageParse) {
+      const vllmModelData = vlmModel;
+      if (!vlmModelConfigured) {
+        if (mode === TrainingModeEnum.image && isImageEmbeddingModel(vectorModelData)) {
+          return {
+            maxToken: Infinity,
+            weight: vectorModelData.config.weight
+          };
+        }
+        return Promise.reject(i18nT('common:error_vlm_not_config'));
+      }
+      return {
+        maxToken: vllmModelData ? getLLMMaxChunkSize(vllmModelData) : Infinity,
         weight: 0
       };
     }
 
-    return Promise.reject(`Training mode "${trainingMode}" is inValid`);
-  };
-
-  const { model, maxToken, weight } = await checkModelValid();
+    return Promise.reject(`Training mode "${mode}" is inValid`);
+  })();
 
   // format q and a, remove empty char
-  data.forEach((item) => {
-    item.q = simpleText(item.q);
-    item.a = simpleText(item.a);
+  data = data.filter((item) => {
+    const q = item.q || '';
+    const a = item.a || '';
 
-    item.indexes = item.indexes
-      ?.map((index) => {
-        return {
-          ...index,
-          text: simpleText(index.text)
-        };
-      })
-      .filter(Boolean);
-  });
-
-  // filter repeat or equal content
-  const set = new Set();
-  const filterResult: Record<string, PushDatasetDataChunkProps[]> = {
-    success: [],
-    overToken: [],
-    repeat: [],
-    error: []
-  };
-
-  // filter repeat content
-  data.forEach((item) => {
-    if (!item.q) {
-      filterResult.error.push(item);
+    // filter repeat content
+    if (!item.imageId && !q) {
       return;
     }
 
-    const text = item.q + item.a;
+    const text = q + a;
 
-    // count q token
-    const token = item.q.length;
-
-    if (token > maxToken) {
-      filterResult.overToken.push(item);
+    // Oversize llm tokens
+    if (text.length > maxToken) {
       return;
     }
 
-    if (set.has(text)) {
-      console.log('repeat', item);
-      filterResult.repeat.push(item);
-    } else {
-      filterResult.success.push(item);
-      set.add(text);
-    }
+    return true;
   });
 
   // insert data to db
-  const insertLen = filterResult.success.length;
-  const failedDocuments: PushDatasetDataChunkProps[] = [];
+  const batchSize = 500; // Batch insert size
+  const maxBatchesPerTransaction = 20; // Every session can insert at most 20 batches
 
-  // 使用 insertMany 批量插入
-  try {
-    await MongoDatasetTraining.insertMany(
-      filterResult.success.map((item) => ({
+  const insertDataIterative = async (
+    dataToInsert: typeof data,
+    session: ClientSession
+  ): Promise<number> => {
+    let insertedCount = 0;
+
+    for (let i = 0; i < dataToInsert.length; i += batchSize) {
+      const batch = dataToInsert.slice(i, i + batchSize);
+
+      if (batch.length === 0) continue;
+
+      const result = await MongoDatasetTraining.insertMany(
+        batch.map((item) => ({
+          teamId,
+          tmbId,
+          datasetId,
+          collectionId,
+          billId,
+          mode,
+          ...(item.q && { q: item.q }),
+          ...(item.a && { a: item.a }),
+          ...(item.imageId && { imageId: item.imageId }),
+          ...(item.metadata && { dataMetadata: item.metadata }),
+          chunkIndex: item.chunkIndex ?? 0,
+          indexSize,
+          weight: weight ?? 0,
+          indexes: item.indexes,
+          retryCount: 5
+        })),
+        {
+          session,
+          ordered: true, // 改为 true: 任何失败立即停止,事务回滚
+          rawResult: true,
+          includeResultMetadata: false
+        }
+      );
+
+      // ordered: true 模式下,成功必定等于批次大小
+      insertedCount += result.insertedCount;
+
+      logger.debug('Training data insert progress', {
+        insertedCount,
+        total: dataToInsert.length
+      });
+    }
+
+    return insertedCount;
+  };
+
+  // 大数据量分段事务处理 (避免事务超时)
+  const chunkSize = maxBatchesPerTransaction * batchSize; // 10,000 条
+  const start = Date.now();
+
+  if (data.length > chunkSize) {
+    logger.info('Large dataset detected, using chunked transactions', {
+      itemCount: data.length,
+      chunkSize
+    });
+
+    let totalInserted = 0;
+
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+
+      await retryFn(async () => {
+        const inserted = await mongoSessionRun(async (chunkSession) => {
+          return insertDataIterative(chunk, chunkSession);
+        });
+        totalInserted += inserted;
+      });
+    }
+
+    logger.info('Chunked transactions completed', { durationMs: Date.now() - start });
+
+    return { insertLen: totalInserted };
+  }
+
+  // 小数据量单事务处理
+  if (session) {
+    const insertedCount = await insertDataIterative(data, session);
+    logger.info('Single transaction completed', { durationMs: Date.now() - start });
+    return { insertLen: insertedCount };
+  } else {
+    const insertedCount = await mongoSessionRun(async (session) => {
+      return insertDataIterative(data, session);
+    });
+    logger.info('Single transaction completed', { durationMs: Date.now() - start });
+    return { insertLen: insertedCount };
+  }
+};
+
+export const pushDatasetToParseQueue = async ({
+  teamId,
+  tmbId,
+  datasetId,
+  collectionId,
+  billId,
+  session
+}: {
+  teamId: string;
+  tmbId: string;
+  datasetId: string;
+  collectionId: string;
+  billId: string;
+  session: ClientSession;
+}) => {
+  await MongoDatasetTraining.create(
+    [
+      {
         teamId,
         tmbId,
         datasetId,
         collectionId,
         billId,
-        mode: trainingMode,
-        prompt,
-        model,
-        q: item.q,
-        a: item.a,
-        chunkIndex: item.chunkIndex ?? 0,
-        weight: weight ?? 0,
-        indexes: item.indexes
-      })),
-      {
-        session,
-        ordered: false
+        mode: TrainingModeEnum.parse
       }
-    );
-  } catch (error: any) {
-    addLog.error(`Insert error`, error);
-    // 如果有错误，将失败的文档添加到失败列表中
-    error.writeErrors?.forEach((writeError: any) => {
-      failedDocuments.push(data[writeError.index]);
-    });
-    console.log('failed', failedDocuments);
-  }
-
-  // 对于失败的文档，尝试单独插入
-  for await (const item of failedDocuments) {
-    await MongoDatasetTraining.create(item);
-  }
-
-  delete filterResult.success;
-
-  return {
-    insertLen,
-    ...filterResult
-  };
-}
+    ],
+    { session, ordered: true }
+  );
+};

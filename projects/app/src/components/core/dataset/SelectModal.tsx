@@ -1,16 +1,15 @@
-import { getDatasets, getDatasetPaths } from '@/web/core/dataset/api';
-import MyModal from '@fastgpt/web/components/common/MyModal';
-import { useQuery } from '@tanstack/react-query';
-import React, { Dispatch, useMemo, useState } from 'react';
+import { getDatasetPaths, getDatasetsV2 } from '@/web/core/dataset/api';
+import MyModal from '@fastgpt/web/components/v2/common/MyModal';
+import React, { type Dispatch, useState } from 'react';
 import { useTranslation } from 'next-i18next';
 import { Box } from '@chakra-ui/react';
-import ParentPaths from '@/components/common/ParentPaths';
-import MyBox from '@fastgpt/web/components/common/MyBox';
-
-type PathItemType = {
-  parentId: string;
-  parentName: string;
-};
+import FolderPath from '@/components/common/folder/Path';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { useScrollPagination } from '@fastgpt/web/hooks/useScrollPagination';
+import type {
+  ParentIdType,
+  ParentTreePathItemType
+} from '@fastgpt/global/common/parentFolder/type';
 
 const DatasetSelectContainer = ({
   isOpen,
@@ -22,8 +21,8 @@ const DatasetSelectContainer = ({
   children
 }: {
   isOpen: boolean;
-  setParentId: Dispatch<string>;
-  paths: PathItemType[];
+  setParentId: Dispatch<ParentIdType>;
+  paths: ParentTreePathItemType[];
   onClose: () => void;
   tips?: string | null;
   isLoading?: boolean;
@@ -33,11 +32,10 @@ const DatasetSelectContainer = ({
 
   return (
     <MyModal
-      iconSrc="/imgs/workflow/db.png"
       title={
         <Box fontWeight={'normal'}>
-          <ParentPaths
-            paths={paths.map((path, i) => ({
+          <FolderPath
+            paths={paths.map((path) => ({
               parentId: path.parentId,
               parentName: path.parentName
             }))}
@@ -59,29 +57,58 @@ const DatasetSelectContainer = ({
       w={'100%'}
       maxW={['90vw', '900px']}
       isCentered
+      isLoading={isLoading}
     >
-      <MyBox isLoading={isLoading} h={'100%'}>
-        {children}
-      </MyBox>
+      {children}
     </MyModal>
   );
 };
 
 export function useDatasetSelect() {
-  const [parentId, setParentId] = useState<string>('');
+  const [parentId, setParentId] = useState<ParentIdType>('');
+  const [searchKey, setSearchKey] = useState('');
 
-  const { data, isFetching } = useQuery(['loadDatasetData', parentId], () =>
-    Promise.all([getDatasets({ parentId }), getDatasetPaths(parentId)])
+  const {
+    data: datasets,
+    isLoading: isLoadingDatasets,
+    total,
+    ScrollData,
+    fetchData,
+    refreshList
+  } = useScrollPagination(getDatasetsV2, {
+    params: {
+      parentId,
+      searchKey
+    },
+    pageSize: 50,
+    refreshDeps: [parentId, searchKey],
+    throttleWait: 300
+  });
+
+  const { data: paths = [], loading: isLoadingPaths } = useRequest(
+    () =>
+      searchKey.trim()
+        ? Promise.resolve([])
+        : getDatasetPaths({ sourceId: parentId, type: 'current' }),
+    {
+      manual: false,
+      refreshDeps: [parentId, searchKey]
+    }
   );
-
-  const paths = useMemo(() => [...(data?.[1] || [])], [data]);
 
   return {
     parentId,
     setParentId,
-    datasets: data?.[0] || [],
+    searchKey,
+    setSearchKey,
+    datasets,
+    total,
     paths,
-    isFetching
+    isFetching: isLoadingDatasets || isLoadingPaths,
+    isLoadingDatasets,
+    ScrollData,
+    fetchData,
+    loadDatasets: refreshList
   };
 }
 

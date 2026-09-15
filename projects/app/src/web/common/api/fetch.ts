@@ -1,16 +1,36 @@
-import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
-import { getErrText } from '@fastgpt/global/common/error/utils';
-import type { ChatHistoryItemResType } from '@fastgpt/global/core/chat/type.d';
-import type { StartChatFnProps } from '@/components/core/chat/ChatContainer/type';
-import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import {
-  // refer to https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web
+  SseResponseEventEnum,
+  StreamResumeCompletedEvent,
+  StreamResumePhaseEnum,
+  StreamResumePhaseEvent,
+  StreamResumeUnavailableEvent,
+  StreamResumeUnavailableReasonEnum
+} from '@fastgpt/global/core/workflow/runtime/constants';
+import {
+  ChatSourceTypeEnum,
+  STREAM_RESUME_REQUEST_HEADER,
+  STREAM_RESUME_REQUEST_HEADER_ENABLED
+} from '@fastgpt/global/core/chat/constants';
+import { getErrResponse, getErrText } from '@fastgpt/global/common/error/utils';
+import { i18nT } from '@fastgpt/global/common/i18n/utils';
+import type { StartChatFnProps } from '@/components/core/chat/ChatContainer/type';
+import type { ChatAuthTargetInput } from '@/web/core/chat/utils';
+import {
   EventStreamContentType,
-  fetchEventSource
+  fetchEventSource,
+  type FetchEventSourceInit
 } from '@fortaine/fetch-event-source';
-import { TeamErrEnum } from '@fastgpt/global/common/error/code/team';
-import { useSystemStore } from '../system/useSystemStore';
 import { formatTime2YMDHMW } from '@fastgpt/global/common/string/time';
+import { getWebReqUrl } from '@fastgpt/web/common/system/utils';
+import type { OnOptimizePromptProps } from '@/components/common/PromptEditor/OptimizerPopover';
+import type { OnOptimizeCodeProps } from '@/pageComponents/app/detail/WorkflowComponents/Flow/nodes/NodeCode/Copilot';
+import { AuxiliaryGenerationEventEnum } from '@fastgpt/global/core/ai/auxiliaryGeneration/constants';
+import type { StreamNoNeedToBeResumeType } from '@fastgpt/global/openapi/core/ai/api';
+import {
+  FASTGPT_WEB_REQUEST_HEADER,
+  FASTGPT_WEB_REQUEST_VALUE
+} from '@fastgpt/global/common/system/constants';
+import { getLanguageRequestHeaders } from '@fastgpt/web/i18n/utils';
 
 type StreamFetchProps = {
   url?: string;
@@ -20,216 +40,745 @@ type StreamFetchProps = {
 };
 export type StreamResponseType = {
   responseText: string;
-  [DispatchNodeResponseKeyEnum.nodeResponse]: ChatHistoryItemResType[];
+  title?: string;
 };
-class FatalError extends Error {}
+export type StreamFetchErrorType = {
+  message: string;
+  responseText: string;
+  statusText?: string;
+  code?: number;
+};
+export type ResumeStreamResponseType = StreamResponseType & {
+  completedChat?: StreamNoNeedToBeResumeType;
+  resumeUnavailable?: ResumeUnavailableType;
+};
+export type ResumeStreamErrorType = {
+  message: string;
+  responseText: string;
+  isStreamError?: boolean;
+};
 
-export const streamFetch = ({
-  url = '/api/v1/chat/completions',
-  data,
-  onMessage,
-  abortCtrl
-}: StreamFetchProps) =>
-  new Promise<StreamResponseType>(async (resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      abortCtrl.abort('Time out');
+/** 将任意流错误稳定收敛为字符串，避免畸形响应让错误处理本身再次抛错。 */
+const getSafeStreamErrorText = (error: unknown, fallbackMessage: string) => {
+  try {
+    const message = getErrText(error, fallbackMessage);
+    return typeof message === 'string' ? message : fallbackMessage;
+  } catch {
+    return fallbackMessage;
+  }
+};
+
+/** 保留流请求错误的业务标识，供调用方区分可恢复冲突与普通生成错误。 */
+export const createStreamFetchError = ({
+  error,
+  fallbackMessage,
+  responseText
+}: {
+  error: unknown;
+  fallbackMessage: string;
+  responseText: string;
+}): StreamFetchErrorType => {
+  const errorResponse = getErrResponse(error);
+
+  return {
+    message: getSafeStreamErrorText(error, fallbackMessage),
+    responseText,
+    ...(typeof errorResponse?.statusText === 'string'
+      ? { statusText: errorResponse.statusText }
+      : {}),
+    ...(typeof errorResponse?.code === 'number' ? { code: errorResponse.code } : {})
+  };
+};
+
+export type ResumeUnavailableType = {
+  reason: `${StreamResumeUnavailableReasonEnum}`;
+};
+
+/** 只有进入 live 阶段才说明历史追赶完成且服务端流已成功接管；同一连接只通知一次。 */
+export const createResumeReadyNotifier = (onResumeReady?: () => void) => {
+  let notified = false;
+
+  return (phase: string) => {
+    if (notified || phase !== StreamResumePhaseEnum.live) return;
+
+    notified = true;
+    onResumeReady?.();
+  };
+};
+
+const shouldSendStreamResumeHeader = (url: string) =>
+  new Set([
+    '/api/v2/chat/completions',
+    '/api/proApi/core/chat/chatHome',
+    '/api/core/chat/chatTest',
+    '/api/proApi/core/chat/chatAgentHelper/completions',
+    '/api/core/ai/skill/debugChat',
+    '/api/proApi/core/ai/skill/debugChat'
+  ]).has(url);
+
+type CommonResponseType = {
+  responseValueId?: string;
+};
+type AnswerQueueItem = CommonResponseType & {
+  event: SseResponseEventEnum.fastAnswer | SseResponseEventEnum.answer;
+  text?: string;
+  reasoningText?: string;
+};
+
+const STREAM_TYPING_QUEUE_COUNT_WHILE_STREAMING = 1;
+
+/**
+ * 控制客户端流式文本的打字机消费速度。
+ *
+ * 流仍在持续返回时保持稳定慢吐，避免模型输出快或网络批量到达时一次性渲染太多字符；
+ * 服务端已 close 后一次性清空队列，使最后一批内容在同一次 UI 提交中完整显示。
+ */
+export const getStreamTypingQueueConsumeCount = ({
+  queueLength,
+  finished
+}: {
+  queueLength: number;
+  finished: boolean;
+}) => {
+  if (queueLength <= 0) return 0;
+
+  return finished ? queueLength : Math.min(queueLength, STREAM_TYPING_QUEUE_COUNT_WHILE_STREAMING);
+};
+
+type HandleEventSourceDataParams = {
+  event: string;
+  data: string;
+  onmessage: StartChatFnProps['generatingMessage'];
+  enqueue: (data: AnswerQueueItem) => void;
+  onerror: (err: unknown) => void;
+  splitAnswerTextByCharacter?: boolean;
+};
+/** 解析单条 SSE 数据；只有回答文本进入打字队列，其他事件立即派发。 */
+export function handleEventSourceData(params: HandleEventSourceDataParams) {
+  const { event, data, onmessage, enqueue, onerror, splitAnswerTextByCharacter = true } = params;
+
+  if (data === '[DONE]') {
+    return;
+  }
+
+  try {
+    const parsed: any = JSON.parse(data);
+    if (typeof parsed !== 'object') throw new Error('Invalid JSON');
+
+    const { responseValueId, ...obj } = parsed;
+
+    switch (event) {
+      case SseResponseEventEnum.toolCall:
+      case SseResponseEventEnum.toolParams:
+      case SseResponseEventEnum.toolResponse:
+      case SseResponseEventEnum.interactive:
+      case SseResponseEventEnum.plan:
+      case SseResponseEventEnum.planStatus:
+      case SseResponseEventEnum.skillCall: {
+        onmessage({ responseValueId, event, ...obj });
+        break;
+      }
+
+      case SseResponseEventEnum.answer: {
+        const reasoningText = obj.choices?.[0]?.delta?.reasoning_content || '';
+        enqueue({ responseValueId, event, reasoningText });
+
+        const content = obj.choices?.[0]?.delta?.content || '';
+
+        if (splitAnswerTextByCharacter) {
+          for (const item of content) {
+            enqueue({ responseValueId, event, text: item });
+          }
+        } else {
+          enqueue({ responseValueId, event, text: content });
+        }
+
+        break;
+      }
+
+      case SseResponseEventEnum.fastAnswer: {
+        const reasoningText = obj.choices?.[0]?.delta?.reasoning_content || '';
+        enqueue({ responseValueId, event, reasoningText });
+
+        const text = obj.choices?.[0]?.delta?.content || '';
+        enqueue({ responseValueId, event, text });
+
+        break;
+      }
+
+      case SseResponseEventEnum.flowNodeResponse: {
+        onmessage({ event, nodeResponse: obj });
+        break;
+      }
+
+      case SseResponseEventEnum.updateVariables: {
+        onmessage({ event, variables: obj });
+        break;
+      }
+
+      case AuxiliaryGenerationEventEnum.chatAgentConfig: {
+        onmessage({ event, formData: obj });
+        break;
+      }
+
+      case AuxiliaryGenerationEventEnum.status: {
+        onmessage({ event, ...obj });
+        break;
+      }
+
+      case SseResponseEventEnum.sandboxStatus: {
+        onmessage({ event, sandboxStatus: obj });
+        break;
+      }
+
+      case SseResponseEventEnum.error: {
+        onerror(obj);
+        break;
+      }
+
+      case SseResponseEventEnum.workflowDuration: {
+        onmessage({ event, ...obj });
+        break;
+      }
+
+      case SseResponseEventEnum.flowNodeStatus: {
+        onmessage({ event, ...obj });
+        break;
+      }
+
+      case SseResponseEventEnum.chatTitle: {
+        onmessage({ event, title: obj.title });
+        break;
+      }
+
+      default: {
+        throw new Error(`Unsupported event: ${event}`);
+      }
+    }
+  } catch {
+    // NOOP
+  }
+}
+
+/** FetchEventSourceInit 将 headers 收窄为 Record；RequestInit 为 HeadersInit，需先归一化 */
+function headersInitToRecord(headers: HeadersInit | undefined): Record<string, string> | undefined {
+  if (headers === undefined) return undefined;
+  if (headers instanceof Headers) {
+    const out: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      out[key] = value;
+    });
+    return out;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers);
+  }
+  return headers;
+}
+
+type SSEFetchParams = {
+  url: string;
+  requestInit: RequestInit;
+  onmessage: StartChatFnProps['generatingMessage'];
+  abortController: AbortController;
+};
+function $ssefetch(params: SSEFetchParams) {
+  const { url, requestInit, onmessage, abortController } = params;
+  const signal = abortController.signal;
+  const { headers: initHeaders, ...restRequestInit } = requestInit;
+
+  return new Promise<StreamResponseType>(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      abortController.abort('Timeout');
     }, 60000);
 
-    // response data
     let responseText = '';
-    let responseQueue: (
-      | { event: SseResponseEventEnum.fastAnswer | SseResponseEventEnum.answer; text: string }
-      | {
-          event:
-            | SseResponseEventEnum.toolCall
-            | SseResponseEventEnum.toolParams
-            | SseResponseEventEnum.toolResponse;
-          [key: string]: any;
-        }
-    )[] = [];
-    let errMsg: string | undefined;
-    let responseData: ChatHistoryItemResType[] = [];
+    let title: string | undefined;
+    let responseQueue: AnswerQueueItem[] = [];
+    let streamError: unknown;
     let finished = false;
 
-    const finish = () => {
-      if (errMsg !== undefined) {
-        return failedFinish();
-      }
-      return resolve({
-        responseText,
-        responseData
-      });
+    const applyAnswerItem = (item: AnswerQueueItem) => {
+      onmessage(item);
+      if (item.text) responseText += item.text;
     };
-    const failedFinish = (err?: any) => {
-      finished = true;
-      reject({
-        message: getErrText(err, errMsg ?? '响应过程出现异常~'),
-        responseText
-      });
+    const flushAnswerQueue = () => {
+      responseQueue.forEach(applyAnswerItem);
+      responseQueue = [];
+    };
+    const dispatchNonAnswerMessage: StartChatFnProps['generatingMessage'] = (message) => {
+      // 控制事件是顺序屏障：先补齐此前收到的文本，再立即更新工具或状态。
+      flushAnswerQueue();
+      onmessage(message);
     };
 
-    const isAnswerEvent = (event: SseResponseEventEnum) =>
-      event === SseResponseEventEnum.answer || event === SseResponseEventEnum.fastAnswer;
-    // animate response to make it looks smooth
-    function animateResponseText() {
-      // abort message
-      if (abortCtrl.signal.aborted) {
-        responseQueue.forEach((item) => {
-          onMessage(item);
-          if (isAnswerEvent(item.event)) {
-            responseText += item.text;
-          }
-        });
-        return finish();
+    const onfailed = (err?: any) => {
+      finished = true;
+      reject(
+        createStreamFetchError({
+          error: err,
+          fallbackMessage: i18nT('common:response_processing_error'),
+          responseText
+        })
+      );
+    };
+
+    const onfinish = () => {
+      if (streamError !== undefined) {
+        return onfailed(streamError);
+      }
+
+      return resolve({ responseText, title });
+    };
+
+    function animateResponseLoop() {
+      if (signal.aborted) {
+        flushAnswerQueue();
+
+        return onfinish();
       }
 
       if (responseQueue.length > 0) {
-        const fetchCount = Math.max(1, Math.round(responseQueue.length / 30));
+        const fetchCount = getStreamTypingQueueConsumeCount({
+          queueLength: responseQueue.length,
+          finished
+        });
         for (let i = 0; i < fetchCount; i++) {
-          const item = responseQueue[i];
-          onMessage(item);
-          if (isAnswerEvent(item.event)) {
-            responseText += item.text;
-          }
+          applyAnswerItem(responseQueue[i]);
         }
 
         responseQueue = responseQueue.slice(fetchCount);
       }
 
       if (finished && responseQueue.length === 0) {
-        return finish();
+        return onfinish();
       }
 
-      requestAnimationFrame(animateResponseText);
+      requestAnimationFrame(animateResponseLoop);
     }
-    // start animation
-    animateResponseText();
+
+    animateResponseLoop();
+
+    const enqueue = (data: AnswerQueueItem) => {
+      responseQueue.push(data);
+
+      if (document.hidden) {
+        animateResponseLoop();
+      }
+    };
 
     try {
-      // auto complete variables
-      const variables = data?.variables || {};
-      variables.cTime = formatTime2YMDHMW();
-
-      const requestData = {
-        method: 'POST',
+      const fetchEventSourceOptions: FetchEventSourceInit = {
+        ...restRequestInit,
         headers: {
-          'Content-Type': 'application/json'
+          ...getLanguageRequestHeaders(),
+          ...headersInitToRecord(initHeaders)
         },
-        signal: abortCtrl.signal,
-        body: JSON.stringify({
-          ...data,
-          variables,
-          detail: true,
-          stream: true
-        })
-      };
-
-      // send request
-      await fetchEventSource(url, {
-        ...requestData,
+        signal,
         async onopen(res) {
-          clearTimeout(timeoutId);
+          clearTimeout(timer);
           const contentType = res.headers.get('content-type');
 
-          // not stream
           if (contentType?.startsWith('text/plain')) {
-            return failedFinish(await res.clone().text());
+            return onfailed(await res.clone().text());
           }
 
-          // failed stream
-          if (
-            !res.ok ||
-            !res.headers.get('content-type')?.startsWith(EventStreamContentType) ||
-            res.status !== 200
-          ) {
+          if (!res.ok || !contentType?.startsWith(EventStreamContentType) || res.status !== 200) {
             try {
-              failedFinish(await res.clone().json());
+              onfailed(await res.clone().json());
             } catch {
-              const errText = await res.clone().text();
-              if (!errText.startsWith('event: error')) {
-                failedFinish();
+              const error = await res.clone().text();
+              if (!error.startsWith('event: error')) {
+                onfailed();
               }
             }
           }
         },
-        onmessage({ event, data }) {
-          if (data === '[DONE]') {
-            return;
-          }
-
-          // parse text to json
-          const parseJson = (() => {
+        onmessage: ({ event, data }) => {
+          if (event === SseResponseEventEnum.chatTitle) {
             try {
-              return JSON.parse(data);
-            } catch (error) {
-              return {};
-            }
-          })();
-          // console.log(parseJson, event);
-          if (event === SseResponseEventEnum.answer) {
-            const text = parseJson.choices?.[0]?.delta?.content || '';
-            for (const item of text) {
-              responseQueue.push({
-                event,
-                text: item
-              });
-            }
-          } else if (event === SseResponseEventEnum.fastAnswer) {
-            const text = parseJson.choices?.[0]?.delta?.content || '';
-            responseQueue.push({
-              event,
-              text
-            });
-          } else if (
-            event === SseResponseEventEnum.toolCall ||
-            event === SseResponseEventEnum.toolParams ||
-            event === SseResponseEventEnum.toolResponse
-          ) {
-            responseQueue.push({
-              event,
-              ...parseJson
-            });
-          } else if (event === SseResponseEventEnum.flowNodeStatus) {
-            onMessage({
-              event,
-              ...parseJson
-            });
-          } else if (event === SseResponseEventEnum.flowResponses && Array.isArray(parseJson)) {
-            responseData = parseJson;
-          } else if (event === SseResponseEventEnum.updateVariables) {
-            onMessage({
-              event,
-              variables: parseJson
-            });
-          } else if (event === SseResponseEventEnum.error) {
-            if (parseJson.statusText === TeamErrEnum.aiPointsNotEnough) {
-              useSystemStore.getState().setIsNotSufficientModal(true);
-            }
-            errMsg = getErrText(parseJson, '流响应错误');
+              title = JSON.parse(data)?.title;
+            } catch {}
           }
+          handleEventSourceData({
+            event,
+            data,
+            onmessage: dispatchNonAnswerMessage,
+            enqueue,
+            onerror: (err) => void (streamError = err)
+          });
         },
         onclose() {
           finished = true;
         },
         onerror(err) {
-          if (err instanceof FatalError) {
-            throw err;
+          clearTimeout(timer);
+          onfailed(err);
+
+          throw err instanceof Error ? err : new Error(getErrText(err));
+        },
+        openWhenHidden: true
+      };
+
+      await fetchEventSource(getWebReqUrl(url), fetchEventSourceOptions);
+    } catch (err: unknown) {
+      clearTimeout(timer);
+
+      if (abortController.signal.aborted) {
+        finished = true;
+        return;
+      }
+
+      onfailed(err);
+    }
+  });
+}
+
+type ResumeSSEFetchParams = {
+  url: string;
+  onmessage: StartChatFnProps['generatingMessage'];
+  onResumeUnavailable?: (data: ResumeUnavailableType) => void;
+  onResumeReady?: () => void;
+  controller: AbortController;
+};
+function $resumefetch({
+  url,
+  onmessage,
+  onResumeUnavailable,
+  onResumeReady,
+  controller
+}: ResumeSSEFetchParams) {
+  const signal = controller.signal;
+
+  return new Promise<ResumeStreamResponseType>(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort('Timeout');
+    }, 60000);
+
+    let responseText = '';
+    let title: string | undefined;
+    let responseQueue: AnswerQueueItem[] = [];
+    let error: unknown;
+    let finished = false;
+    let resumePhase: StreamResumePhaseEnum = StreamResumePhaseEnum.catchup;
+    let completedChat: StreamNoNeedToBeResumeType | undefined;
+    let resumeUnavailable: ResumeUnavailableType | undefined;
+    const notifyResumeReady = createResumeReadyNotifier(onResumeReady);
+
+    const onfinish = () => {
+      if (error !== undefined) {
+        return onfailed(error);
+      }
+      return resolve({ responseText, title, completedChat, resumeUnavailable });
+    };
+    const onAbort = () => {
+      finished = true;
+      responseQueue = [];
+      return onfinish();
+    };
+    const onfailed = (err?: any) => {
+      finished = true;
+      const message = getSafeStreamErrorText(
+        err ?? error,
+        i18nT('common:response_processing_error')
+      );
+      reject({
+        message,
+        responseText,
+        isStreamError: error !== undefined
+      } satisfies ResumeStreamErrorType);
+    };
+
+    const applyAnswerItem = (item: AnswerQueueItem) => {
+      onmessage(item);
+      if (item.text) responseText += item.text;
+    };
+    const flushAnswerQueue = () => {
+      responseQueue.forEach(applyAnswerItem);
+      responseQueue = [];
+    };
+    const dispatchNonAnswerMessage: StartChatFnProps['generatingMessage'] = (message) => {
+      // 恢复直播同样以控制事件为屏障，避免工具状态越过尚未展示的回答。
+      flushAnswerQueue();
+      onmessage(message);
+    };
+
+    function animateResponseLoop() {
+      if (signal.aborted) {
+        return onAbort();
+      }
+
+      if (responseQueue.length > 0) {
+        const fetchCount = getStreamTypingQueueConsumeCount({
+          queueLength: responseQueue.length,
+          finished
+        });
+        for (let i = 0; i < fetchCount; i++) {
+          const item = responseQueue[i];
+          applyAnswerItem(item);
+        }
+
+        responseQueue = responseQueue.slice(fetchCount);
+      }
+
+      if (finished && responseQueue.length === 0) {
+        return onfinish();
+      }
+
+      requestAnimationFrame(animateResponseLoop);
+    }
+
+    animateResponseLoop();
+
+    const enqueue = (data: AnswerQueueItem) => {
+      if (signal.aborted) return;
+
+      if (resumePhase === StreamResumePhaseEnum.catchup) {
+        applyAnswerItem(data);
+        return;
+      }
+
+      responseQueue.push(data);
+
+      if (document.hidden) {
+        animateResponseLoop();
+      }
+    };
+
+    try {
+      const req = new Request(getWebReqUrl(url));
+
+      await fetchEventSource(req, {
+        headers: {
+          ...getLanguageRequestHeaders(),
+          [FASTGPT_WEB_REQUEST_HEADER]: FASTGPT_WEB_REQUEST_VALUE
+        },
+        signal: signal,
+        async onopen(res) {
+          clearTimeout(timer);
+          const contentType = res.headers.get('content-type');
+
+          if (contentType?.startsWith('text/plain')) {
+            return onfailed(await res.clone().text());
           }
-          clearTimeout(timeoutId);
-          failedFinish(getErrText(err));
+
+          if (!res.ok || !contentType?.startsWith(EventStreamContentType) || res.status !== 200) {
+            try {
+              onfailed(await res.clone().json());
+            } catch {
+              const error = await res.clone().text();
+              if (!error.startsWith('event: error')) {
+                onfailed();
+              }
+            }
+          }
+        },
+        onmessage: ({ event, data }) => {
+          if (signal.aborted) return;
+
+          if (event === StreamResumePhaseEvent) {
+            if (data === StreamResumePhaseEnum.catchup || data === StreamResumePhaseEnum.live) {
+              resumePhase = data;
+              notifyResumeReady(data);
+            }
+            return;
+          }
+
+          if (event === StreamResumeCompletedEvent) {
+            try {
+              completedChat = JSON.parse(data) as StreamNoNeedToBeResumeType;
+            } catch (parseErr) {
+              error = getErrText(parseErr, i18nT('common:resume_completed_data_parse_failed'));
+            }
+            return;
+          }
+
+          if (event === StreamResumeUnavailableEvent) {
+            try {
+              resumeUnavailable = JSON.parse(data) as ResumeUnavailableType;
+            } catch {
+              resumeUnavailable = {
+                reason: StreamResumeUnavailableReasonEnum.mirrorUnavailable
+              };
+            }
+            onResumeUnavailable?.(resumeUnavailable);
+            return;
+          }
+
+          if (data === '[DONE]') {
+            return;
+          }
+
+          if (event === SseResponseEventEnum.chatTitle) {
+            try {
+              title = JSON.parse(data)?.title;
+            } catch {}
+          }
+
+          handleEventSourceData({
+            event,
+            data,
+            onmessage: dispatchNonAnswerMessage,
+            enqueue: enqueue,
+            onerror: (e) => void (error = e),
+            splitAnswerTextByCharacter: resumePhase === StreamResumePhaseEnum.live
+          });
+        },
+        onclose() {
+          finished = true;
+        },
+        onerror(err) {
+          clearTimeout(timer);
+
+          if (controller.signal.aborted || finished) {
+            return;
+          }
+
+          const errorMessage = getSafeStreamErrorText(
+            err,
+            i18nT('common:response_processing_error')
+          );
+          onfailed(errorMessage);
+          throw new Error(errorMessage);
         },
         openWhenHidden: true
       });
-    } catch (err: any) {
-      clearTimeout(timeoutId);
+    } catch (err: unknown) {
+      clearTimeout(timer);
 
-      if (abortCtrl.signal.aborted) {
-        finished = true;
-
-        return;
+      if (controller.signal.aborted) {
+        return onAbort();
       }
-      console.log(err, 'fetch error');
 
-      failedFinish(err);
+      onfailed(err);
     }
   });
+}
+
+export const streamFetch = ({
+  url = '/api/v2/chat/completions',
+  data,
+  onMessage,
+  abortCtrl
+}: StreamFetchProps) => {
+  const rawVars = data?.variables;
+  const variables = {
+    ...(rawVars && typeof rawVars === 'object' && !Array.isArray(rawVars)
+      ? (rawVars as Record<string, unknown>)
+      : {}),
+    cTime: formatTime2YMDHMW(new Date())
+  };
+  const shouldEnableStreamResume = shouldSendStreamResumeHeader(url);
+
+  return $ssefetch({
+    url,
+    requestInit: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getLanguageRequestHeaders(),
+        ...(shouldEnableStreamResume && {
+          [STREAM_RESUME_REQUEST_HEADER]: STREAM_RESUME_REQUEST_HEADER_ENABLED
+        })
+      },
+      body: JSON.stringify({
+        ...data,
+        variables,
+        detail: true,
+        stream: true,
+        retainDatasetCite: data.retainDatasetCite ?? true
+      })
+    },
+    onmessage: onMessage,
+    abortController: abortCtrl
+  });
+};
+
+type StreamResumeFetchParams = ChatAuthTargetInput & {
+  chatId: string;
+  onmessage: StartChatFnProps['generatingMessage'];
+  onResumeUnavailable?: (data: ResumeUnavailableType) => void;
+  onResumeReady?: () => void;
+  controller: AbortController;
+};
+
+let activeResumeController: AbortController | undefined;
+
+export async function streamResumeFetch(params: StreamResumeFetchParams) {
+  const { chatId, outLinkAuthData, onmessage, onResumeUnavailable, onResumeReady, controller } =
+    params;
+  const query = new URLSearchParams({ chatId });
+  if (outLinkAuthData?.shareId && outLinkAuthData?.outLinkUid) {
+    query.set('outLinkAuthData', JSON.stringify(outLinkAuthData));
+  } else if ('skillId' in params && params.skillId) {
+    query.set('skillId', params.skillId);
+  } else {
+    query.set('appId', params.appId!);
+    if (params.sourceType === ChatSourceTypeEnum.chatAgentHelper) {
+      query.set('sourceType', ChatSourceTypeEnum.chatAgentHelper);
+    }
+  }
+
+  const url = `/api/core/chat/resume?${query}`;
+
+  if (activeResumeController && activeResumeController !== controller) {
+    activeResumeController.abort('replace');
+  }
+  activeResumeController = controller;
+
+  return $resumefetch({ url, onmessage, onResumeUnavailable, onResumeReady, controller }).finally(
+    () => {
+      if (activeResumeController === controller) {
+        activeResumeController = undefined;
+      }
+    }
+  );
+}
+
+export const onOptimizePrompt = async ({
+  originalPrompt,
+  modelId,
+  input,
+  onResult,
+  abortController
+}: OnOptimizePromptProps) => {
+  const controller = abortController || new AbortController();
+  await streamFetch({
+    url: '/api/core/ai/optimizePrompt',
+    data: {
+      originalPrompt,
+      optimizerInput: input,
+      modelId
+    },
+    onMessage: ({ event, text }) => {
+      if (event === SseResponseEventEnum.answer && text) {
+        onResult(text);
+      }
+    },
+    abortCtrl: controller
+  });
+};
+
+export const onOptimizeCode = async ({
+  optimizerInput,
+  modelId,
+  conversationHistory = [],
+  onResult,
+  abortController
+}: OnOptimizeCodeProps) => {
+  const controller = abortController || new AbortController();
+  await streamFetch({
+    url: '/api/core/workflow/optimizeCode',
+    data: {
+      optimizerInput,
+      modelId,
+      conversationHistory
+    },
+    onMessage: ({ event, text }) => {
+      if (event === SseResponseEventEnum.answer && text) {
+        onResult(text);
+      }
+    },
+    abortCtrl: controller
+  });
+};

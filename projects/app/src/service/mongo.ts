@@ -1,57 +1,19 @@
-import { PRICE_SCALE } from '@fastgpt/global/support/wallet/constants';
 import { MongoUser } from '@fastgpt/service/support/user/schema';
-import { connectMongo } from '@fastgpt/service/common/mongo/init';
 import { hashStr } from '@fastgpt/global/common/string/tools';
 import { createDefaultTeam } from '@fastgpt/service/support/user/team/controller';
 import { exit } from 'process';
-import { initVectorStore } from '@fastgpt/service/common/vectorStore/controller';
-import { startCron } from './common/system/cron';
 import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
-import { initGlobal, getInitConfig } from './common/system';
-import { startMongoWatch } from './common/system/volumnMongoWatch';
-import { startTrainingQueue } from './core/dataset/training/utils';
-import { systemStartCb } from '@fastgpt/service/common/system/tools';
-import { addLog } from '@fastgpt/service/common/system/log';
+import { getLogger, LogCategories } from '@fastgpt/service/common/logger';
+import { appEnv } from '@/env';
 
-/**
- * This function is equivalent to the entry to the service
- * connect MongoDB and init data
- */
-export function connectToDatabase() {
-  if (!global.systemLoadedGlobalVariables) {
-    global.systemLoadedGlobalVariables = true;
-    initGlobal();
-  }
+const logger = getLogger(LogCategories.SYSTEM);
 
-  return connectMongo().then(async () => {
-    if (global.systemLoadedGlobalConfig) return;
-    global.systemLoadedGlobalConfig = true;
-
-    try {
-      systemStartCb();
-
-      //init system config；init vector database；init root user
-      await Promise.all([getInitConfig(), initVectorStore(), initRootUser()]);
-
-      startMongoWatch();
-      // cron
-      startCron();
-
-      // start queue
-      startTrainingQueue(true);
-    } catch (error) {
-      addLog.error('init error', error);
-      exit(1);
-    }
-  });
-}
-
-async function initRootUser(retry = 3): Promise<any> {
+export async function initRootUser(retry = 3): Promise<any> {
   try {
     const rootUser = await MongoUser.findOne({
       username: 'root'
     });
-    const psw = process.env.DEFAULT_ROOT_PSW || '123456';
+    const psw = appEnv.DEFAULT_ROOT_PSW;
 
     let rootId = rootUser?._id || '';
 
@@ -69,24 +31,24 @@ async function initRootUser(retry = 3): Promise<any> {
               password: hashStr(psw)
             }
           ],
-          { session }
+          { session, ordered: true }
         );
         rootId = _id;
       }
       // init root team
-      await createDefaultTeam({ userId: rootId, balance: 9999 * PRICE_SCALE, session });
+      await createDefaultTeam({ userId: rootId, session });
     });
 
-    console.log(`root user init:`, {
+    logger.info('Root user initialized', {
       username: 'root',
-      password: psw
+      fromEnvPassword: appEnv.DEFAULT_ROOT_PSW !== '123456'
     });
   } catch (error) {
     if (retry > 0) {
-      console.log('retry init root user');
+      logger.warn('Retrying root user initialization', { retryLeft: retry - 1 });
       return initRootUser(retry - 1);
     } else {
-      console.error('init root user error', error);
+      logger.error('Root user initialization failed', { error });
       exit(1);
     }
   }

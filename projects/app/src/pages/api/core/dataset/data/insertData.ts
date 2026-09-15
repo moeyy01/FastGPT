@@ -1,35 +1,38 @@
-/* 
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
+import { getDatasetModelReference } from '@fastgpt/service/core/dataset/model';
+/*
   insert one data to dataset (immediately insert)
   manual input or mark data
 */
-import type { NextApiRequest } from 'next';
-import { countPromptTokens } from '@fastgpt/service/common/string/tiktoken/index';
-import { getVectorModel } from '@fastgpt/service/core/ai/model';
 import { hasSameValue } from '@/service/core/dataset/data/utils';
-import { insertData2Dataset } from '@/service/core/dataset/data/controller';
+import { createDatasetData } from '@/service/core/dataset/data/data';
 import { authDatasetCollection } from '@fastgpt/service/support/permission/dataset/auth';
 import { getCollectionWithDataset } from '@fastgpt/service/core/dataset/controller';
 import { pushGenerateVectorUsage } from '@/service/support/wallet/usage/push';
-import { InsertOneDatasetDataProps } from '@/global/core/dataset/api';
 import { simpleText } from '@fastgpt/global/common/string/tools';
-import { checkDatasetLimit } from '@fastgpt/service/support/permission/teamLimit';
+import { checkDatasetIndexLimit } from '@fastgpt/service/support/permission/teamLimit';
 import { NextAPI } from '@/service/middleware/entry';
 import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
-import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { getI18nDatasetType } from '@fastgpt/service/support/user/audit/util';
+import { type ApiRequestProps } from '@fastgpt/next/type';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  InsertDataBodySchema,
+  InsertDataResponseSchema,
+  type InsertDataResponse
+} from '@fastgpt/global/openapi/core/dataset/data/api';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
 
-async function handler(req: NextApiRequest) {
-  const { collectionId, q, a, indexes } = req.body as InsertOneDatasetDataProps;
-
-  if (!q) {
-    Promise.reject(CommonErrEnum.missingParams);
-  }
-
-  if (!collectionId) {
-    Promise.reject(CommonErrEnum.missingParams);
-  }
+async function handler(req: ApiRequestProps): Promise<InsertDataResponse> {
+  const { collectionId, q, a, indexes, metadata } = parseApiInput({
+    req,
+    bodySchema: InsertDataBodySchema
+  }).body;
 
   // 凭证校验
-  const { teamId, tmbId } = await authDatasetCollection({
+  const { teamId, tmbId, collection } = await authDatasetCollection({
     req,
     authToken: true,
     authApiKey: true,
@@ -37,35 +40,27 @@ async function handler(req: NextApiRequest) {
     per: WritePermissionVal
   });
 
-  await checkDatasetLimit({
+  await checkDatasetIndexLimit({
     teamId,
-    insertLen: 1
+    insertLen: 1 + (indexes?.length || 0)
   });
 
-  // auth collection and get dataset
-  const [
-    {
-      datasetId: { _id: datasetId, vectorModel }
-    }
-  ] = await Promise.all([getCollectionWithDataset(collectionId)]);
+  const [{ dataset, indexPrefixTitle, imageIndex, indexSize, name }] = await Promise.all([
+    getCollectionWithDataset(collectionId)
+  ]);
+  const datasetId = dataset._id;
 
-  // format data
   const formatQ = simpleText(q);
   const formatA = simpleText(a);
   const formatIndexes = indexes?.map((item) => ({
     ...item,
     text: simpleText(item.text)
   }));
+  const modelHandle = await getModelHandle();
+  const vectorModelData = modelHandle.getEmbeddingModelData(
+    getDatasetModelReference(dataset, 'embedding')
+  );
 
-  // token check
-  const token = await countPromptTokens(formatQ + formatA, '');
-  const vectorModelData = getVectorModel(vectorModel);
-
-  if (token > vectorModelData.maxToken) {
-    return Promise.reject('Q Over Tokens');
-  }
-
-  // Duplicate data check
   await hasSameValue({
     teamId,
     datasetId,
@@ -74,26 +69,46 @@ async function handler(req: NextApiRequest) {
     a: formatA
   });
 
-  const { insertId, tokens } = await insertData2Dataset({
-    teamId,
-    tmbId,
-    datasetId,
-    collectionId,
-    q: formatQ,
-    a: formatA,
-    chunkIndex: 0,
-    model: vectorModelData.model,
-    indexes: formatIndexes
-  });
+  const { insertId, tokens } = await mongoSessionRun((session) =>
+    createDatasetData({
+      teamId,
+      tmbId,
+      datasetId,
+      collectionId,
+      q: formatQ,
+      a: formatA,
+      chunkIndex: 0,
+      indexSize,
+      indexPrefix: indexPrefixTitle ? `# ${name}` : undefined,
+      embeddingModel: vectorModelData,
+      imageIndex: !!imageIndex,
+      indexes: formatIndexes,
+      metadata,
+      session
+    })
+  );
 
   pushGenerateVectorUsage({
     teamId,
     tmbId,
-    tokens,
-    model: vectorModelData.model
+    inputTokens: tokens,
+    model: vectorModelData
   });
 
-  return insertId;
+  (() => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.CREATE_DATA,
+      params: {
+        collectionName: collection.name,
+        datasetName: collection.dataset?.name || '',
+        datasetType: getI18nDatasetType(collection.dataset?.type || '')
+      }
+    });
+  })();
+
+  return InsertDataResponseSchema.parse(insertId);
 }
 
 export default NextAPI(handler);

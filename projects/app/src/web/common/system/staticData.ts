@@ -1,6 +1,6 @@
 import { getSystemInitData } from '@/web/common/system/api';
 import { delay } from '@fastgpt/global/common/system/utils';
-import type { FastGPTFeConfigsType } from '@fastgpt/global/common/system/types/index.d';
+import type { FastGPTFeConfigsType } from '@fastgpt/global/common/system/types/index';
 
 import { useSystemStore } from './useSystemStore';
 
@@ -10,11 +10,11 @@ export const clientInitData = async (
   feConfigs: FastGPTFeConfigsType;
 }> => {
   try {
-    const res = await getSystemInitData();
+    const res = await getSystemInitData(useSystemStore.getState().initDataBufferId);
     useSystemStore.getState().initStaticData(res);
 
     return {
-      feConfigs: res.feConfigs || {}
+      feConfigs: res.feConfigs || useSystemStore.getState().feConfigs || {}
     };
   } catch (error) {
     if (retry > 0) {

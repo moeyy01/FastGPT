@@ -1,62 +1,92 @@
-import { create } from 'zustand';
-import { devtools, persist } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
+import { create, devtools, persist, immer } from '@fastgpt/web/common/zustand';
 import axios from 'axios';
-import { OAuthEnum } from '@fastgpt/global/support/user/constant';
-import type {
-  AudioSpeechModelType,
-  LLMModelItemType,
-  ReRankModelItemType,
-  VectorModelItemType,
-  WhisperModelType
-} from '@fastgpt/global/core/ai/model.d';
-import { InitDateResponse } from '@/global/common/api/systemRes';
-import { FastGPTFeConfigsType } from '@fastgpt/global/common/system/types';
-import { SubPlanType } from '@fastgpt/global/support/wallet/sub/type';
+import type { OAuthEnum } from '@fastgpt/global/support/user/constant';
+import type { GetSystemInitDataResponse } from '@fastgpt/global/openapi/common/system/api';
+import { type FastGPTFeConfigsType } from '@fastgpt/global/common/system/types';
+import { type SubPlanType } from '@fastgpt/global/support/wallet/sub/type';
+import type { TeamErrEnum } from '@fastgpt/global/common/error/code/team';
+import { getOperationalAd } from './api';
 
-type LoginStoreType = { provider: `${OAuthEnum}`; lastRoute: string; state: string };
+type LoginStoreType = {
+  provider: OAuthEnum;
+  lastRoute: string;
+  state: string;
+  lastTmbId?: string;
+  flow?: 'login' | 'accountCancellation' | 'passwordChange';
+  passwordChangeRequired?: boolean;
+};
+
+export type NotSufficientModalType =
+  | TeamErrEnum.datasetSizeNotEnough
+  | TeamErrEnum.aiPointsNotEnough
+  | TeamErrEnum.datasetAmountNotEnough
+  | TeamErrEnum.teamMemberOverSize
+  | TeamErrEnum.appAmountNotEnough
+  | TeamErrEnum.ticketNotAvailable;
 
 type State = {
   initd: boolean;
   setInitd: () => void;
+
   lastRoute: string;
   setLastRoute: (e: string) => void;
+  lastAppListRouteType?: string;
+  setLastAppListRouteType: (e?: string) => void;
+
   loginStore?: LoginStoreType;
-  setLoginStore: (e: LoginStoreType) => void;
+  setLoginStore: (e?: LoginStoreType) => void;
+
   loading: boolean;
   setLoading: (val: boolean) => null;
   gitStar: number;
   loadGitStar: () => Promise<void>;
 
-  isNotSufficientModal: boolean;
-  setIsNotSufficientModal: (val: boolean) => void;
+  notSufficientModalType?: NotSufficientModalType;
+  setNotSufficientModalType: (val?: NotSufficientModalType) => void;
+  showProModal: boolean;
+  setShowProModal: (e: boolean) => void;
 
+  initDataBufferId?: string;
   feConfigs: FastGPTFeConfigsType;
   subPlans?: SubPlanType;
   systemVersion: string;
-  llmModelList: LLMModelItemType[];
-  datasetModelList: LLMModelItemType[];
-  vectorModelList: VectorModelItemType[];
-  audioSpeechModelList: AudioSpeechModelType[];
-  reRankModelList: ReRankModelItemType[];
-  whisperModel?: WhisperModelType;
-  initStaticData: (e: InitDateResponse) => void;
+
+  aiproxyChannels: NonNullable<GetSystemInitDataResponse['aiproxyChannels']>;
+  operationalAd?: { operationalAdImage: string; operationalAdLink: string; id: string };
+  loadOperationalAd: () => Promise<void>;
+
+  initStaticData: (e: GetSystemInitDataResponse) => void;
+
+  appType?: string;
+  setAppType: (e?: string) => void;
 };
 
 export const useSystemStore = create<State>()(
   devtools(
     persist(
       immer((set, get) => ({
+        appType: undefined,
+        setAppType(e) {
+          set((state) => {
+            state.appType = e;
+          });
+        },
         initd: false,
         setInitd() {
           set((state) => {
             state.initd = true;
           });
         },
-        lastRoute: '/app/list',
+        lastRoute: '/dashboard/agent',
         setLastRoute(e) {
           set((state) => {
             state.lastRoute = e;
+          });
+        },
+        lastAppListRouteType: undefined,
+        setLastAppListRouteType(e) {
+          set((state) => {
+            state.lastAppListRouteType = e;
           });
         },
         loginStore: undefined,
@@ -73,7 +103,7 @@ export const useSystemStore = create<State>()(
           return null;
         },
 
-        gitStar: 15600,
+        gitStar: 26500,
         async loadGitStar() {
           if (!get().feConfigs?.show_git) return;
           try {
@@ -85,41 +115,74 @@ export const useSystemStore = create<State>()(
           } catch (error) {}
         },
 
-        isNotSufficientModal: false,
-        setIsNotSufficientModal(val: boolean) {
+        notSufficientModalType: undefined,
+        setNotSufficientModalType(type) {
           set((state) => {
-            state.isNotSufficientModal = val;
+            state.notSufficientModalType = type;
           });
         },
 
-        feConfigs: {},
+        showProModal: false,
+        setShowProModal(e) {
+          set((state) => {
+            state.showProModal = e;
+          });
+        },
+
+        initDataBufferId: undefined,
+        feConfigs: {
+          uploadFileMaxSize: 1000,
+          uploadFileMaxAmount: 1000
+        },
         subPlans: undefined,
         systemVersion: '0.0.0',
-        llmModelList: [],
-        datasetModelList: [],
-        vectorModelList: [],
-        audioSpeechModelList: [],
-        reRankModelList: [],
-        whisperModel: undefined,
+
+        aiproxyChannels: [],
+        operationalAd: undefined,
+        loadOperationalAd: async () => {
+          try {
+            const res = await getOperationalAd();
+            set((state) => {
+              state.operationalAd = res;
+            });
+          } catch (error) {
+            console.log('Get operational ad error', error);
+          }
+        },
         initStaticData(res) {
           set((state) => {
-            state.feConfigs = res.feConfigs || {};
-            state.subPlans = res.subPlans;
-            state.systemVersion = res.systemVersion;
+            state.initDataBufferId = res.bufferId;
 
-            state.llmModelList = res.llmModels ?? state.llmModelList;
-            state.datasetModelList = state.llmModelList.filter((item) => item.datasetProcess);
-            state.vectorModelList = res.vectorModels ?? state.vectorModelList;
-            state.audioSpeechModelList = res.audioSpeechModels ?? state.audioSpeechModelList;
-            state.reRankModelList = res.reRankModels ?? state.reRankModelList;
-            state.whisperModel = res.whisperModel;
+            state.feConfigs = res.feConfigs ?? state.feConfigs;
+            state.subPlans = res.subPlans ?? state.subPlans;
+            state.systemVersion = res.systemVersion ?? state.systemVersion;
+
+            state.aiproxyChannels = res.aiproxyChannels ?? state.aiproxyChannels;
           });
         }
       })),
       {
         name: 'globalStore',
+        version: 1,
+        migrate: (persistedState) => {
+          const {
+            modelProviders: _modelProviders,
+            modelProviderMap: _modelProviderMap,
+            defaultModels: _defaultModels,
+            ...systemState
+          } = persistedState as Record<string, unknown>;
+          return systemState;
+        },
         partialize: (state) => ({
-          loginStore: state.loginStore
+          gitStar: state.gitStar,
+
+          loginStore: state.loginStore,
+          initDataBufferId: state.initDataBufferId,
+          feConfigs: state.feConfigs,
+          subPlans: state.subPlans,
+          systemVersion: state.systemVersion,
+
+          aiproxyChannels: state.aiproxyChannels
         })
       }
     )

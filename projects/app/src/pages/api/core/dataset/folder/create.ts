@@ -1,87 +1,86 @@
-import type { ApiRequestProps, ApiResponseType } from '@fastgpt/service/type/next';
 import { NextAPI } from '@/service/middleware/entry';
-import { MongoDataset } from '@fastgpt/service/core/dataset/schema';
-import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
-import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
+import { FolderImgUrl } from '@fastgpt/global/common/file/image/constants';
+import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
+import { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
 import {
   PerResourceTypeEnum,
   WritePermissionVal
 } from '@fastgpt/global/support/permission/constant';
-import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
+import { TeamDatasetCreatePermissionVal } from '@fastgpt/global/support/permission/user/constant';
 import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
-import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
-import { FolderImgUrl } from '@fastgpt/global/common/file/image/constants';
-import { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
-import { DatasetDefaultPermissionVal } from '@fastgpt/global/support/permission/dataset/constant';
-import { getResourceAllClbs } from '@fastgpt/service/support/permission/controller';
-import { syncCollaborators } from '@fastgpt/service/support/permission/inheritPermission';
-export type DatasetFolderCreateQuery = {};
-export type DatasetFolderCreateBody = {
-  parentId?: string;
-  name: string;
-  intro: string;
-};
-export type DatasetFolderCreateResponse = {};
-async function handler(
-  req: ApiRequestProps<DatasetFolderCreateBody, DatasetFolderCreateQuery>,
-  _res: ApiResponseType<any>
-): Promise<DatasetFolderCreateResponse> {
-  const { parentId, name, intro } = req.body;
+import { MongoDataset } from '@fastgpt/service/core/dataset/schema';
+import { createResourceDefaultCollaborators } from '@fastgpt/service/support/permission/controller';
+import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
+import { checkTeamDatasetFolderLimit } from '@fastgpt/service/support/permission/teamLimit';
+import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { checkCreateFolderDepth } from '@fastgpt/service/common/parentFolder/depth';
+import {
+  CreateDatasetFolderBodySchema,
+  type CreateDatasetFolderBody
+} from '@fastgpt/global/openapi/core/dataset/api';
 
-  if (!name) {
-    return Promise.reject(CommonErrEnum.missingParams);
-  }
-
-  const { tmbId, teamId } = await authUserPer({
+async function handler(req: ApiRequestProps<CreateDatasetFolderBody>) {
+  const { parentId, name, intro } = parseApiInput({
     req,
-    per: WritePermissionVal,
-    authToken: true
-  });
+    bodySchema: CreateDatasetFolderBodySchema
+  }).body;
 
-  const parentFolder = await (async () => {
-    if (parentId) {
-      return (
-        await authDataset({
-          datasetId: parentId,
-          per: WritePermissionVal,
-          req,
-          authToken: true
-        })
-      ).dataset;
-    }
-  })();
+  const { teamId, tmbId } = parentId
+    ? await authDataset({
+        req,
+        datasetId: parentId,
+        authToken: true,
+        authApiKey: true,
+        per: WritePermissionVal
+      })
+    : await authUserPer({
+        req,
+        authToken: true,
+        authApiKey: true,
+        per: TeamDatasetCreatePermissionVal
+      });
+
+  await checkTeamDatasetFolderLimit({ teamId });
+
+  await checkCreateFolderDepth({ parentId, teamId, model: MongoDataset });
 
   await mongoSessionRun(async (session) => {
-    const app = await MongoDataset.create({
-      ...parseParentIdInMongo(parentId),
-      avatar: FolderImgUrl,
-      name,
-      intro,
-      teamId,
+    const [dataset] = await MongoDataset.create(
+      [
+        {
+          ...parseParentIdInMongo(parentId),
+          avatar: FolderImgUrl,
+          name,
+          intro,
+          teamId,
+          tmbId,
+          type: DatasetTypeEnum.folder
+        }
+      ],
+      { session }
+    );
+
+    await createResourceDefaultCollaborators({
       tmbId,
-      type: DatasetTypeEnum.folder,
-      defaultPermission: !!parentFolder
-        ? parentFolder.defaultPermission
-        : DatasetDefaultPermissionVal
+      session,
+      resource: dataset,
+      resourceType: PerResourceTypeEnum.dataset
     });
-
-    if (parentId) {
-      const parentClbs = await getResourceAllClbs({
-        teamId,
-        resourceId: parentId,
-        resourceType: PerResourceTypeEnum.dataset,
-        session
-      });
-
-      await syncCollaborators({
-        resourceType: PerResourceTypeEnum.dataset,
-        teamId,
-        resourceId: app._id,
-        collaborators: parentClbs,
-        session
-      });
-    }
   });
+  (async () => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.CREATE_DATASET_FOLDER,
+      params: {
+        folderName: name
+      }
+    });
+  })();
 
   return {};
 }

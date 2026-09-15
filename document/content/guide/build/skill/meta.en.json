@@ -1,0 +1,11 @@
+{
+  "title": "Skills",
+  "root": false,
+  "pages": [
+    "intro",
+    "development",
+    "initialization",
+    "version",
+    "integration"
+  ]
+}

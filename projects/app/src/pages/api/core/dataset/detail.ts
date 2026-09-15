@@ -1,23 +1,21 @@
-import { getLLMModel, getVectorModel } from '@fastgpt/service/core/ai/model';
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
+import { getDatasetModelReference } from '@fastgpt/service/core/dataset/model';
+import { desensitizeSystemModel } from '@fastgpt/service/core/ai/config/utils';
 import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
 import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
 import { NextAPI } from '@/service/middleware/entry';
-import { DatasetItemType } from '@fastgpt/global/core/dataset/type';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
-import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import {
+  GetDatasetDetailResponseSchema,
+  GetDatasetDetailQuerySchema,
+  type GetDatasetDetailResponse
+} from '@fastgpt/global/openapi/core/dataset/api';
+import { getDatasetSyncDatasetStatus } from '@fastgpt/service/core/dataset/datasetSync';
+import { filterApiDatasetServerPublicData } from '@fastgpt/global/core/dataset/apiDataset/utils';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
 
-type Query = {
-  id: string;
-};
-
-async function handler(req: ApiRequestProps<Query>): Promise<DatasetItemType> {
-  const { id: datasetId } = req.query as {
-    id: string;
-  };
-
-  if (!datasetId) {
-    return Promise.reject(CommonErrEnum.missingParams);
-  }
+async function handler(req: ApiRequestProps): Promise<GetDatasetDetailResponse> {
+  const { id: datasetId } = parseApiInput({ req, querySchema: GetDatasetDetailQuerySchema }).query;
 
   // 凭证校验
   const { dataset, permission } = await authDataset({
@@ -28,12 +26,29 @@ async function handler(req: ApiRequestProps<Query>): Promise<DatasetItemType> {
     per: ReadPermissionVal
   });
 
-  return {
+  const { status, errorMsg } = await getDatasetSyncDatasetStatus(datasetId);
+  const modelHandle = await getModelHandle();
+  const vectorModel = modelHandle.findModelData(getDatasetModelReference(dataset, 'embedding'), {
+    type: 'embedding'
+  });
+  const agentModel = modelHandle.findModelData(getDatasetModelReference(dataset, 'agent'), {
+    type: 'llm'
+  });
+  const vlmModel = modelHandle.findModelData(getDatasetModelReference(dataset, 'vlm'), {
+    type: 'llm',
+    vision: true
+  });
+
+  return GetDatasetDetailResponseSchema.parse({
     ...dataset,
+    status,
+    errorMsg,
     permission,
-    vectorModel: getVectorModel(dataset.vectorModel),
-    agentModel: getLLMModel(dataset.agentModel)
-  };
+    vectorModel: vectorModel ? desensitizeSystemModel(vectorModel) : undefined,
+    agentModel: agentModel ? desensitizeSystemModel(agentModel) : undefined,
+    vlmModel: vlmModel ? desensitizeSystemModel(vlmModel) : undefined,
+    apiDatasetServer: filterApiDatasetServerPublicData(dataset.apiDatasetServer)
+  });
 }
 
 export default NextAPI(handler);

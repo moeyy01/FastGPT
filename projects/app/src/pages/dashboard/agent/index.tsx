@@ -1,0 +1,284 @@
+'use client';
+import React, { useState } from 'react';
+import { Box, Button, Flex, useDisclosure } from '@chakra-ui/react';
+import { serviceSideProps } from '@/web/common/i18n/utils';
+import { useTranslation } from 'next-i18next';
+import dynamic from 'next/dynamic';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { postCreateAppFolder } from '@/web/core/app/api/app';
+import type { EditFolderFormType } from '@fastgpt/web/components/common/MyModal/EditFolderModal';
+import { useContextSelector } from 'use-context-selector';
+import AppListContextProvider, { AppListContext } from '@/pageComponents/dashboard/agent/context';
+import FolderPath from '@/components/common/folder/Path';
+import { useRouter } from 'next/router';
+import FolderSlideCard from '@/components/common/folder/SlideCard';
+import { delAppById, resumeInheritPer } from '@/web/core/app/api';
+import { AppRoleList } from '@fastgpt/global/support/permission/app/constant';
+import { getCollaboratorList, postUpdateAppCollaborators } from '@/web/core/app/api/collaborator';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import JsonImportModal from '@/pageComponents/dashboard/agent/JsonImportModal';
+import DashboardContainer from '@/pageComponents/dashboard/Container';
+import List from '@/pageComponents/dashboard/agent/List';
+import { getUtmWorkflow } from '@/web/support/marketing/utils';
+import { useMount } from 'ahooks';
+import SearchInput from '@fastgpt/web/components/common/Input/SearchInput';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import {
+  canCreateSubFolder,
+  DEFAULT_MAX_FOLDER_DEPTH
+} from '@fastgpt/global/common/parentFolder/depth';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import { ReadRoleVal } from '@fastgpt/global/support/permission/constant';
+import TemplateCreatePanel from '@/pageComponents/dashboard/agent/TemplateCreatePanel';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import AppListFilters from '@/pageComponents/dashboard/agent/filters/AppListFilters';
+
+const EditFolderModal = dynamic(
+  () => import('@fastgpt/web/components/common/MyModal/EditFolderModal')
+);
+
+const MyApps = ({ MenuIcon }: { MenuIcon: JSX.Element }) => {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const { isPc } = useSystem();
+  const {
+    paths,
+    parentId,
+    appType,
+    loadMyApps,
+    onUpdateApp,
+    setMoveAppId,
+    folderDetail,
+    refetchFolderDetail,
+    searchKey,
+    setSearchKey,
+    listFilters,
+    setListFilters
+  } = useContextSelector(AppListContext, (v) => v);
+  const [editFolder, setEditFolder] = useState<EditFolderFormType>();
+  const { userInfo } = useUserStore();
+  const { feConfigs } = useSystemStore();
+  const maxFolderDepth = feConfigs?.limit?.maxFolderDepth ?? DEFAULT_MAX_FOLDER_DEPTH;
+  const canCreateFolder = canCreateSubFolder(parentId, paths, maxFolderDepth);
+  const folderDepthLimitTip = t('common:folder_depth_limit_tip');
+
+  const {
+    isOpen: isOpenJsonImportModal,
+    onOpen: onOpenJsonImportModal,
+    onClose: onCloseJsonImportModal
+  } = useDisclosure();
+  const hasCreatePer = folderDetail
+    ? folderDetail.permission.hasWritePer && folderDetail?.type !== AppTypeEnum.httpPlugin
+    : userInfo?.team.permission.hasAppCreatePer;
+
+  //if there is a workflow url in the session storage, open the json import modal and import the workflow
+  useMount(() => {
+    if (getUtmWorkflow()) {
+      onOpenJsonImportModal();
+    }
+  });
+
+  const { runAsync: onCreateFolder } = useRequest(postCreateAppFolder, {
+    onSuccess() {
+      loadMyApps();
+    },
+    errorToast: 'Error'
+  });
+  const { runAsync: onDeleFolder } = useRequest(delAppById, {
+    onSuccess(data) {
+      data.forEach((appId) => {
+        localStorage.removeItem(`app_log_keys_${appId}`);
+      });
+
+      router.replace({
+        query: {
+          parentId: folderDetail?.parentId
+        }
+      });
+    },
+    errorToast: 'Error'
+  });
+
+  return (
+    <Flex flexDirection={'column'} h={'100%'}>
+      <Flex gap={5} flex={'1 0 0'} h={0}>
+        <Flex
+          flex={'1 0 0'}
+          flexDirection={'column'}
+          h={'100%'}
+          pr={folderDetail ? [3, 2] : [3, 6]}
+          pl={[3, 6]}
+          pt={6}
+          overflowY={'hidden'}
+          overflowX={'hidden'}
+        >
+          {/* Only shown on pc root page */}
+          {!folderDetail && isPc && hasCreatePer && <TemplateCreatePanel type={appType} />}
+          <Flex alignItems={'center'} gap={3} minW={0} flexWrap={'wrap'} flexShrink={0}>
+            {!isPc && MenuIcon}
+            {paths.length > 0 && isPc ? (
+              <Box flexShrink={0}>
+                <FolderPath
+                  paths={paths}
+                  hoverStyle={{ bg: 'myGray.200' }}
+                  forbidLastClick
+                  onClick={(parentId) => {
+                    router.push({
+                      query: {
+                        ...router.query,
+                        parentId
+                      }
+                    });
+                  }}
+                />
+              </Box>
+            ) : (
+              <Box color={'myGray.900'} fontSize={'20px'} fontWeight={'medium'} flexShrink={0}>
+                Agent
+              </Box>
+            )}
+            {isPc && (
+              <>
+                <Box flexShrink={0} maxW={'250px'}>
+                  <SearchInput
+                    maxW={'250px'}
+                    value={searchKey}
+                    bg={'white'}
+                    onChange={(e) => setSearchKey(e.target.value)}
+                    placeholder={t('app:search_agent')}
+                    maxLength={30}
+                  />
+                </Box>
+                <AppListFilters scene={'agent'} value={listFilters} onChange={setListFilters} />
+              </>
+            )}
+            <Flex flex={1} />
+            {hasCreatePer && (
+              <Flex alignItems={'center'} gap={[2, 3]}>
+                <MyTooltip label={canCreateFolder ? '' : folderDepthLimitTip}>
+                  <Button
+                    variant={'grayBase'}
+                    leftIcon={<MyIcon name={'common/addLight'} w={'18px'} mr={-1} />}
+                    onClick={() => setEditFolder({})}
+                    isDisabled={!canCreateFolder}
+                    px={[3, 5]}
+                  >
+                    {t('common:Folder')}
+                  </Button>
+                </MyTooltip>
+                <Button
+                  variant={'grayBase'}
+                  leftIcon={<MyIcon name={'common/importLight'} w={'14px'} />}
+                  onClick={onOpenJsonImportModal}
+                  px={[3, 5]}
+                >
+                  {t('common:Import')}
+                </Button>
+              </Flex>
+            )}
+          </Flex>
+          {!isPc && (
+            <Flex mt={3} direction={'column'} gap={3}>
+              {paths.length > 0 && (
+                <Box overflowX={'auto'}>
+                  <FolderPath
+                    paths={paths}
+                    forbidLastClick
+                    onClick={(parentId) => {
+                      router.push({ query: { ...router.query, parentId } });
+                    }}
+                  />
+                </Box>
+              )}
+              <SearchInput
+                value={searchKey}
+                onChange={(e) => setSearchKey(e.target.value)}
+                placeholder={t('app:search_agent')}
+                maxLength={30}
+              />
+              <AppListFilters scene={'agent'} value={listFilters} onChange={setListFilters} />
+            </Flex>
+          )}
+
+          <MyBox flex={'1 0 0'} minH={0}>
+            <List />
+          </MyBox>
+        </Flex>
+
+        {/* Folder slider */}
+        {!!folderDetail && isPc && (
+          <Box pt={[4, 6]} pr={[4, 6]} h={'100%'} pb={4} overflow={'auto'}>
+            <FolderSlideCard
+              refetchResource={() => Promise.all([refetchFolderDetail(), loadMyApps()])}
+              resumeInheritPermission={() => resumeInheritPer(folderDetail._id)}
+              isInheritPermission={folderDetail.inheritPermission}
+              hasParent={!!folderDetail.parentId}
+              refreshDeps={[folderDetail._id, folderDetail.inheritPermission]}
+              name={folderDetail.name}
+              intro={folderDetail.intro}
+              onEdit={() => {
+                setEditFolder({
+                  id: folderDetail._id,
+                  name: folderDetail.name,
+                  intro: folderDetail.intro
+                });
+              }}
+              onMove={() => setMoveAppId(folderDetail._id)}
+              deleteTip={t('app:confirm_delete_folder_tip')}
+              onDelete={() => onDeleFolder(folderDetail._id)}
+              managePer={{
+                defaultRole: ReadRoleVal,
+                permission: folderDetail.permission,
+                onGetCollaboratorList: () => getCollaboratorList(folderDetail._id),
+                roleList: AppRoleList,
+                onUpdateCollaborators: (props) =>
+                  postUpdateAppCollaborators({
+                    ...props,
+                    appId: folderDetail._id
+                  }),
+                refreshDeps: [folderDetail._id, folderDetail.inheritPermission]
+              }}
+            />
+          </Box>
+        )}
+      </Flex>
+
+      {!!editFolder && (
+        <EditFolderModal
+          {...editFolder}
+          onClose={() => setEditFolder(undefined)}
+          onCreate={(data) => onCreateFolder({ ...data, parentId, type: AppTypeEnum.folder })}
+          onEdit={({ id, ...data }) => onUpdateApp(id, data)}
+        />
+      )}
+      {isOpenJsonImportModal && (
+        <JsonImportModal scene={'agent'} onClose={onCloseJsonImportModal} />
+      )}
+    </Flex>
+  );
+};
+
+function ContextRender() {
+  return (
+    <DashboardContainer>
+      {({ MenuIcon }) => (
+        <AppListContextProvider showPaginationTip={false}>
+          <MyApps MenuIcon={MenuIcon} />
+        </AppListContextProvider>
+      )}
+    </DashboardContainer>
+  );
+}
+
+export default ContextRender;
+
+export async function getServerSideProps(content: any) {
+  return {
+    props: {
+      ...(await serviceSideProps(content, ['app', 'user']))
+    }
+  };
+}

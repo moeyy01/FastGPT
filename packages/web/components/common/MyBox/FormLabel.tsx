@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, BoxProps } from '@chakra-ui/react';
+import { Box, type BoxProps } from '@chakra-ui/react';
 
 const FormLabel = ({
   children,
@@ -10,7 +10,14 @@ const FormLabel = ({
   children: React.ReactNode;
 }) => {
   return (
-    <Box color={'myGray.900'} fontSize={'sm'} position={'relative'} {...props}>
+    <Box
+      color={'myGray.900'}
+      fontWeight={'medium'}
+      fontSize={'sm'}
+      position={'relative'}
+      flexShrink={0}
+      {...props}
+    >
       {required && (
         <Box color={'red.600'} position={'absolute'} top={'-4px'} left={'-6px'}>
           *

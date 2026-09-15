@@ -1,36 +1,263 @@
-import { ErrType } from '../errorCode';
-
+import { EnterpriseAuthErrEnum } from '../../../support/user/team/enterpriseAuth/constant';
+import { i18nT } from '../../i18n/utils';
+import type { ErrType } from '../errorCode';
 /* team: 500000 */
 export enum TeamErrEnum {
-  teamOverSize = 'teamOverSize',
+  notUser = 'notUser',
   unAuthTeam = 'unAuthTeam',
+
+  teamOverSize = 'teamOverSize',
+  teamMemberOverSize = 'teamMemberOverSize',
   aiPointsNotEnough = 'aiPointsNotEnough',
   datasetSizeNotEnough = 'datasetSizeNotEnough',
   datasetAmountNotEnough = 'datasetAmountNotEnough',
   appAmountNotEnough = 'appAmountNotEnough',
   pluginAmountNotEnough = 'pluginAmountNotEnough',
+  appFolderAmountNotEnough = 'appFolderAmountNotEnough',
+  datasetFolderAmountNotEnough = 'datasetFolderAmountNotEnough',
   websiteSyncNotEnough = 'websiteSyncNotEnough',
-  reRankNotEnough = 'reRankNotEnough'
+  reRankNotEnough = 'reRankNotEnough',
+  ticketNotAvailable = 'ticketNotAvailable',
+  sandboxNotSupport = 'sandboxNotSupport',
+
+  groupNameEmpty = 'groupNameEmpty',
+  groupNameDuplicate = 'groupNameDuplicate',
+  groupNotExist = 'groupNotExist',
+  orgMemberNotExist = 'orgMemberNotExist',
+  orgMemberDuplicated = 'orgMemberDuplicated',
+  orgNotExist = 'orgNotExist',
+  orgParentNotExist = 'orgParentNotExist',
+  cannotMoveToSubPath = 'cannotMoveToSubPath',
+  cannotModifyRootOrg = 'cannotModifyRootOrg',
+  cannotDeleteNonEmptyOrg = 'cannotDeleteNonEmptyOrg',
+  cannotDeleteDefaultGroup = 'cannotDeleteDefaultGroup',
+  userNotActive = 'userNotActive',
+  userForbidden = 'userForbidden',
+  invitationLinkInvalid = 'invitationLinkInvalid',
+  youHaveBeenInTheTeam = 'youHaveBeenInTheTeam',
+  tooManyInvitations = 'tooManyInvitations',
+  unPermission = 'unPermission',
+  accountCancellationPending = 'accountCancellationPending',
+  teamPluginInstallDisabled = 'teamPluginInstallDisabled',
+  teamOwnerOverSize = 'teamOwnerOverSize',
+  onlyMultiTeam = 'onlyMultiTeam',
+  ownerTransferConflict = 'ownerTransferConflict'
 }
+
 const teamErr = [
-  { statusText: TeamErrEnum.teamOverSize, message: 'error.team.overSize' },
-  { statusText: TeamErrEnum.unAuthTeam, message: '无权操作该团队' },
-  { statusText: TeamErrEnum.aiPointsNotEnough, message: '' },
-  { statusText: TeamErrEnum.datasetSizeNotEnough, message: '知识库容量不足，请先扩容~' },
-  { statusText: TeamErrEnum.datasetAmountNotEnough, message: '知识库数量已达上限~' },
-  { statusText: TeamErrEnum.appAmountNotEnough, message: '应用数量已达上限~' },
-  { statusText: TeamErrEnum.pluginAmountNotEnough, message: '插件数量已达上限~' },
-  { statusText: TeamErrEnum.websiteSyncNotEnough, message: '无权使用Web站点同步~' },
-  { statusText: TeamErrEnum.reRankNotEnough, message: '无权使用检索重排~' }
+  {
+    statusText: TeamErrEnum.notUser,
+    message: i18nT('common:code_error.team_error.not_user')
+  },
+  {
+    statusText: TeamErrEnum.unPermission,
+    message: i18nT('common:error_un_permission')
+  },
+  {
+    statusText: TeamErrEnum.accountCancellationPending,
+    message: i18nT('common:code_error.team_error.account_cancellation_pending'),
+    httpStatus: 403
+  },
+  {
+    statusText: TeamErrEnum.teamOverSize,
+    message: i18nT('common:code_error.team_error.over_size')
+  },
+  { statusText: TeamErrEnum.unAuthTeam, message: i18nT('common:code_error.team_error.un_auth') },
+  {
+    statusText: TeamErrEnum.aiPointsNotEnough,
+    message: i18nT('common:code_error.team_error.ai_points_not_enough')
+  }, // 需要定义或留空
+  {
+    statusText: TeamErrEnum.datasetSizeNotEnough,
+    message: i18nT('common:code_error.team_error.dataset_size_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.datasetAmountNotEnough,
+    message: i18nT('common:code_error.team_error.dataset_amount_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.appAmountNotEnough,
+    message: i18nT('common:code_error.team_error.app_amount_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.pluginAmountNotEnough,
+    message: i18nT('common:code_error.team_error.plugin_amount_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.appFolderAmountNotEnough,
+    message: i18nT('common:code_error.team_error.app_folder_amount_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.websiteSyncNotEnough,
+    message: i18nT('common:code_error.team_error.website_sync_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.reRankNotEnough,
+    message: i18nT('common:code_error.team_error.re_rank_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.ticketNotAvailable,
+    message: i18nT('common:code_error.team_error.ticket_not_available')
+  },
+  {
+    statusText: TeamErrEnum.groupNameEmpty,
+    message: i18nT('common:code_error.team_error.group_name_empty')
+  },
+  {
+    statusText: TeamErrEnum.groupNotExist,
+    message: i18nT('common:code_error.team_error.group_not_exist')
+  },
+  {
+    statusText: TeamErrEnum.cannotDeleteDefaultGroup,
+    message: i18nT('common:code_error.team_error.cannot_delete_default_group')
+  },
+  {
+    statusText: TeamErrEnum.groupNameDuplicate,
+    message: i18nT('common:code_error.team_error.group_name_duplicate')
+  },
+  {
+    statusText: TeamErrEnum.userNotActive,
+    message: i18nT('common:code_error.team_error.user_not_active')
+  },
+  {
+    statusText: TeamErrEnum.userForbidden,
+    message: i18nT('common:code_error.team_error.user_forbidden')
+  },
+  {
+    statusText: TeamErrEnum.orgMemberNotExist,
+    message: i18nT('common:code_error.team_error.org_member_not_exist')
+  },
+  {
+    statusText: TeamErrEnum.orgMemberDuplicated,
+    message: i18nT('common:code_error.team_error.org_member_duplicated')
+  },
+  {
+    statusText: TeamErrEnum.orgNotExist,
+    message: i18nT('common:code_error.team_error.org_not_exist')
+  },
+  {
+    statusText: TeamErrEnum.orgParentNotExist,
+    message: i18nT('common:code_error.team_error.org_parent_not_exist')
+  },
+  {
+    statusText: TeamErrEnum.cannotMoveToSubPath,
+    message: i18nT('common:code_error.team_error.cannot_move_to_sub_path')
+  },
+  {
+    statusText: TeamErrEnum.cannotModifyRootOrg,
+    message: i18nT('common:code_error.team_error.cannot_modify_root_org')
+  },
+  {
+    statusText: TeamErrEnum.cannotDeleteNonEmptyOrg,
+    message: i18nT('common:code_error.team_error.cannot_delete_non_empty_org')
+  },
+  {
+    statusText: TeamErrEnum.invitationLinkInvalid,
+    message: i18nT('common:code_error.team_error.invitation_link_invalid')
+  },
+  {
+    statusText: TeamErrEnum.youHaveBeenInTheTeam,
+    message: i18nT('common:code_error.team_error.you_have_been_in_the_team')
+  },
+  {
+    statusText: TeamErrEnum.tooManyInvitations,
+    message: i18nT('common:code_error.team_error.too_many_invitations')
+  },
+  {
+    statusText: TeamErrEnum.datasetFolderAmountNotEnough,
+    message: i18nT('common:code_error.team_error.dataset_folder_amount_not_enough')
+  },
+  {
+    statusText: TeamErrEnum.sandboxNotSupport,
+    message: i18nT('common:code_error.team_error.sandbox_not_support')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.disabled,
+    message: i18nT('common:enterprise_auth.error.disabled')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.serviceNotConfigured,
+    message: i18nT('common:enterprise_auth.error.service_not_configured')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.noRemainingTimes,
+    message: i18nT('common:enterprise_auth.error.no_remaining_times')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.alreadyVerified,
+    message: i18nT('common:enterprise_auth.error.already_verified')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.enterpriseOccupied,
+    message: i18nT('common:enterprise_auth.error.enterprise_occupied')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.tooFrequent,
+    message: i18nT('common:enterprise_auth.error.too_frequent')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.serviceError,
+    message: i18nT('common:enterprise_auth.error.service_error')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.serviceTimeout,
+    message: i18nT('common:enterprise_auth.error.service_timeout')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.infoFailed,
+    message: i18nT('common:enterprise_auth.error.info_failed')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.taskNotFound,
+    message: i18nT('common:enterprise_auth.error.task_not_found')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.taskExpired,
+    message: i18nT('common:enterprise_auth.error.task_expired')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.amountError,
+    message: i18nT('common:enterprise_auth.error.amount_error')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.amountFailed,
+    message: i18nT('common:enterprise_auth.error.amount_failed')
+  },
+  {
+    statusText: EnterpriseAuthErrEnum.processing,
+    message: i18nT('common:enterprise_auth.error.processing')
+  },
+  {
+    statusText: TeamErrEnum.teamPluginInstallDisabled,
+    message: i18nT('common:code_error.team_error.team_plugin_install_disabled'),
+    httpStatus: 403
+  },
+  {
+    statusText: TeamErrEnum.teamOwnerOverSize,
+    message: i18nT('common:code_error.team_error.owner_team_over_size')
+  },
+  {
+    statusText: TeamErrEnum.onlyMultiTeam,
+    message: i18nT('common:code_error.team_error.only_multi_team')
+  },
+  {
+    statusText: TeamErrEnum.ownerTransferConflict,
+    message: i18nT('common:code_error.team_error.owner_transfer_conflict')
+  }
 ];
-export default teamErr.reduce((acc, cur, index) => {
-  return {
-    ...acc,
-    [cur.statusText]: {
-      code: 500000 + index,
-      statusText: cur.statusText,
-      message: cur.message,
-      data: null
-    }
-  };
-}, {} as ErrType<`${TeamErrEnum}`>);
+
+export default teamErr.reduce(
+  (acc, cur, index) => {
+    return {
+      ...acc,
+      [cur.statusText]: {
+        code: 500000 + index,
+        statusText: cur.statusText,
+        message: cur.message,
+        data: null,
+        ...(cur.httpStatus !== undefined ? { httpStatus: cur.httpStatus } : {})
+      }
+    };
+  },
+  {} as ErrType<`${TeamErrEnum}` | `${EnterpriseAuthErrEnum}`>
+);

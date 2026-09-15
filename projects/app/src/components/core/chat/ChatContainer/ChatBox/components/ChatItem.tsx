@@ -1,20 +1,32 @@
-import { Box, BoxProps, Card, Flex } from '@chakra-ui/react';
-import React, { useMemo, useTransition } from 'react';
-import ChatController, { type ChatControllerProps } from './ChatController';
-import ChatAvatar from './ChatAvatar';
-import { MessageCardStyle } from '../constants';
-import { formatChatValue2InputType } from '../utils';
-import Markdown from '@/components/Markdown';
+import { Box, type BoxProps, Flex } from '@chakra-ui/react';
+import React, { useMemo } from 'react';
+import { type ChatControllerProps } from './ChatController';
 import styles from '../index.module.scss';
 import { ChatRoleEnum, ChatStatusEnum } from '@fastgpt/global/core/chat/constants';
-import FilesBlock from './FilesBox';
 import { ChatBoxContext } from '../Provider';
 import { useContextSelector } from 'use-context-selector';
-import AIResponseBox from '../../../components/AIResponseBox';
-import { useCopyData } from '@/web/common/hooks/useCopyData';
-import MyIcon from '@fastgpt/web/components/common/Icon';
-import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import { WorkflowRuntimeContext } from '../../context/workflowRuntimeContext';
 import { useTranslation } from 'next-i18next';
+import type { UserChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import { type AIChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import type { SearchDataResponseQuoteListItemType } from '@fastgpt/global/core/dataset/type';
+import {
+  ChatItemContext,
+  type OnOpenCiteModalProps
+} from '@/web/core/chat/context/chatItemContext';
+import { addStatisticalDataToHistoryItem } from '@/global/core/chat/utils';
+import { useMemoizedFn } from 'ahooks';
+import { useMemoEnhance } from '@fastgpt/web/hooks/useMemoEnhance';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import HumanChatBubble from './HumanChatBubble';
+import AIChatBubble, { shouldFilterAiValue } from './AIChatBubble';
+import type { ChatBoxInputType } from '../type';
+import { hasAiAnswerContent } from './AIChatBubble/utils';
+import ChatErrorCard from './ChatErrorCard';
+import { shouldShowChatItemInlineError } from '../utils/error';
+import { toChatAuthApiTarget } from '@/web/core/chat/utils';
+import { ChatBoxContentMaxWidth } from '../constants';
+
 const colorMap = {
   [ChatStatusEnum.loading]: {
     bg: 'myGray.100',
@@ -30,165 +42,319 @@ const colorMap = {
   }
 };
 
-const ChatItem = ({
-  type,
-  avatar,
-  statusBoxData,
-  children,
-  isLastChild,
-  questionGuides = [],
-  ...chatControllerProps
-}: {
-  type: ChatRoleEnum.Human | ChatRoleEnum.AI;
-  avatar?: string;
+type Props = {
   statusBoxData?: {
     status: `${ChatStatusEnum}`;
     name: string;
   };
   questionGuides?: string[];
+  enableSandbox?: boolean;
+  onEditSubmit?: (input: ChatBoxInputType) => void | Promise<void>;
   children?: React.ReactNode;
-} & ChatControllerProps) => {
-  const styleMap: BoxProps =
-    type === ChatRoleEnum.Human
-      ? {
-          order: 0,
-          borderRadius: '8px 0 8px 8px',
-          justifyContent: 'flex-end',
-          textAlign: 'right',
-          bg: 'primary.100'
-        }
-      : {
-          order: 1,
-          borderRadius: '0 8px 8px 8px',
-          justifyContent: 'flex-start',
-          textAlign: 'left',
-          bg: 'myGray.50'
-        };
+} & ChatControllerProps;
+
+const ChatItem = (props: Props) => {
+  const {
+    statusBoxData,
+    children,
+    isLastChild,
+    questionGuides = [],
+    enableSandbox = true,
+    chat,
+    onEditSubmit
+  } = props;
 
   const { t } = useTranslation();
+
+  const styleMap: BoxProps = useMemoEnhance(
+    () => ({
+      order: chat.obj === ChatRoleEnum.Human ? 0 : 1,
+      justifyContent: chat.obj === ChatRoleEnum.Human ? 'flex-end' : 'flex-start',
+      textAlign: chat.obj === ChatRoleEnum.Human ? 'right' : 'left',
+      fontSize: 'mini',
+      fontWeight: '400',
+      color: 'myGray.500'
+    }),
+    [chat.obj]
+  );
+
   const isChatting = useContextSelector(ChatBoxContext, (v) => v.isChatting);
-  const { chat } = chatControllerProps;
-  const { copyData } = useCopyData();
-  const chatText = useMemo(() => formatChatValue2InputType(chat.value).text || '', [chat.value]);
-  const ContentCard = useMemo(() => {
-    if (type === 'Human') {
-      const { text, files = [] } = formatChatValue2InputType(chat.value);
+  const boxBodyProps = useContextSelector(ChatBoxContext, (v) => v.boxBodyProps);
+  const chatType = useContextSelector(ChatBoxContext, (v) => v.chatType);
+  const showRunningStatus = useContextSelector(ChatItemContext, (v) => v.showRunningStatus);
+  const isHumanMessage = chat.obj === ChatRoleEnum.Human;
+  const { isPc } = useSystem();
 
-      return (
-        <>
-          {files.length > 0 && <FilesBlock files={files} />}
-          <Markdown source={text} />
-        </>
-      );
-    }
+  const sourceTarget = useContextSelector(WorkflowRuntimeContext, (v) => v.sourceTarget);
+  const chatId = useContextSelector(WorkflowRuntimeContext, (v) => v.chatId);
+  const outLinkAuthData = useContextSelector(WorkflowRuntimeContext, (v) => v.outLinkAuthData);
+  const chatAuthTarget = useMemoEnhance(
+    () => toChatAuthApiTarget({ sourceTarget, outLinkAuthData }),
+    [sourceTarget, outLinkAuthData]
+  );
+  const isShowFullText = useContextSelector(ChatItemContext, (v) => v.isShowFullText);
 
-    /* AI */
-    return (
-      <Flex flexDirection={'column'} key={chat.dataId} gap={2}>
-        {chat.value.map((value, i) => {
-          const key = `${chat.dataId}-ai-${i}`;
+  const statisticalChatItem = useMemoEnhance(() => addStatisticalDataToHistoryItem(chat), [chat]);
+  const quoteList: SearchDataResponseQuoteListItemType[] = statisticalChatItem.totalQuoteList ?? [];
+  const allowedCitationIds = useMemoEnhance(() => {
+    const sourceQuoteList = statisticalChatItem.totalQuoteList;
+    if (!sourceQuoteList) return;
 
-          return (
-            <AIResponseBox
-              key={key}
-              value={value}
-              index={i}
-              chat={chat}
-              isLastChild={isLastChild}
-              isChatting={isChatting}
-              questionGuides={questionGuides}
-            />
-          );
-        })}
-      </Flex>
-    );
-  }, [chat, isChatting, isLastChild, questionGuides, type]);
+    return new Set(sourceQuoteList.map((item) => item.id).filter((id): id is string => !!id));
+  }, [statisticalChatItem.totalQuoteList]);
+  const { errorText } = statisticalChatItem;
+  const inlineErrorInfo = useMemo(() => {
+    if (!chat.errorMsg && !errorText) return;
 
-  const chatStatusMap = useMemo(() => {
+    const moduleName =
+      errorText?.moduleName ||
+      chat.moduleName ||
+      t('common:core.module.template.ai_chat', { defaultValue: 'AI 对话' });
+
+    return {
+      title: `${t('chat:log.error.error_prefix')} - ${t(moduleName)}`,
+      message: t(errorText?.errorText || chat.errorMsg || 'Unknow error')
+    };
+  }, [chat.errorMsg, chat.moduleName, errorText, t]);
+  const showInlineError = shouldShowChatItemInlineError({
+    hasInlineError: !!inlineErrorInfo,
+    isChatting,
+    isLastChild
+  });
+
+  const isChatLog = chatType === 'log';
+
+  const chatStatusMap = useMemoEnhance(() => {
     if (!statusBoxData?.status) return;
     return colorMap[statusBoxData.status];
   }, [statusBoxData?.status]);
 
-  return (
-    <>
-      {/* control icon */}
-      <Flex w={'100%'} alignItems={'center'} gap={2} justifyContent={styleMap.justifyContent}>
-        {isChatting && type === ChatRoleEnum.AI && isLastChild ? null : (
-          <Box order={styleMap.order} ml={styleMap.ml}>
-            <ChatController {...chatControllerProps} isLastChild={isLastChild} />
-          </Box>
-        )}
-        <ChatAvatar src={avatar} type={type} />
+  /*
+    1. The interactive node is divided into n dialog boxes.
+    2. Auto-complete the last textnode
+  */
+  const splitAiResponseResults = useMemo(() => {
+    if (chat.obj === ChatRoleEnum.Human) return [chat.value];
 
-        {!!chatStatusMap && statusBoxData && isLastChild && (
-          <Flex
-            alignItems={'center'}
-            px={3}
-            py={'1.5px'}
-            borderRadius="md"
-            bg={chatStatusMap.bg}
-            fontSize={'sm'}
-          >
-            <Box
-              className={styles.statusAnimation}
-              bg={chatStatusMap.color}
-              w="8px"
-              h="8px"
-              borderRadius={'50%'}
-              mt={'1px'}
-            />
-            <Box ml={2} color={'myGray.600'}>
-              {statusBoxData.name}
-            </Box>
+    if (chat.obj === ChatRoleEnum.AI) {
+      // Remove empty text node
+      const filterList = chat.value.filter((item) => !shouldFilterAiValue(item));
+
+      const groupedValues: AIChatItemValueItemType[][] = [];
+      let currentGroup: AIChatItemValueItemType[] = [];
+
+      filterList.forEach((value) => {
+        if (value.interactive) {
+          if (currentGroup.length > 0) {
+            groupedValues.push(currentGroup);
+            currentGroup = [];
+          }
+
+          groupedValues.push([value]);
+          return;
+        }
+
+        currentGroup.push(value);
+
+        if (hasAiAnswerContent(value)) {
+          groupedValues.push(currentGroup);
+          currentGroup = [];
+        }
+      });
+
+      if (currentGroup.length > 0) {
+        groupedValues.push(currentGroup);
+      }
+
+      // Check last group is interactive, Auto add a empty text node(animation)
+      const lastGroup = groupedValues[groupedValues.length - 1];
+      if (isLastChild && (isChatting || groupedValues.length === 0)) {
+        if (
+          (lastGroup &&
+            lastGroup[lastGroup.length - 1] &&
+            lastGroup[lastGroup.length - 1].interactive) ||
+          groupedValues.length === 0
+        ) {
+          groupedValues.push([
+            {
+              text: {
+                content: ''
+              }
+            }
+          ]);
+        }
+      } else if (groupedValues.length === 0) {
+        // 对于非最后一条的空 AI 消息，也补充一个空节点，避免消息"消失"
+        groupedValues.push([
+          {
+            text: {
+              content: ''
+            }
+          }
+        ]);
+      }
+
+      return groupedValues;
+    }
+
+    return [];
+  }, [chat.obj, chat.value, isChatting, isLastChild]);
+  const hasValidAiContent = useMemo(() => {
+    if (chat.obj !== ChatRoleEnum.AI) return false;
+
+    return chat.value.some((item) => !shouldFilterAiValue(item));
+  }, [chat.obj, chat.value]);
+
+  const setCiteModalData = useContextSelector(ChatItemContext, (v) => v.setCiteModalData);
+  const onOpenCiteModal = useMemoizedFn((item?: OnOpenCiteModalProps) => {
+    const selectedQuote = item?.quoteId
+      ? quoteList.find((quote) => quote.id === item.quoteId)
+      : undefined;
+    const isSingleQuote = item?.singleQuote === true && !!selectedQuote;
+
+    // 引用已经不在当前消息的 quoteList 时，不能打开空的单条阅读器。
+    if (item?.singleQuote && !isSingleQuote) return;
+
+    const collectionId = item?.collectionId ?? selectedQuote?.collectionId;
+    const rawSearch = isSingleQuote && selectedQuote ? [selectedQuote] : quoteList;
+    const collectionIdList = collectionId
+      ? [collectionId]
+      : [...new Set(quoteList.map((quote) => quote.collectionId))];
+
+    setCiteModalData({
+      rawSearch,
+      singleQuote: isSingleQuote,
+      metadata:
+        collectionId && isShowFullText
+          ? {
+              ...chatAuthTarget,
+              chatId,
+              chatItemDataId: chat.dataId,
+              collectionId,
+              collectionIdList,
+              sourceId: item?.sourceId ?? selectedQuote?.sourceId ?? '',
+              sourceName: item?.sourceName ?? selectedQuote?.sourceName ?? '',
+              datasetId: item?.datasetId ?? selectedQuote?.datasetId ?? '',
+              quoteId: item?.quoteId
+            }
+          : {
+              ...chatAuthTarget,
+              chatId,
+              chatItemDataId: chat.dataId,
+              collectionIdList,
+              sourceId: item?.sourceId ?? selectedQuote?.sourceId,
+              sourceName: item?.sourceName ?? selectedQuote?.sourceName
+            }
+    });
+  });
+
+  return (
+    <Flex data-chat-id={chat.dataId} direction={'column'} gap={4}>
+      {/* Workflow status */}
+      {!isHumanMessage &&
+        isChatLog &&
+        !!chatStatusMap &&
+        statusBoxData &&
+        isLastChild &&
+        showRunningStatus && (
+          <Flex w={'100%'} alignItems={'center'} gap={2} justifyContent={styleMap.justifyContent}>
+            <Flex
+              alignItems={'center'}
+              px={3}
+              py={'1.5px'}
+              borderRadius="md"
+              bg={chatStatusMap.bg}
+              fontSize={'sm'}
+            >
+              <Box
+                className={styles.statusAnimation}
+                bg={chatStatusMap.color}
+                w="8px"
+                h="8px"
+                borderRadius={'50%'}
+                mt={'1px'}
+              />
+              <Box ml={2} color={'myGray.600'}>
+                {statusBoxData.name}
+              </Box>
+            </Flex>
           </Flex>
         )}
-      </Flex>
+
       {/* content */}
-      <Box
-        mt={['6px', 2]}
-        className="chat-box-card"
-        textAlign={styleMap.textAlign}
-        _hover={{
-          '& .footer-copy': {
-            display: 'block'
-          }
-        }}
-      >
-        <Card
-          {...MessageCardStyle}
-          bg={styleMap.bg}
-          borderRadius={styleMap.borderRadius}
-          textAlign={'left'}
-        >
-          {ContentCard}
-          {children}
-          {/* 对话框底部的复制按钮 */}
-          {type == ChatRoleEnum.AI && (!isChatting || (isChatting && !isLastChild)) && (
+      {splitAiResponseResults.map((value, i) => {
+        const isPlanCard =
+          chat.obj === ChatRoleEnum.AI &&
+          (value as AIChatItemValueItemType[]).some((item) => item.plan || item.planStatus);
+
+        const renderCommonFooter = () =>
+          i === splitAiResponseResults.length - 1 ? (
+            <>
+              {/* error message */}
+              {showInlineError && inlineErrorInfo && (
+                <Box mt={4}>
+                  <ChatErrorCard title={inlineErrorInfo.title} message={inlineErrorInfo.message} />
+                </Box>
+              )}
+              {children}
+            </>
+          ) : null;
+
+        if (chat.obj === ChatRoleEnum.Human) {
+          return (
             <Box
-              className="footer-copy"
-              display={['block', 'none']}
-              position={'absolute'}
-              bottom={0}
-              right={0}
-              transform={'translateX(100%)'}
+              key={i}
+              className="chat-box-card"
+              w={'100%'}
+              maxW={boxBodyProps?.maxW ?? (isPc ? ChatBoxContentMaxWidth : 'calc(100% - 25px)')}
+              mx={boxBodyProps?.mx ?? boxBodyProps?.margin ?? (isPc ? 'auto' : 0)}
+              textAlign={styleMap.textAlign}
             >
-              <MyTooltip label={t('common:common.Copy')}>
-                <MyIcon
-                  w={'1rem'}
-                  cursor="pointer"
-                  p="5px"
-                  bg="white"
-                  name={'copy'}
-                  color={'myGray.500'}
-                  _hover={{ color: 'primary.600' }}
-                  onClick={() => copyData(chatText)}
-                />
-              </MyTooltip>
+              <HumanChatBubble
+                chatValue={value as UserChatItemValueItemType[]}
+                chatTime={i === splitAiResponseResults.length - 1 ? chat.time : undefined}
+                canEdit={!isChatting && !isChatLog}
+                onEditSubmit={onEditSubmit}
+              >
+                {renderCommonFooter()}
+              </HumanChatBubble>
             </Box>
-          )}
-        </Card>
-      </Box>
-    </>
+          );
+        }
+
+        return (
+          <Box
+            key={i}
+            className="chat-box-card"
+            w={'100%'}
+            maxW={boxBodyProps?.maxW ?? (isPc ? ChatBoxContentMaxWidth : 'calc(100% - 25px)')}
+            mx={boxBodyProps?.mx ?? boxBodyProps?.margin ?? (isPc ? 'auto' : 0)}
+            textAlign={styleMap.textAlign}
+          >
+            <AIChatBubble
+              chat={chat}
+              chatValue={value as AIChatItemValueItemType[]}
+              isPlanCard={isPlanCard}
+              isLastChild={isLastChild}
+              isLastValueGroup={i === splitAiResponseResults.length - 1}
+              isChatting={isChatting}
+              hasValidContent={hasValidAiContent}
+              loadingText={showRunningStatus ? statusBoxData?.name : undefined}
+              questionGuides={questionGuides}
+              enableSandbox={enableSandbox}
+              allowedCitationIds={allowedCitationIds}
+              onOpenCiteModal={onOpenCiteModal}
+              chatControllerProps={{
+                ...props,
+                isLastChild
+              }}
+            >
+              {renderCommonFooter()}
+            </AIChatBubble>
+          </Box>
+        );
+      })}
+    </Flex>
   );
 };
 

@@ -1,0 +1,58 @@
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
+import { getModelProviderMetadata } from '@fastgpt/service/core/app/provider/controller';
+import { authModelViewer } from '@/service/core/ai/model/auth';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { NextAPI } from '@/service/middleware/entry';
+import { getMemberModelCatalogPermission } from '@fastgpt/service/support/permission/model/controller';
+import {
+  GetModelCatalogQuerySchema,
+  GetModelCatalogResponseSchema,
+  type GetModelCatalogQuery,
+  type GetModelCatalogResponse
+} from '@fastgpt/global/openapi/core/ai/model/api';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { desensitizeSystemModel } from '@fastgpt/service/core/ai/config/utils';
+import { resolveEffectiveDefaultModelIds } from '@fastgpt/service/core/ai/catalog';
+
+/** 返回当前成员完整模型目录；命中内容版本时只返回 version。 */
+export async function handler(
+  req: ApiRequestProps<Record<string, never>, GetModelCatalogQuery>
+): Promise<GetModelCatalogResponse> {
+  const { version: clientVersion, outLinkAuthData } = parseApiInput({
+    req,
+    querySchema: GetModelCatalogQuerySchema
+  }).query;
+
+  const catalogIdentity = await authModelViewer({ req, outLinkAuthData });
+  const modelHandle = await getModelHandle();
+  const activeModels = modelHandle.getActiveModels();
+  const configuredDefaults = modelHandle.configuredDefaultModelIds;
+  const providers = getModelProviderMetadata().providers;
+  const permission = await getMemberModelCatalogPermission({
+    ...catalogIdentity,
+    catalogSnapshot: { models: activeModels, revision: modelHandle.revision }
+  });
+  const version = `3:${modelHandle.version}:${permission.version}`;
+
+  if (clientVersion === version) {
+    return GetModelCatalogResponseSchema.parse({ version });
+  }
+
+  const permittedModelIds = new Set(permission.modelIds);
+  // 权限结果只决定可见性，目录顺序始终继承 plugin 排好的 active 模型列表。
+  const models = activeModels.filter((model) => permittedModelIds.has(model.modelId));
+
+  return GetModelCatalogResponseSchema.parse({
+    version,
+    data: {
+      models: models.map(desensitizeSystemModel),
+      providers,
+      defaultModelIds: resolveEffectiveDefaultModelIds({
+        models,
+        configuredDefaults
+      })
+    }
+  });
+}
+
+export default NextAPI(handler);

@@ -1,111 +1,87 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { MongoChat } from '@fastgpt/service/core/chat/chatSchema';
-import { MongoApp } from '@fastgpt/service/core/app/schema';
-import { MongoOutLink } from '@fastgpt/service/support/outLink/schema';
+import type { NextApiRequest } from 'next';
 import { authApp } from '@fastgpt/service/support/permission/app/auth';
-import { MongoChatItem } from '@fastgpt/service/core/chat/chatItemSchema';
-import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
-import { MongoAppVersion } from '@fastgpt/service/core/app/version/schema';
 import { NextAPI } from '@/service/middleware/entry';
-import { MongoChatInputGuide } from '@fastgpt/service/core/chat/inputGuide/schema';
-import {
-  OwnerPermissionVal,
-  PerResourceTypeEnum
-} from '@fastgpt/global/support/permission/constant';
+import { OwnerPermissionVal } from '@fastgpt/global/support/permission/constant';
 import { findAppAndAllChildren } from '@fastgpt/service/core/app/controller';
-import { MongoResourcePermission } from '@fastgpt/service/support/permission/schema';
-import { ClientSession } from '@fastgpt/service/common/mongo';
+import { MongoApp } from '@fastgpt/service/core/app/schema';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
+import { addAppDeleteJob } from '@fastgpt/service/core/app/delete';
+import { deleteAppsImmediate } from '@fastgpt/service/core/app/controller';
+import { pushTrack } from '@fastgpt/service/common/middle/tracks/utils';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { getI18nAppType } from '@fastgpt/service/support/user/audit/util';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  DeleteAppQuerySchema,
+  DeleteAppResponseSchema,
+  type DeleteAppResponseType
+} from '@fastgpt/global/openapi/core/app/common/api';
 
-async function handler(req: NextApiRequest, res: NextApiResponse<any>) {
-  const { appId } = req.query as { appId: string };
+async function handler(req: NextApiRequest): Promise<DeleteAppResponseType> {
+  const { appId } = parseApiInput({
+    req,
+    querySchema: DeleteAppQuerySchema
+  }).query;
 
   if (!appId) {
-    throw new Error('参数错误');
+    return Promise.reject('参数错误');
   }
 
   // Auth owner (folder owner, can delete all apps in the folder)
-  const { teamId } = await authApp({ req, authToken: true, appId, per: OwnerPermissionVal });
+  const { teamId, tmbId, userId, app } = await authApp({
+    req,
+    authToken: true,
+    appId,
+    per: OwnerPermissionVal
+  });
 
-  await onDelOneApp({
+  const deleteAppsList = await findAppAndAllChildren({
     teamId,
     appId
   });
+
+  await mongoSessionRun(async (session) => {
+    // Mark app as deleted
+    await MongoApp.updateMany(
+      { _id: deleteAppsList.map((app) => app._id), teamId },
+      { deleteTime: new Date() },
+      { session }
+    );
+
+    // Stop background tasks immediately
+    await deleteAppsImmediate({
+      teamId,
+      appIds: deleteAppsList.map((app) => app._id)
+    });
+
+    // Add to delete queue for async cleanup
+    await addAppDeleteJob({
+      teamId,
+      appId
+    });
+  });
+
+  (async () => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.DELETE_APP,
+      params: {
+        appName: app.name,
+        appType: getI18nAppType(app.type)
+      }
+    });
+  })();
+
+  // Tracks
+  pushTrack.countAppNodes({ teamId, tmbId, uid: userId, appId });
+
+  const ids = deleteAppsList
+    .filter((app) => !['folder'].includes(app.type))
+    .map((app) => String(app._id));
+
+  return DeleteAppResponseSchema.parse(ids);
 }
 
 export default NextAPI(handler);
-
-export const onDelOneApp = async ({
-  teamId,
-  appId,
-  session
-}: {
-  teamId: string;
-  appId: string;
-  session?: ClientSession;
-}) => {
-  const apps = await findAppAndAllChildren({
-    teamId,
-    appId,
-    fields: '_id'
-  });
-
-  const del = async (session: ClientSession) => {
-    for await (const app of apps) {
-      const appId = app._id;
-      // Chats
-      await MongoChatItem.deleteMany(
-        {
-          appId
-        },
-        { session }
-      );
-      await MongoChat.deleteMany(
-        {
-          appId
-        },
-        { session }
-      );
-      // 删除分享链接
-      await MongoOutLink.deleteMany(
-        {
-          appId
-        },
-        { session }
-      );
-      // delete version
-      await MongoAppVersion.deleteMany(
-        {
-          appId
-        },
-        { session }
-      );
-      await MongoChatInputGuide.deleteMany(
-        {
-          appId
-        },
-        { session }
-      );
-      await MongoResourcePermission.deleteMany(
-        {
-          resourceType: PerResourceTypeEnum.app,
-          teamId,
-          resourceId: appId
-        },
-        { session }
-      );
-      // delete app
-      await MongoApp.deleteOne(
-        {
-          _id: appId
-        },
-        { session }
-      );
-    }
-  };
-
-  if (session) {
-    return del(session);
-  }
-
-  return mongoSessionRun(del);
-};

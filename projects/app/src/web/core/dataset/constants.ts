@@ -1,15 +1,14 @@
-import { defaultQAModels, defaultVectorModels } from '@fastgpt/global/core/ai/model';
+import { defaultQAModels, defaultVectorModels } from '@fastgpt/global/core/ai/constants';
 import {
+  CollectionTrainingStatusEnum,
+  DatasetCollectionDataProcessModeEnum,
   DatasetCollectionTypeEnum,
   DatasetTypeEnum,
-  TrainingModeEnum
+  DatasetStatusEnum
 } from '@fastgpt/global/core/dataset/constants';
-import type {
-  DatasetCollectionItemType,
-  DatasetItemType
-} from '@fastgpt/global/core/dataset/type.d';
-import { DatasetDefaultPermissionVal } from '@fastgpt/global/support/permission/dataset/constant';
+import type { DatasetCollectionItemType, DatasetItemType } from '@fastgpt/global/core/dataset/type';
 import { DatasetPermission } from '@fastgpt/global/support/permission/dataset/controller';
+import { i18nT } from '@fastgpt/global/common/i18n/utils';
 
 export const defaultDatasetDetail: DatasetItemType = {
   _id: '',
@@ -22,11 +21,10 @@ export const defaultDatasetDetail: DatasetItemType = {
   avatar: '/icon/logo.svg',
   name: '',
   intro: '',
-  status: 'active',
+  status: DatasetStatusEnum.active,
   permission: new DatasetPermission(),
   vectorModel: defaultVectorModels[0],
   agentModel: defaultQAModels[0],
-  defaultPermission: DatasetDefaultPermissionVal,
   inheritPermission: true
 };
 
@@ -34,23 +32,24 @@ export const defaultCollectionDetail: DatasetCollectionItemType = {
   _id: '',
   teamId: '',
   tmbId: '',
-  datasetId: {
+  datasetId: '',
+  dataset: {
     _id: '',
     parentId: '',
     userId: '',
     teamId: '',
     tmbId: '',
+    createTime: new Date(),
     updateTime: new Date(),
     type: DatasetTypeEnum.dataset,
     avatar: '/icon/logo.svg',
     name: '',
     intro: '',
-    status: 'active',
     vectorModel: defaultVectorModels[0].model,
     agentModel: defaultQAModels[0].model,
-    defaultPermission: DatasetDefaultPermissionVal,
     inheritPermission: true
   },
+  tags: [],
   parentId: '',
   name: '',
   type: DatasetCollectionTypeEnum.file,
@@ -58,12 +57,49 @@ export const defaultCollectionDetail: DatasetCollectionItemType = {
   sourceName: '',
   sourceId: '',
   createTime: new Date(),
-  trainingType: TrainingModeEnum.chunk,
+  trainingType: DatasetCollectionDataProcessModeEnum.chunk,
   chunkSize: 0,
-  permission: new DatasetPermission()
+  indexSize: 512,
+  permission: new DatasetPermission(),
+  indexAmount: 0,
+  trainingAmount: 0,
+  activeTrainingAmount: 0,
+  finalErrorAmount: 0,
+  hasError: false,
+  slowestTrainingStatus: CollectionTrainingStatusEnum.ready
 };
 
-export enum ImportProcessWayEnum {
-  auto = 'auto',
-  custom = 'custom'
-}
+export const TrainingProcess = {
+  waiting: {
+    label: i18nT('dataset:process.Waiting'),
+    value: 'waiting'
+  },
+  parsing: {
+    label: i18nT('dataset:process.Parsing'),
+    value: 'parsing'
+  },
+  parseImage: {
+    label: i18nT('dataset:process.Parse_Image'),
+    value: 'parseImage'
+  },
+  getQA: {
+    label: i18nT('dataset:process.Get QA'),
+    value: 'getQA'
+  },
+  imageIndex: {
+    label: i18nT('dataset:process.Image_Index'),
+    value: 'imageIndex'
+  },
+  autoIndex: {
+    label: i18nT('dataset:process.Auto_Index'),
+    value: 'autoIndex'
+  },
+  vectorizing: {
+    label: i18nT('dataset:process.Vectorizing'),
+    value: 'vectorizing'
+  },
+  isReady: {
+    label: i18nT('dataset:process.Is_Ready'),
+    value: 'isReady'
+  }
+};

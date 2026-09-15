@@ -1,80 +1,123 @@
 import { GET, POST, PUT } from '@/web/common/api/request';
 import { hashStr } from '@fastgpt/global/common/string/tools';
-import type { ResLogin } from '@/global/support/api/userRes.d';
-import { UserAuthTypeEnum } from '@fastgpt/global/support/user/auth/constants';
-import { UserUpdateParams } from '@/types/user';
-import { UserType } from '@fastgpt/global/support/user/type.d';
+import type { UserUpdateParams } from '@/types/user';
+import type { UserType } from '@fastgpt/global/support/user/type';
+import type { SearchMembersOrgsGroupsResponseType } from '@fastgpt/global/openapi/support/user/team/api';
 import type {
-  FastLoginProps,
-  OauthLoginProps,
-  PostLoginProps
-} from '@fastgpt/global/support/user/api.d';
-import { GetWXLoginQRResponse } from '@fastgpt/global/support/user/login/api.d';
+  PreLoginResponseType,
+  LoginByPasswordBodyType,
+  OauthLoginBodyType,
+  FastLoginBodyType,
+  WxLoginBodyType,
+  GetWXLoginQRResponseType,
+  LoginSuccessResponseType,
+  WxLoginResultResponseType
+} from '@fastgpt/global/openapi/support/user/account/login/api';
+import type {
+  SendAuthCodeBodyType,
+  SendAuthCodeResponseType
+} from '@fastgpt/global/openapi/support/user/inform/api';
+import type { UpdatePasswordByCodeBodyType } from '@fastgpt/global/openapi/support/user/account/password/api';
+import type { UpdateContactBodyType } from '@fastgpt/global/openapi/support/user/account/update/api';
+import type { AccountRegisterBodyType } from '@fastgpt/global/openapi/support/user/account/register/api';
+import type { CaptchaVerificationPurpose } from '@fastgpt/global/support/user/account/verification/type';
 
-export const sendAuthCode = (data: {
-  username: string;
-  type: `${UserAuthTypeEnum}`;
-  googleToken: string;
-}) => POST(`/proApi/support/user/inform/sendAuthCode`, data);
+export type UserVerificationPurpose = CaptchaVerificationPurpose;
+
+/* ===== Auth code ===== */
+export const sendAuthCode = (data: SendAuthCodeBodyType) =>
+  POST<SendAuthCodeResponseType>('/proApi/support/user/inform/sendAuthCode', data);
+export const getCaptchaPic = (username: string, purpose: UserVerificationPurpose) =>
+  GET<{
+    captchaImage: string;
+  }>('/proApi/support/user/account/captcha/getImgCaptcha', { username, purpose });
+
+/* ===== login ===== */
+export const getPreLogin = (username: string) =>
+  GET<PreLoginResponseType>('/support/user/account/preLogin', { username });
 
 export const getTokenLogin = () =>
   GET<UserType>('/support/user/account/tokenLogin', {}, { maxQuantity: 1 });
-export const oauthLogin = (params: OauthLoginProps) =>
-  POST<ResLogin>('/proApi/support/user/account/login/oauth', params);
-export const postFastLogin = (params: FastLoginProps) =>
-  POST<ResLogin>('/proApi/support/user/account/login/fastLogin', params);
+export const oauthLogin = (params: OauthLoginBodyType) =>
+  POST<LoginSuccessResponseType>('/proApi/support/user/account/login/oauth', params);
+export const postFastLogin = (params: FastLoginBodyType) =>
+  POST<LoginSuccessResponseType>('/proApi/support/user/account/login/fastLogin', params);
+export const postLogin = ({ password, ...props }: LoginByPasswordBodyType) =>
+  POST<LoginSuccessResponseType>('/support/user/account/loginByPassword', {
+    ...props,
+    password: hashStr(password)
+  });
+// wx login
+export const getWXLoginQR = () =>
+  GET<GetWXLoginQRResponseType>('/proApi/support/user/account/login/wx/getQR');
 
+export const getWXLoginResult = (params: WxLoginBodyType) =>
+  POST<WxLoginResultResponseType>(`/proApi/support/user/account/login/wx/getResult`, params, {
+    maxQuantity: 1
+  });
+export const loginOut = () => GET('/support/user/account/loginout');
+
+/* ===== register ===== */
 export const postRegister = ({
   username,
   password,
   code,
-  inviterId
-}: {
-  username: string;
-  code: string;
-  password: string;
-  inviterId?: string;
-}) =>
-  POST<ResLogin>(`/proApi/support/user/account/register/emailAndPhone`, {
+  bd_vid,
+  msclkid,
+  fastgpt_sem,
+  language
+}: AccountRegisterBodyType) =>
+  POST<LoginSuccessResponseType>(`/proApi/support/user/account/register/emailAndPhone`, {
     username,
     code,
-    inviterId,
+    bd_vid,
+    msclkid,
+    fastgpt_sem,
+    language,
     password: hashStr(password)
   });
 
+/* =====  password ===== */
 export const postFindPassword = ({
   username,
   code,
-  password
-}: {
-  username: string;
-  code: string;
-  password: string;
-}) =>
-  POST<ResLogin>(`/proApi/support/user/account/password/updateByCode`, {
+  password,
+  ...props
+}: UpdatePasswordByCodeBodyType) =>
+  POST<LoginSuccessResponseType>(`/proApi/support/user/account/password/updateByCode`, {
     username,
     code,
-    password: hashStr(password)
-  });
-
-export const updatePasswordByOld = ({ oldPsw, newPsw }: { oldPsw: string; newPsw: string }) =>
-  POST('/support/user/account/updatePasswordByOld', {
-    oldPsw: hashStr(oldPsw),
-    newPsw: hashStr(newPsw)
-  });
-
-export const postLogin = ({ password, ...props }: PostLoginProps) =>
-  POST<ResLogin>('/support/user/account/loginByPassword', {
     ...props,
     password: hashStr(password)
   });
+// Check the whether password has expired
+export const getCheckPswExpired = () =>
+  GET<boolean>('/support/user/account/password/checkPswExpired');
 
-export const loginOut = () => GET('/support/user/account/loginout');
+/* ===== notification account ===== */
+export const updateNotificationAccount = (data: { account: string; verifyCode: string }) =>
+  PUT('/proApi/support/user/team/updateNotificationAccount', data);
+export const updateContact = (data: UpdateContactBodyType) => {
+  return PUT('/proApi/support/user/account/updateContact', data);
+};
 
+/* ===== user info ===== */
 export const putUserInfo = (data: UserUpdateParams) => PUT('/support/user/account/update', data);
 
-export const getWXLoginQR = () =>
-  GET<GetWXLoginQRResponse>('/proApi/support/user/account/login/wx/getQR');
+export const postSyncMembers = () => POST('/proApi/support/user/team/sync');
 
-export const getWXLoginResult = (code: string) =>
-  GET<ResLogin>(`/proApi/support/user/account/login/wx/getResult`, { code });
+export const getSearchMembersOrgsGroups = (
+  searchKey: string,
+  options?: {
+    members?: boolean;
+    orgs?: boolean;
+    groups?: boolean;
+  }
+) =>
+  GET<SearchMembersOrgsGroupsResponseType>(
+    '/proApi/support/user/team/searchMembersOrgsGroups',
+    { searchKey, ...options },
+    { maxQuantity: 1 }
+  );
+
+export const ExportMembers = () => GET<{ csv: string }>('/proApi/support/user/team/member/export');

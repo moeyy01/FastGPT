@@ -1,50 +1,100 @@
-import type { ApiRequestProps, ApiResponseType } from '@fastgpt/service/type/next';
 import { NextAPI } from '@/service/middleware/entry';
-import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
+import { TeamAppCreatePermissionVal } from '@fastgpt/global/support/permission/user/constant';
+import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
+import type { ApiRequestProps } from '@fastgpt/next/type';
 import { onCreateApp } from './create';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { getI18nAppType } from '@fastgpt/service/support/user/audit/util';
+import { copyAvatarImage } from '@fastgpt/service/common/file/image/controller';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
+import { getS3AvatarSource } from '@fastgpt/service/common/s3/sources/avatar';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  CopyAppBodySchema,
+  CopyAppResponseSchema,
+  type CopyAppBodyType,
+  type CopyAppResponseType
+} from '@fastgpt/global/openapi/core/app/common/api';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import {
+  encodeHttpToolSetNodesForStorage,
+  encodeMcpToolSetNodesForStorage,
+  decodeToolSetNodesFromStorage
+} from '@fastgpt/service/core/app/jsonSchemaStorage';
 
-export type copyAppQuery = {};
+async function handler(req: ApiRequestProps<CopyAppBodyType>): Promise<CopyAppResponseType> {
+  const { appId: sourceAppId } = parseApiInput({
+    req,
+    bodySchema: CopyAppBodySchema
+  }).body;
 
-export type copyAppBody = { appId: string };
-
-export type copyAppResponse = {
-  appId: string;
-};
-
-async function handler(
-  req: ApiRequestProps<copyAppBody, copyAppQuery>,
-  res: ApiResponseType<any>
-): Promise<copyAppResponse> {
-  const [{ app, tmbId }] = await Promise.all([
-    authApp({
-      req,
-      authToken: true,
-      per: WritePermissionVal,
-      appId: req.body.appId
-    }),
-    authUserPer({
-      req,
-      authToken: true,
-      per: WritePermissionVal
-    })
-  ]);
-
-  const appId = await onCreateApp({
-    parentId: app.parentId,
-    name: app.name + ' Copy',
-    intro: app.intro,
-    avatar: app.avatar,
-    type: app.type,
-    modules: app.modules,
-    edges: app.edges,
-    teamId: app.teamId,
-    tmbId,
-    pluginData: app.pluginData
+  const { app, teamId } = await authApp({
+    req,
+    authToken: true,
+    per: WritePermissionVal,
+    appId: sourceAppId
   });
 
-  return { appId };
+  const { tmbId } = app.parentId
+    ? await authApp({ req, appId: app.parentId, per: WritePermissionVal, authToken: true })
+    : await authUserPer({ req, authToken: true, per: TeamAppCreatePermissionVal });
+
+  // Copy avatar
+  const { appId } = await mongoSessionRun(async (session) => {
+    const avatar = await copyAvatarImage({
+      teamId,
+      imageUrl: app.avatar,
+      temporary: true,
+      session
+    });
+
+    const storageModules = (() => {
+      if (app.type === AppTypeEnum.mcpToolSet) {
+        return encodeMcpToolSetNodesForStorage(app.modules);
+      }
+      if (app.type === AppTypeEnum.httpToolSet) {
+        return encodeHttpToolSetNodesForStorage(app.modules);
+      }
+      // 普通应用必须写入 onCreateApp 清洗后的 workflow，不能用原始存储数据绕过模型校验。
+      return undefined;
+    })();
+    const appId = await onCreateApp({
+      parentId: app.parentId,
+      name: app.name + ' Copy',
+      intro: app.intro,
+      avatar,
+      type: app.type,
+      modules: decodeToolSetNodesFromStorage(app.modules),
+      storageModules,
+      edges: app.edges,
+      chatConfig: app.chatConfig,
+      teamId: app.teamId,
+      tmbId,
+      pluginData: app.pluginData,
+      session
+    });
+
+    await getS3AvatarSource().refreshAvatar(avatar, undefined, session);
+
+    return { appId };
+  });
+
+  (async () => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.CREATE_APP_COPY,
+      params: {
+        appName: app.name,
+        appType: getI18nAppType(app.type)
+      }
+    });
+  })();
+
+  return CopyAppResponseSchema.parse({ appId });
 }
 
 export default NextAPI(handler);

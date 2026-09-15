@@ -1,13 +1,38 @@
-import { ChatCompletionRequestMessageRoleEnum } from '../../ai/constants';
-import { NodeInputKeyEnum, NodeOutputKeyEnum } from '../constants';
+import json5 from 'json5';
+import { ChatRoleEnum } from '../../../core/chat/constants';
+import type { ChatItemMiniType } from '../../../core/chat/type';
+import type { NodeOutputItemType } from './type';
+import { createChatCompletionDeltaResponse } from '../../ai/llm/utils';
+import {
+  NodeInputKeyEnum,
+  NodeOutputKeyEnum,
+  VARIABLE_NODE_ID,
+  WorkflowIOValueTypeEnum
+} from '../constants';
 import { FlowNodeTypeEnum } from '../node/constant';
-import { StoreNodeItemType } from '../type/node';
-import { StoreEdgeItemType } from '../type/edge';
-import { RuntimeEdgeItemType, RuntimeNodeItemType } from './type';
-import { VARIABLE_NODE_ID } from '../constants';
-import { isReferenceValue } from '../utils';
-import { ReferenceValueProps } from '../type/io';
+import { type WorkflowInteractiveResponseType } from '../template/system/interactive/type';
+import type { RuntimeEdgeItemType, StoreEdgeItemType } from '../type/edge';
+import type { FlowNodeOutputItemType, ReferenceValueType } from '../type/io';
+import type { StoreNodeItemType } from '../type/node';
+import { isValidReferenceValueFormat } from '../utils';
+import type { RuntimeNodeItemType } from './type';
+import { isSecretValue } from '../../../common/secret/utils';
+import { isChildInteractive } from '../template/system/interactive/constants';
 
+export const extractDeepestInteractive = (
+  interactive: WorkflowInteractiveResponseType
+): WorkflowInteractiveResponseType => {
+  const MAX_DEPTH = 100;
+  let current = interactive;
+  let depth = 0;
+
+  while (depth < MAX_DEPTH && current?.params && 'childrenResponse' in current.params) {
+    current = current.params.childrenResponse;
+    depth++;
+  }
+
+  return current;
+};
 export const getMaxHistoryLimitFromNodes = (nodes: StoreNodeItemType[]): number => {
   let limit = 10;
   nodes.forEach((node) => {
@@ -25,23 +50,219 @@ export const getMaxHistoryLimitFromNodes = (nodes: StoreNodeItemType[]): number 
   return limit * 2;
 };
 
-export const initWorkflowEdgeStatus = (edges: StoreEdgeItemType[]): RuntimeEdgeItemType[] => {
-  return (
-    edges?.map((edge) => ({
-      ...edge,
-      status: 'waiting'
-    })) || []
-  );
+/* value type format */
+export const valueTypeFormat = (value: any, valueType?: WorkflowIOValueTypeEnum) => {
+  const isObjectString = (value: any) => {
+    if (typeof value === 'string' && value !== 'false' && value !== 'true') {
+      const trimmedValue = value.trim();
+      const isJsonString =
+        (trimmedValue.startsWith('{') && trimmedValue.endsWith('}')) ||
+        (trimmedValue.startsWith('[') && trimmedValue.endsWith(']'));
+      return isJsonString;
+    }
+    return false;
+  };
+
+  // Handle null/undefined, return default value by type
+  if (value === undefined || value === null) return value;
+  if (!valueType || valueType === WorkflowIOValueTypeEnum.any) return value;
+
+  // Password check
+  if (valueType === WorkflowIOValueTypeEnum.string && isSecretValue(value)) return value;
+
+  // 2. 如果值已经符合目标类型，直接返回
+  if (
+    (valueType === WorkflowIOValueTypeEnum.string && typeof value === 'string') ||
+    (valueType === WorkflowIOValueTypeEnum.number && typeof value === 'number') ||
+    (valueType === WorkflowIOValueTypeEnum.boolean && typeof value === 'boolean') ||
+    (valueType?.startsWith('array') && Array.isArray(value)) ||
+    (valueType === WorkflowIOValueTypeEnum.object && typeof value === 'object') ||
+    (valueType === WorkflowIOValueTypeEnum.chatHistory &&
+      (Array.isArray(value) || typeof value === 'number')) ||
+    (valueType === WorkflowIOValueTypeEnum.datasetQuote && Array.isArray(value)) ||
+    (valueType === WorkflowIOValueTypeEnum.selectDataset && Array.isArray(value)) ||
+    (valueType === WorkflowIOValueTypeEnum.selectApp && typeof value === 'object')
+  ) {
+    return value;
+  }
+
+  // 4. 按目标类型，进行格式转化
+  // 4.1 基本类型转换
+  if (valueType === WorkflowIOValueTypeEnum.string) {
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }
+  if (valueType === WorkflowIOValueTypeEnum.number) {
+    if (value === '') return null;
+    return Number(value);
+  }
+  if (valueType === WorkflowIOValueTypeEnum.boolean) {
+    if (typeof value === 'string') {
+      return value.toLowerCase() === 'true';
+    }
+    return Boolean(value);
+  }
+
+  // 4.3 字符串转对象
+  if (valueType === WorkflowIOValueTypeEnum.object) {
+    if (isObjectString(value)) {
+      const trimmedValue = value.trim();
+      try {
+        return json5.parse(trimmedValue);
+      } catch {}
+    }
+    return {};
+  }
+
+  // 4.4 数组类型(这里 value 不是数组类型)（TODO: 嵌套数据类型转化）
+  if (valueType?.startsWith('array')) {
+    if (isObjectString(value)) {
+      try {
+        return json5.parse(value);
+      } catch {}
+    }
+    return [value];
+  }
+
+  // 4.5 特殊类型处理
+  if (
+    [
+      WorkflowIOValueTypeEnum.datasetQuote,
+      WorkflowIOValueTypeEnum.selectDataset,
+      WorkflowIOValueTypeEnum.selectApp
+    ].includes(valueType as any)
+  ) {
+    if (isObjectString(value)) {
+      try {
+        return json5.parse(value);
+      } catch {}
+    }
+    return [];
+  }
+
+  // Invalid history type
+  if (valueType === WorkflowIOValueTypeEnum.chatHistory) {
+    if (isObjectString(value)) {
+      try {
+        return json5.parse(value);
+      } catch {}
+    }
+    return [];
+  }
+
+  // 5. 默认返回原值
+  return value;
 };
 
-export const getDefaultEntryNodeIds = (nodes: (StoreNodeItemType | RuntimeNodeItemType)[]) => {
-  const entryList = [
-    FlowNodeTypeEnum.systemConfig,
-    FlowNodeTypeEnum.workflowStart,
-    FlowNodeTypeEnum.pluginInput
-  ];
+/*
+  Get interaction information (if any) from the last AI message.
+  What can be done:
+  1. Get the interactive data
+  2. Check that the workflow starts at the interaction node
+*/
+export const getLastInteractiveValue = (
+  histories: ChatItemMiniType[]
+): WorkflowInteractiveResponseType | undefined => {
+  const lastAIMessage = [...histories].reverse().find((item) => item.obj === ChatRoleEnum.AI);
+
+  if (lastAIMessage) {
+    const lastValue = lastAIMessage.value[lastAIMessage.value.length - 1];
+
+    if (!lastValue || !lastValue.interactive) {
+      return;
+    }
+
+    // Convert legacy ask_user call to the new one.
+    if (lastValue.interactive.type === 'agentPlanAskQuery') {
+      if (lastValue.interactive.params.answer) {
+        return;
+      }
+
+      return {
+        ...lastValue.interactive,
+        type: 'agentAsk',
+        params: {
+          description: lastValue.interactive.params.reason ?? '',
+          questions: [
+            {
+              question: lastValue.interactive.params.content,
+              options: lastValue.interactive.params.options.map((option) => ({
+                summary: option,
+                value: option
+              })),
+              answer: ''
+            }
+          ]
+        }
+      };
+    }
+
+    const finalInteractive = extractDeepestInteractive(lastValue.interactive);
+    if (finalInteractive.type === 'agentPlanAskQuery') {
+      return;
+    }
+
+    if (isChildInteractive(lastValue.interactive.type)) {
+      return lastValue.interactive;
+    }
+
+    // Check is user select
+    if (
+      lastValue.interactive.type === 'userSelect' &&
+      !lastValue.interactive?.params?.userSelectedVal
+    ) {
+      return lastValue.interactive;
+    }
+
+    // Check is user input
+    if (lastValue.interactive.type === 'userInput' && !lastValue.interactive?.params?.submitted) {
+      return lastValue.interactive;
+    }
+
+    if (lastValue.interactive.type === 'agentAsk' && !lastValue.interactive.params.submitted) {
+      return lastValue.interactive;
+    }
+
+    if (lastValue.interactive.type === 'paymentPause' && !lastValue.interactive.params.continue) {
+      return lastValue.interactive;
+    }
+  }
+
+  return;
+};
+
+export const storeEdges2RuntimeEdges = (
+  edges: StoreEdgeItemType[],
+  lastInteractive?: WorkflowInteractiveResponseType
+): RuntimeEdgeItemType[] => {
+  if (lastInteractive) {
+    const memoryEdges = lastInteractive.memoryEdges || [];
+    if (memoryEdges && memoryEdges.length > 0) {
+      return memoryEdges.map((edge) => ({ ...edge }));
+    }
+  }
+
+  return edges?.map((edge) => ({ ...edge, status: 'waiting' })) || [];
+};
+
+export const getWorkflowEntryNodeIds = (
+  nodes: (StoreNodeItemType | RuntimeNodeItemType)[],
+  lastInteractive?: WorkflowInteractiveResponseType
+) => {
+  if (lastInteractive) {
+    const entryNodeIds = lastInteractive.entryNodeIds || [];
+    if (Array.isArray(entryNodeIds) && entryNodeIds.length > 0) {
+      return entryNodeIds;
+    }
+  }
+
+  const entryList = [FlowNodeTypeEnum.workflowStart, FlowNodeTypeEnum.pluginInput];
   return nodes
-    .filter((node) => entryList.includes(node.flowNodeType as any))
+    .filter(
+      (node) =>
+        entryList.includes(node.flowNodeType as any) ||
+        (!nodes.some((item) => entryList.includes(item.flowNodeType as any)) &&
+          node.flowNodeType === FlowNodeTypeEnum.tool)
+    )
     .map((item) => item.nodeId);
 };
 
@@ -61,7 +282,10 @@ export const storeNodes2RuntimeNodes = (
         isEntry: entryNodeIds.includes(node.nodeId),
         inputs: node.inputs,
         outputs: node.outputs,
-        pluginId: node.pluginId
+        pluginId: node.pluginId,
+        version: node.version,
+        toolConfig: node.toolConfig,
+        catchError: node.catchError
       };
     }) || []
   );
@@ -75,140 +299,134 @@ export const filterWorkflowEdges = (edges: RuntimeEdgeItemType[]) => {
   );
 };
 
-/* 
-  区分普通连线和递归连线
-  递归连线：可以通过往上查询 nodes，最终追溯到自身
+/*
+  Get the value of the reference variable/node output
+  1. [string,string]
+  2. [string,string][]
 */
-export const splitEdges2WorkflowEdges = ({
-  edges,
-  allEdges,
-  currentNode
-}: {
-  edges: RuntimeEdgeItemType[];
-  allEdges: RuntimeEdgeItemType[];
-  currentNode: RuntimeNodeItemType;
-}) => {
-  const commonEdges: RuntimeEdgeItemType[] = [];
-  const recursiveEdges: RuntimeEdgeItemType[] = [];
-
-  edges.forEach((edge) => {
-    const checkIsCurrentNode = (edge: RuntimeEdgeItemType): boolean => {
-      const sourceEdge = allEdges.find((item) => item.target === edge.source);
-      if (!sourceEdge) return false;
-      if (sourceEdge.source === currentNode.nodeId) return true;
-      return checkIsCurrentNode(sourceEdge);
-    };
-    if (checkIsCurrentNode(edge)) {
-      recursiveEdges.push(edge);
-    } else {
-      commonEdges.push(edge);
-    }
-  });
-
-  return { commonEdges, recursiveEdges };
-};
-
-/* 
-  1. 输入线分类：普通线和递归线（可以追溯到自身）
-  2. 起始线全部非 waiting 执行，或递归线全部非 waiting 执行
-*/
-export const checkNodeRunStatus = ({
-  node,
-  runtimeEdges
-}: {
-  node: RuntimeNodeItemType;
-  runtimeEdges: RuntimeEdgeItemType[];
-}) => {
-  const workflowEdges = filterWorkflowEdges(runtimeEdges).filter(
-    (item) => item.target === node.nodeId
-  );
-
-  // Entry
-  if (workflowEdges.length === 0) {
-    return 'run';
-  }
-
-  const { commonEdges, recursiveEdges } = splitEdges2WorkflowEdges({
-    edges: workflowEdges,
-    allEdges: runtimeEdges,
-    currentNode: node
-  });
-
-  // check skip
-  if (commonEdges.every((item) => item.status === 'skipped')) {
-    return 'skip';
-  }
-  if (recursiveEdges.length > 0 && recursiveEdges.every((item) => item.status === 'skipped')) {
-    return 'skip';
-  }
-
-  // check active
-  if (commonEdges.every((item) => item.status !== 'waiting')) {
-    return 'run';
-  }
-  if (recursiveEdges.length > 0 && recursiveEdges.every((item) => item.status !== 'waiting')) {
-    return 'run';
-  }
-
-  return 'wait';
-};
-
 export const getReferenceVariableValue = ({
   value,
-  nodes,
-  variables
+  nodesMap,
+  variables,
+  isReferenceVal = true
 }: {
-  value: ReferenceValueProps;
-  nodes: RuntimeNodeItemType[];
-  variables: Record<string, any>;
+  value?: ReferenceValueType;
+  nodesMap: Record<string, RuntimeNodeItemType> | Map<string, RuntimeNodeItemType>;
+  variables: Record<string, unknown>;
+  isReferenceVal?: boolean;
 }) => {
-  if (!isReferenceValue(value)) {
-    return value;
+  if (!value || !isReferenceVal) return value;
+
+  const resoleValue = (value: [string, string | undefined]) => {
+    const sourceNodeId = value[0];
+    const outputId = value[1];
+
+    if (sourceNodeId === VARIABLE_NODE_ID) {
+      if (!outputId) return undefined;
+      return variables[outputId];
+    }
+
+    // 避免 value 刚好就是二个元素的字符串数组
+    const node = nodesMap instanceof Map ? nodesMap.get(sourceNodeId) : nodesMap[sourceNodeId];
+    if (!node) {
+      return value;
+    }
+
+    return node.outputs.find((output) => output.id === outputId)?.value;
+  };
+
+  // handle single reference value
+  if (isValidReferenceValueFormat(value)) {
+    return resoleValue(value as [string, string | undefined]);
   }
-  const sourceNodeId = value[0];
-  const outputId = value[1];
 
-  if (sourceNodeId === VARIABLE_NODE_ID && outputId) {
-    return variables[outputId];
+  // handle reference array
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => isValidReferenceValueFormat(item, nodesMap))
+  ) {
+    return value
+      .map<any>((val) => {
+        return resoleValue(val as [string, string | undefined]);
+      })
+      .flat()
+      .filter((item) => item !== undefined);
   }
 
-  const node = nodes.find((node) => node.nodeId === sourceNodeId);
+  return value;
+};
 
-  if (!node) {
+export const formatVariableValByType = (val: any, valueType?: WorkflowIOValueTypeEnum) => {
+  if (!valueType) return val;
+  if (val === undefined || val === null) return;
+  // Value type check, If valueType invalid, return undefined
+  if (valueType.startsWith('array') && !Array.isArray(val)) return undefined;
+  if (valueType === WorkflowIOValueTypeEnum.boolean) return Boolean(val);
+  if (valueType === WorkflowIOValueTypeEnum.number) return Number(val);
+  if (valueType === WorkflowIOValueTypeEnum.string) {
+    return typeof val === 'object' ? JSON.stringify(val) : String(val);
+  }
+  if (
+    [
+      WorkflowIOValueTypeEnum.object,
+      WorkflowIOValueTypeEnum.datasetQuote,
+      WorkflowIOValueTypeEnum.selectApp,
+      WorkflowIOValueTypeEnum.selectDataset
+    ].includes(valueType) &&
+    typeof val !== 'object'
+  )
     return undefined;
-  }
 
-  const outputValue = node.outputs.find((output) => output.id === outputId)?.value;
-
-  return outputValue;
+  return val;
 };
 
 export const textAdaptGptResponse = ({
   text,
+  reasoning_content,
   model = '',
   finish_reason = null,
   extraData = {}
 }: {
   model?: string;
-  text: string | null;
+  text?: string | null;
+  reasoning_content?: string | null;
   finish_reason?: null | 'stop';
-  extraData?: Object;
+  extraData?: object;
 }) => {
-  return JSON.stringify({
-    ...extraData,
-    id: '',
-    object: '',
-    created: 0,
+  return createChatCompletionDeltaResponse({
+    text,
+    reasoningContent: reasoning_content,
     model,
-    choices: [
-      {
-        delta:
-          text === null
-            ? {}
-            : { role: ChatCompletionRequestMessageRoleEnum.Assistant, content: text },
-        index: 0,
-        finish_reason
-      }
-    ]
+    finishReason: finish_reason,
+    extraData
   });
 };
+
+/* Update runtimeNode's outputs with interactive data from history */
+export function rewriteNodeOutputByHistories(
+  runtimeNodes: RuntimeNodeItemType[],
+  lastInteractive?: WorkflowInteractiveResponseType
+) {
+  const interactive = lastInteractive;
+  if (!interactive?.nodeOutputs) {
+    return runtimeNodes;
+  }
+
+  return runtimeNodes.map((node) => {
+    return {
+      ...node,
+      outputs: node.outputs.map((output: FlowNodeOutputItemType) => {
+        return {
+          ...output,
+          value: (() => {
+            const nodeOutput = interactive.nodeOutputs?.find(
+              (item: NodeOutputItemType) => item.nodeId === node.nodeId && item.key === output.key
+            );
+            return nodeOutput ? nodeOutput.value : output.value;
+          })()
+        };
+      })
+    };
+  });
+}

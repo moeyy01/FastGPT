@@ -7,12 +7,13 @@ import {
   DrawerOverlay,
   DrawerContent,
   DrawerCloseButton,
-  DrawerContentProps,
+  type DrawerContentProps,
   Flex,
   Image,
   Box
 } from '@chakra-ui/react';
 import { useLoading } from '../../../hooks/useLoading';
+import Avatar from '../Avatar';
 
 type Props = DrawerContentProps & {
   onClose: () => void;
@@ -25,7 +26,7 @@ const MyRightDrawer = ({
   onClose,
   iconSrc,
   title,
-  maxW = ['90vw', '30vw'],
+  maxW = ['90vw', '500px'],
   children,
   isLoading,
   ...props
@@ -36,9 +37,9 @@ const MyRightDrawer = ({
       <DrawerOverlay />
       <DrawerContent
         maxW={maxW}
-        {...props}
         h={'94%'}
         mt={'2%'}
+        {...props}
         borderLeftRadius={'lg'}
         overflow={'hidden'}
       >
@@ -52,15 +53,7 @@ const MyRightDrawer = ({
           py={'10px'}
           px={5}
         >
-          {iconSrc && (
-            <>
-              {iconSrc.startsWith('/') ? (
-                <Image mr={3} objectFit={'contain'} alt="" src={iconSrc} w={'20px'} />
-              ) : (
-                <MyIcon mr={3} name={iconSrc as any} w={'20px'} />
-              )}
-            </>
-          )}
+          {iconSrc && <Avatar mr={3} w={'20px'} src={iconSrc} />}
           <Box flex={'1'} fontSize={'md'}>
             {title}
           </Box>

@@ -1,58 +1,102 @@
-import { MongoApp } from '@fastgpt/service/core/app/schema';
-import { AppListItemType } from '@fastgpt/global/core/app/type';
 import { NextAPI } from '@/service/middleware/entry';
-import { MongoResourcePermission } from '@fastgpt/service/support/permission/schema';
 import {
   PerResourceTypeEnum,
   ReadPermissionVal
 } from '@fastgpt/global/support/permission/constant';
 import { AppPermission } from '@fastgpt/global/support/permission/app/controller';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
-import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
+import { type ApiRequestProps } from '@fastgpt/next/type';
 import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
-import { AppFolderTypeList, AppTypeEnum } from '@fastgpt/global/core/app/constants';
-import { AppDefaultPermissionVal } from '@fastgpt/global/support/permission/app/constant';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import { findAppsForList } from '@fastgpt/service/core/app/entity';
 import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
 import { replaceRegChars } from '@fastgpt/global/common/string/tools';
+import { getGroupsByTmbId } from '@fastgpt/service/support/permission/memberGroup/controllers';
+import { getOrgIdSetWithParentByTmbId } from '@fastgpt/service/support/permission/org/controllers';
+import { addSourceMember } from '@fastgpt/service/support/user/utils';
+import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
+import { isPrivateResourceByCollaborators, sumPer } from '@fastgpt/global/support/permission/utils';
+import { getResourcePermissionsByTeam } from '@fastgpt/service/support/permission/resourcePermissionService';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  ListAppBodySchema,
+  ListAppResponseSchema,
+  type ListAppBodyType,
+  type ListAppResponseType
+} from '@fastgpt/global/openapi/core/app/common/api';
+import { Types } from '@fastgpt/service/common/mongo';
 
-export type ListAppBody = {
-  parentId?: ParentIdType;
-  type?: AppTypeEnum | AppTypeEnum[];
-  getRecentlyChat?: boolean;
-  searchKey?: string;
-};
+/*
+  获取 APP 列表权限
+  1. 校验 folder 权限和获取 team 权限（owner 单独处理）
+  2. 获取 team 下所有 app 权限。获取我的所有组。并计算出我所有的app权限。
+  3. 过滤我有权限的 app，并按 parentId 过滤目录层级
+  4. 根据过滤条件获取 app 列表
+  5. 遍历搜索出来的 app，并赋予资源自身 ACL 对应的权限
+  6. 再根据 read 权限进行一次过滤。
+*/
 
-async function handler(req: ApiRequestProps<ListAppBody>): Promise<AppListItemType[]> {
-  const { parentId, type, getRecentlyChat, searchKey } = req.body;
+async function handler(req: ApiRequestProps<ListAppBodyType>): Promise<ListAppResponseType> {
+  const { parentId, type, searchKey, sort, tmbIds, pinnedFirst } = parseApiInput({
+    req,
+    bodySchema: ListAppBodySchema
+  }).body;
 
-  // 凭证校验
-  const {
-    app: ParentApp,
-    tmbId,
-    teamId,
-    permission: tmbPer
-  } = await (async () => {
-    if (parentId) {
-      return await authApp({
-        req,
-        authToken: true,
-        appId: parentId,
-        per: ReadPermissionVal
+  const [{ tmbId, teamId, permission: teamPer }] = await Promise.all([
+    authUserPer({
+      req,
+      authToken: true,
+      authApiKey: true,
+      per: ReadPermissionVal
+    }),
+    ...(parentId
+      ? [
+          authApp({
+            req,
+            authToken: true,
+            authApiKey: true,
+            appId: parentId,
+            per: ReadPermissionVal
+          })
+        ]
+      : [])
+  ]);
+
+  if (Array.isArray(tmbIds) && tmbIds.length === 0) {
+    return ListAppResponseSchema.parse([]);
+  }
+
+  const [roleList, myGroupMap, myOrgSet] = await Promise.all([
+    getResourcePermissionsByTeam({
+      resourceType: PerResourceTypeEnum.app,
+      teamId
+    }),
+    getGroupsByTmbId({ tmbId, teamId }).then((item) => {
+      const map = new Map<string, 1>();
+      item.forEach((item) => {
+        map.set(String(item._id), 1);
       });
-    } else {
-      return {
-        ...(await authUserPer({
-          req,
-          authToken: true,
-          per: ReadPermissionVal
-        })),
-        app: undefined
-      };
-    }
-  })();
+      return map;
+    }),
+    getOrgIdSetWithParentByTmbId({ teamId, tmbId })
+  ]);
+  const roleListMap = new Map<string, (typeof roleList)[number][]>();
+  roleList.forEach((item) => {
+    const resourceId = String(item.resourceId);
+    const list = roleListMap.get(resourceId) ?? [];
+    list.push(item);
+    roleListMap.set(resourceId, list);
+  });
+  const myPerList = roleList.filter(
+    (item) =>
+      String(item.tmbId) === String(tmbId) ||
+      myGroupMap.has(String(item.groupId)) ||
+      myOrgSet.has(String(item.orgId))
+  );
 
   const findAppsQuery = (() => {
+    const idList = { _id: { $in: myPerList.map((item) => item.resourceId) } };
+    const appPerQuery = teamPer.isOwner ? {} : idList;
     const searchMatch = searchKey
       ? {
           $or: [
@@ -61,97 +105,94 @@ async function handler(req: ApiRequestProps<ListAppBody>): Promise<AppListItemTy
           ]
         }
       : {};
-
-    if (getRecentlyChat) {
-      return {
-        // get all chat app
-        teamId,
-        type: { $in: [AppTypeEnum.workflow, AppTypeEnum.simple, AppTypeEnum.plugin] },
-        ...searchMatch
-      };
-    }
-
+    const _type = (() => {
+      if (type) {
+        return Array.isArray(type) ? { $in: type } : type;
+      }
+      return { $ne: AppTypeEnum.hidden } as const;
+    })();
+    const creatorMatch = tmbIds ? { tmbId: { $in: tmbIds } } : {};
     if (searchKey) {
-      return {
+      const data = {
+        ...appPerQuery,
         teamId,
-        ...searchMatch
+        ...searchMatch,
+        type: _type,
+        ...creatorMatch
       };
+      // @ts-ignore
+      delete data.parentId;
+      return data;
     }
-
     return {
+      ...appPerQuery,
       teamId,
-      ...(type && Array.isArray(type) && { type: { $in: type } }),
-      ...(type && { type }),
+      type: _type,
+      ...creatorMatch,
       ...parseParentIdInMongo(parentId)
     };
   })();
+  const limit = (() => {
+    if (searchKey) return 50;
+    return;
+  })();
 
-  /* temp: get all apps and per */
-  const [myApps, rpList] = await Promise.all([
-    MongoApp.find(
-      findAppsQuery,
-      '_id parentId avatar type name intro tmbId updateTime pluginData defaultPermission inheritPermission'
-    )
-      .sort({
-        updateTime: -1
-      })
-      .limit(searchKey ? 20 : 1000)
-      .lean(),
-    MongoResourcePermission.find({
-      resourceType: PerResourceTypeEnum.app,
-      teamId,
-      tmbId
-    }).lean()
-  ]);
+  const listField = `_id parentId avatar type name intro tmbId createTime updateTime pluginData inheritPermission modules${
+    pinnedFirst ? ' isPinned' : ''
+  }`;
 
-  const filterApps = myApps
+  const myApps = await findAppsForList({
+    filter: { ...findAppsQuery, deleteTime: null },
+    fields: listField,
+    sort,
+    pinnedFirst,
+    limit
+  });
+
+  const formatApps = myApps
     .map((app) => {
-      const Per = (() => {
-        // Inherit app
-        if (app.inheritPermission && ParentApp && !AppFolderTypeList.includes(app.type)) {
-          // get its parent's permission as its permission
-          app.defaultPermission = ParentApp.defaultPermission;
-          const perVal = rpList.find(
-            (item) => String(item.resourceId) === String(ParentApp._id)
+      const { Per, privateApp } = (() => {
+        const getPer = (appId: string) => {
+          const tmbRole = myPerList.find(
+            (item) => String(item.resourceId) === appId && !!item.tmbId
           )?.permission;
-
+          const groupAndOrgRole = sumPer(
+            ...myPerList
+              .filter(
+                (item) => String(item.resourceId) === appId && (!!item.groupId || !!item.orgId)
+              )
+              .map((item) => item.permission)
+          );
           return new AppPermission({
-            per: perVal ?? app.defaultPermission,
-            isOwner: String(app.tmbId) === String(tmbId) || tmbPer.isOwner
+            role: tmbRole ?? groupAndOrgRole,
+            isOwner: String(app.tmbId) === String(tmbId) || teamPer.isOwner
           });
-        } else {
-          const perVal = rpList.find(
-            (item) => String(item.resourceId) === String(app._id)
-          )?.permission;
-          return new AppPermission({
-            per: perVal ?? app.defaultPermission,
-            isOwner: String(app.tmbId) === String(tmbId) || tmbPer.isOwner
-          });
-        }
+        };
+        const resourceClbs = roleListMap.get(String(app._id)) ?? [];
+        return {
+          Per: getPer(String(app._id)),
+          privateApp: isPrivateResourceByCollaborators({ resourceClbs })
+        };
       })();
-
+      const { modules, ...rest } = app;
+      const hasInteractiveNode = modules?.some((item) =>
+        [FlowNodeTypeEnum.formInput, FlowNodeTypeEnum.userSelect].includes(item.flowNodeType)
+      );
       return {
-        ...app,
-        permission: Per
+        ...rest,
+        avatar: app.avatar,
+        intro: app.intro ?? '',
+        createTime: app.createTime ?? new Types.ObjectId(String(app._id)).getTimestamp(),
+        parentId: app.parentId,
+        permission: Per,
+        private: privateApp,
+        hasInteractiveNode
       };
     })
     .filter((app) => app.permission.hasReadPer);
 
-  const sliceApps = getRecentlyChat ? filterApps.slice(0, 15) : filterApps;
-
-  return sliceApps.map((app) => ({
-    _id: app._id,
-    tmbId: app.tmbId,
-    avatar: app.avatar,
-    type: app.type,
-    name: app.name,
-    intro: app.intro,
-    updateTime: app.updateTime,
-    permission: app.permission,
-    defaultPermission: app.defaultPermission || AppDefaultPermissionVal,
-    pluginData: app.pluginData,
-    inheritPermission: app.inheritPermission ?? true
-  }));
+  const list = await addSourceMember({ list: formatApps });
+  return ListAppResponseSchema.parse(list);
 }
 
 export default NextAPI(handler);

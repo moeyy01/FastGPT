@@ -1,34 +1,62 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
 import { NextAPI } from '@/service/middleware/entry';
 import { MongoAppVersion } from '@fastgpt/service/core/app/version/schema';
-import { PaginationProps, PaginationResponse } from '@fastgpt/web/common/fetch/type';
-import { AppVersionSchemaType } from '@fastgpt/global/core/app/version';
+import { type ApiRequestProps } from '@fastgpt/next/type';
+import { authApp } from '@fastgpt/service/support/permission/app/auth';
+import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
+import { parsePaginationRequest } from '@fastgpt/service/common/api/pagination';
+import { addSourceMember } from '@fastgpt/service/support/user/utils';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { formatTime2YMDHM } from '@fastgpt/global/common/string/time';
+import {
+  AppVersionListBodySchema,
+  AppVersionListResponseSchema,
+  type AppVersionListBodyType,
+  type AppVersionListResponseType
+} from '@fastgpt/global/openapi/core/app/version/api';
 
-type Props = PaginationProps<{
-  appId: string;
-}>;
+async function handler(
+  req: ApiRequestProps<AppVersionListBodyType>
+): Promise<AppVersionListResponseType> {
+  const { appId, isPublish } = parseApiInput({
+    req,
+    bodySchema: AppVersionListBodySchema
+  }).body;
+  const { offset, pageSize } = parsePaginationRequest(req);
 
-type Response = PaginationResponse<AppVersionSchemaType>;
+  await authApp({ appId, req, per: ReadPermissionVal, authToken: true });
 
-async function handler(req: NextApiRequest, res: NextApiResponse<any>): Promise<Response> {
-  const { current, pageSize, appId } = req.body as Props;
+  const match = {
+    appId,
+    ...(isPublish !== undefined && { isPublish })
+  };
 
   const [result, total] = await Promise.all([
-    MongoAppVersion.find({
-      appId
-    })
-      .sort({
-        time: -1
-      })
-      .skip((current - 1) * pageSize)
-      .limit(pageSize),
-    MongoAppVersion.countDocuments({ appId })
+    (async () => {
+      const versions = await MongoAppVersion.find(match)
+        .sort({
+          time: -1
+        })
+        .skip(offset)
+        .limit(pageSize)
+        .lean();
+
+      return addSourceMember({
+        list: versions
+      }).then((list) =>
+        list.map((item) => ({
+          ...item,
+          isPublish: !!item.isPublish,
+          versionName: item.versionName || formatTime2YMDHM(item.time)
+        }))
+      );
+    })(),
+    MongoAppVersion.countDocuments(match)
   ]);
 
-  return {
+  return AppVersionListResponseSchema.parse({
     total,
     list: result
-  };
+  });
 }
 
 export default NextAPI(handler);

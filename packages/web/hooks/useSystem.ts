@@ -1,7 +1,10 @@
-import { useMediaQuery } from '@chakra-ui/react';
+import { useSystemStoreContext } from '../context/useSystem';
+import { useContextSelector } from 'use-context-selector';
 
 export const useSystem = () => {
-  const [isPc] = useMediaQuery('(min-width: 900px)');
+  const isPc = useContextSelector(useSystemStoreContext, (state) => state.isPc);
+  const isMac =
+    typeof window !== 'undefined' && window.navigator.userAgent.toLocaleLowerCase().includes('mac');
 
-  return { isPc };
+  return { isPc, isMac };
 };

@@ -1,63 +1,64 @@
-import React, { useEffect } from 'react';
-import { $getRoot, EditorState, type LexicalEditor } from 'lexical';
-import { useCallback, useTransition } from 'react';
-import { editorStateToText } from '../../Textarea/PromptEditor/utils';
-import { EditorVariablePickerType } from '../../Textarea/PromptEditor/type';
+import React from 'react';
+import type { LexicalEditor } from 'lexical';
+import { useCallback } from 'react';
+import {
+  type EditorVariableLabelPickerType,
+  type EditorVariablePickerType
+} from '../../Textarea/PromptEditor/type';
 import Editor from './Editor';
+import { editorStateToText } from '../../Textarea/PromptEditor/utils';
 
 const HttpInput = ({
-  hasVariablePlugin = true,
-  hasDropDownPlugin = false,
   variables = [],
+  variableLabels = [],
   value,
   onChange,
   onBlur,
   h,
   placeholder,
-  setDropdownValue,
-  updateTrigger
+  updateTrigger,
+  tabIndex,
+  resetOnValueChange = true
 }: {
-  hasVariablePlugin?: boolean;
-  hasDropDownPlugin?: boolean;
   variables?: EditorVariablePickerType[];
+  variableLabels?: EditorVariableLabelPickerType[];
   value?: string;
   onChange?: (text: string) => void;
   onBlur?: (text: string) => void;
   h?: number;
   placeholder?: string;
-  setDropdownValue?: (value: string) => void;
   updateTrigger?: boolean;
+  tabIndex?: number;
+  resetOnValueChange?: boolean;
 }) => {
-  const [currentValue, setCurrentValue] = React.useState(value);
-
-  const [, startSts] = useTransition();
-
-  const onChangeInput = useCallback((editorState: EditorState, editor: LexicalEditor) => {
-    const text = editorStateToText(editor).replaceAll('}}{{', '}} {{');
-    setCurrentValue(text);
-    onChange?.(text);
-  }, []);
-  const onBlurInput = useCallback((editor: LexicalEditor) => {
-    startSts(() => {
-      const text = editorStateToText(editor).replaceAll('}}{{', '}} {{');
+  const onChangeInput = useCallback(
+    (editor: LexicalEditor) => {
+      const text = editorStateToText(editor);
+      onChange?.(text);
+    },
+    [onChange]
+  );
+  const onBlurInput = useCallback(
+    (editor: LexicalEditor) => {
+      const text = editorStateToText(editor);
       onBlur?.(text);
-    });
-  }, []);
+    },
+    [onBlur]
+  );
 
   return (
     <>
       <Editor
-        hasVariablePlugin={hasVariablePlugin}
-        hasDropDownPlugin={hasDropDownPlugin}
         variables={variables}
+        variableLabels={variableLabels}
         h={h}
         value={value}
-        currentValue={currentValue}
-        onChange={onChangeInput}
+        onChange={onChange ? onChangeInput : undefined}
         onBlur={onBlurInput}
         placeholder={placeholder}
-        setDropdownValue={setDropdownValue}
         updateTrigger={updateTrigger}
+        tabIndex={tabIndex}
+        resetOnValueChange={resetOnValueChange}
       />
     </>
   );

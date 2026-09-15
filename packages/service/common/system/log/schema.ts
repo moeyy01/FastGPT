@@ -1,5 +1,5 @@
-import { getMongoModel, Schema } from '../../../common/mongo';
-import { SystemLogType } from './type';
+import { defineIndex, getMongoLogModel as getMongoModel, Schema } from '../../../common/mongo';
+import { type SystemLogType } from './type';
 import { LogLevelEnum } from './constant';
 
 export const LogCollectionName = 'system_logs';
@@ -22,8 +22,11 @@ export const getMongoLog = () => {
     metadata: Object
   });
 
-  SystemLogSchema.index({ time: 1 }, { expires: '15d' });
-  SystemLogSchema.index({ level: 1 });
+  defineIndex(SystemLogSchema, {
+    key: { time: 1 },
+    options: { expires: '15d' }
+  });
+  defineIndex(SystemLogSchema, { key: { level: 1 } });
 
   return getMongoModel<SystemLogType>(LogCollectionName, SystemLogSchema);
 };

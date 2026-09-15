@@ -1,73 +1,87 @@
-import { connectionMongo, getMongoModel, type Model } from '../../../common/mongo';
-const { Schema, model, models } = connectionMongo;
-import { UsageSchemaType } from '@fastgpt/global/support/wallet/usage/type';
-import { UsageSourceMap } from '@fastgpt/global/support/wallet/usage/constants';
+import { defineIndex, connectionMongo, getMongoModel } from '../../../common/mongo';
+const { Schema } = connectionMongo;
+import { type UsageSchemaType } from '@fastgpt/global/support/wallet/usage/type';
+import { UsageSourceEnum } from '@fastgpt/global/support/wallet/usage/constants';
 import {
   TeamCollectionName,
   TeamMemberCollectionName
 } from '@fastgpt/global/support/user/team/constant';
+import { UsageCollectionName, UsageItemCollectionName } from './constants';
+import { AppCollectionName } from '../../../core/app/schema';
+import { DatasetCollectionName } from '../../../core/dataset/schema';
+import { agentSkillsCollectionName } from '@fastgpt/global/core/ai/skill/constants';
 
-export const UsageCollectionName = 'usages';
-
-const UsageSchema = new Schema({
-  teamId: {
-    type: Schema.Types.ObjectId,
-    ref: TeamCollectionName,
-    required: true
-  },
-  tmbId: {
-    type: Schema.Types.ObjectId,
-    ref: TeamMemberCollectionName,
-    required: true
-  },
-  source: {
-    type: String,
-    enum: Object.keys(UsageSourceMap),
-    required: true
-  },
-  appName: {
+const UsageSchema = new Schema(
+  {
+    teamId: {
+      type: Schema.Types.ObjectId,
+      ref: TeamCollectionName,
+      required: true
+    },
+    tmbId: {
+      type: Schema.Types.ObjectId,
+      ref: TeamMemberCollectionName,
+      required: true
+    },
+    source: {
+      type: String,
+      enum: Object.values(UsageSourceEnum),
+      required: true
+    },
     // usage name
-    type: String,
-    default: ''
-  },
-  appId: {
-    type: Schema.Types.ObjectId,
-    ref: 'apps',
-    required: false
-  },
-  pluginId: {
-    type: Schema.Types.ObjectId,
-    ref: 'plugins',
-    required: false
-  },
-  time: {
-    type: Date,
-    default: () => new Date()
-  },
-  totalPoints: {
+    appName: {
+      type: String,
+      default: ''
+    },
     // total points
-    type: Number,
-    required: true
+    totalPoints: {
+      type: Number,
+      required: true
+    },
+    time: {
+      type: Date,
+      default: () => new Date()
+    },
+
+    appId: {
+      type: Schema.Types.ObjectId,
+      ref: AppCollectionName
+    },
+    skillId: {
+      type: Schema.Types.ObjectId,
+      ref: agentSkillsCollectionName
+    },
+    datasetId: {
+      type: Schema.Types.ObjectId,
+      ref: DatasetCollectionName
+    },
+
+    // @description It will not be used again in the future.
+    list: {
+      type: Array
+    }
   },
-  // total: {
-  //   // total points
-  //   type: Number,
-  //   required: true
-  // },
-  list: {
-    type: Array,
-    default: []
+  {
+    // Auto update time
+    timestamps: {
+      updatedAt: 'time'
+    }
   }
+);
+
+UsageSchema.virtual('usageItems', {
+  ref: UsageItemCollectionName,
+  localField: '_id',
+  foreignField: 'usageId'
 });
 
-try {
-  UsageSchema.index({ teamId: 1, tmbId: 1, source: 1, time: -1 }, { background: true });
-  // timer task. clear dead team
-  UsageSchema.index({ teamId: 1, time: -1 }, { background: true });
+defineIndex(UsageSchema, {
+  key: { teamId: 1, tmbId: 1, source: 1, time: 1, appName: 1, _id: -1 }
+});
 
-  UsageSchema.index({ time: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
-} catch (error) {
-  console.log(error);
-}
+defineIndex(UsageSchema, {
+  key: { time: 1 },
+  options: { expireAfterSeconds: 360 * 24 * 60 * 60 }
+});
 
 export const MongoUsage = getMongoModel<UsageSchemaType>(UsageCollectionName, UsageSchema);

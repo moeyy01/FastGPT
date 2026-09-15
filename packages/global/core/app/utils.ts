@@ -1,126 +1,72 @@
-import type { AppChatConfigType, AppSimpleEditFormType } from '../app/type';
-import { FlowNodeTypeEnum } from '../workflow/node/constant';
-import { NodeInputKeyEnum, FlowNodeTemplateTypeEnum } from '../workflow/constants';
-import type { FlowNodeInputItemType } from '../workflow/type/io.d';
-import { getAppChatConfig } from '../workflow/utils';
-import { StoreNodeItemType } from '../workflow/type/node';
+import type { AppFormEditFormType } from './formEdit/type';
 import { DatasetSearchModeEnum } from '../dataset/constants';
+import { NodeInputKeyEnum } from '../workflow/constants';
+import { type WorkflowTemplateBasicType } from '../workflow/type';
+import { AppTypeEnum } from './constants';
+import appErrList from '../../common/error/code/app';
+import pluginErrList from '../../common/error/code/plugin';
+import { i18nT } from '../../common/i18n/utils';
+import { DatasetTagFilterVersionEnum } from '../dataset/workflowTagFilter';
 
-export const getDefaultAppForm = (): AppSimpleEditFormType => {
+const deletedPluginErrorList = new Set([
+  'plugin.team_not_installed',
+  'plugin.team_source_forbidden',
+  'plugin.team_id_required',
+  'plugin.team_source_install_failed',
+  'plugin.version_required'
+]);
+
+/** 判断工具错误是否代表工具已被删除、卸载或当前来源不可用。 */
+export const isToolNotExistError = (error?: unknown) =>
+  typeof error === 'string' && deletedPluginErrorList.has(error);
+
+export const getDefaultAppForm = (): AppFormEditFormType => {
   return {
     aiSettings: {
-      model: 'gpt-4o-mini',
-      systemPrompt: '',
-      temperature: 0,
       isResponseAnswerText: true,
-      maxHistories: 6,
-      maxToken: 4000
+      maxHistories: 6
     },
     dataset: {
       datasets: [],
       similarity: 0.4,
-      limit: 1500,
+      limit: 3000,
       searchMode: DatasetSearchModeEnum.embedding,
       usingReRank: false,
-      datasetSearchUsingExtensionQuery: true,
-      datasetSearchExtensionBg: ''
+      rerankWeight: 0.5,
+      datasetSearchUsingExtensionQuery: false,
+      datasetSearchExtensionBg: '',
+      [NodeInputKeyEnum.collectionFilterVersion]: DatasetTagFilterVersionEnum.structured,
+      [NodeInputKeyEnum.authTmbId]: false
     },
     selectedTools: [],
+    selectedAgentSkills: [],
     chatConfig: {}
   };
 };
 
-/* format app nodes to edit form */
-export const appWorkflow2Form = ({
-  nodes,
-  chatConfig
-}: {
-  nodes: StoreNodeItemType[];
-  chatConfig: AppChatConfigType;
-}) => {
-  const defaultAppForm = getDefaultAppForm();
-  const findInputValueByKey = (inputs: FlowNodeInputItemType[], key: string) => {
-    return inputs.find((item) => item.key === key)?.value;
-  };
+export const getAppType = (config?: WorkflowTemplateBasicType | AppFormEditFormType) => {
+  if (!config) return '';
 
-  nodes.forEach((node) => {
-    if (
-      node.flowNodeType === FlowNodeTypeEnum.chatNode ||
-      node.flowNodeType === FlowNodeTypeEnum.tools
-    ) {
-      defaultAppForm.aiSettings.model = findInputValueByKey(node.inputs, NodeInputKeyEnum.aiModel);
-      defaultAppForm.aiSettings.systemPrompt = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.aiSystemPrompt
-      );
-      defaultAppForm.aiSettings.temperature = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.aiChatTemperature
-      );
-      defaultAppForm.aiSettings.maxToken = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.aiChatMaxToken
-      );
-      defaultAppForm.aiSettings.maxHistories = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.history
-      );
-    } else if (node.flowNodeType === FlowNodeTypeEnum.datasetSearchNode) {
-      defaultAppForm.dataset.datasets = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSelectList
-      );
-      defaultAppForm.dataset.similarity = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSimilarity
-      );
-      defaultAppForm.dataset.limit = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetMaxTokens
-      );
-      defaultAppForm.dataset.searchMode =
-        findInputValueByKey(node.inputs, NodeInputKeyEnum.datasetSearchMode) ||
-        DatasetSearchModeEnum.embedding;
-      defaultAppForm.dataset.usingReRank = !!findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSearchUsingReRank
-      );
-      defaultAppForm.dataset.datasetSearchUsingExtensionQuery = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSearchUsingExtensionQuery
-      );
-      defaultAppForm.dataset.datasetSearchExtensionModel = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSearchExtensionModel
-      );
-      defaultAppForm.dataset.datasetSearchExtensionBg = findInputValueByKey(
-        node.inputs,
-        NodeInputKeyEnum.datasetSearchExtensionBg
-      );
-    } else if (node.flowNodeType === FlowNodeTypeEnum.pluginModule) {
-      if (!node.pluginId) return;
+  if ('aiSettings' in config) {
+    return AppTypeEnum.simple;
+  }
 
-      defaultAppForm.selectedTools.push({
-        id: node.nodeId,
-        pluginId: node.pluginId,
-        name: node.name,
-        avatar: node.avatar,
-        intro: node.intro || '',
-        flowNodeType: node.flowNodeType,
-        showStatus: node.showStatus,
-        version: '481',
-        inputs: node.inputs,
-        outputs: node.outputs,
-        templateType: FlowNodeTemplateTypeEnum.other
-      });
-    } else if (node.flowNodeType === FlowNodeTypeEnum.systemConfig) {
-      defaultAppForm.chatConfig = getAppChatConfig({
-        chatConfig,
-        systemConfigNode: node,
-        isPublicFetch: true
-      });
-    }
-  });
+  if (!('nodes' in config)) return '';
+  if (config.nodes.some((node) => node.flowNodeType === 'workflowStart')) {
+    return AppTypeEnum.workflow;
+  }
+  if (config.nodes.some((node) => node.flowNodeType === 'pluginInput')) {
+    return AppTypeEnum.workflowTool;
+  }
+  return '';
+};
 
-  return defaultAppForm;
+export const formatToolError = (error?: any) => {
+  if (!error || typeof error !== 'string') return;
+
+  if (isToolNotExistError(error)) return i18nT('common:error.tool_not_exist');
+
+  const errorText = appErrList[error]?.message || pluginErrList[error]?.message;
+
+  return errorText || error;
 };

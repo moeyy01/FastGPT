@@ -1,156 +1,302 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Box, BoxProps } from '@chakra-ui/react';
+import React, { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
+import { Box, type BoxProps } from '@chakra-ui/react';
 import { useToast } from './useToast';
 import { getErrText } from '@fastgpt/global/common/error/utils';
-import { PaginationProps, PaginationResponse } from '../common/fetch/type';
-import {
-  useBoolean,
-  useLockFn,
-  useMemoizedFn,
-  useMount,
-  useScroll,
-  useVirtualList,
-  useRequest
-} from 'ahooks';
+import { useBoolean, useMemoizedFn, useScroll, useThrottleEffect } from 'ahooks';
 import MyBox from '../components/common/MyBox';
 import { useTranslation } from 'next-i18next';
+import { useRequest } from './useRequest';
+import type { PaginationType, PaginationResponseType } from '@fastgpt/global/openapi/api';
+
+const thresholdVal = 100;
+
+export type ScrollListType = ({
+  children,
+  ScrollContainerRef,
+  isLoading,
+  showLoadingOverlay,
+  ...props
+}: {
+  children: ReactNode;
+  ScrollContainerRef?: RefObject<HTMLDivElement>;
+  isLoading?: boolean;
+  showLoadingOverlay?: boolean;
+} & BoxProps) => React.JSX.Element;
 
 export function useScrollPagination<
-  TParams extends PaginationProps,
-  TData extends PaginationResponse
+  TParams extends PaginationType,
+  TData extends PaginationResponseType
 >(
-  api: (data: TParams) => Promise<TData>,
+  api: (data: TParams, cancelToken?: AbortController) => Promise<TData>,
   {
-    debounceWait,
-    throttleWait,
-    refreshDeps,
-    itemHeight = 50,
-    overscan = 10,
+    scrollLoadType = 'bottom',
 
     pageSize = 10,
-    defaultParams = {}
-  }: {
-    debounceWait?: number;
-    throttleWait?: number;
-    refreshDeps?: any[];
+    params,
+    EmptyTip,
+    showErrorToast = true,
+    disabled = false,
+    showNoMoreTip = true,
+    showPaginationTip = true,
 
-    itemHeight: number;
-    overscan?: number;
+    ...props
+  }: {
+    scrollLoadType?: 'top' | 'bottom';
 
     pageSize?: number;
-    defaultParams?: Record<string, any>;
-  }
+    params?: Omit<TParams, 'pageNum' | 'offset' | 'pageSize'>;
+    EmptyTip?: React.JSX.Element;
+    showErrorToast?: boolean;
+    disabled?: boolean;
+    showNoMoreTip?: boolean;
+    showPaginationTip?: boolean;
+  } & Parameters<typeof useRequest>[1]
 ) {
   const { t } = useTranslation();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const wrapperRef = useRef(null);
-
-  const noMore = useRef(false);
-
   const { toast } = useToast();
-  const [current, setCurrent] = useState(1);
+
   const [data, setData] = useState<TData['list']>([]);
+  const [total, setTotal] = useState(0);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [isLoading, { setTrue, setFalse }] = useBoolean(false);
+  const [error, setError] = useState<Error | null>(null);
+  const requestedOffsetRef = useRef<number>();
+  const requestControllerRef = useRef<AbortController>();
+  const requestIdRef = useRef(0);
+  const isRequestingRef = useRef(false);
+  const isEmpty = hasLoaded && total === 0 && data.length === 0 && !isLoading;
 
-  const [list] = useVirtualList<TData['list'][0]>(data, {
-    containerTarget: containerRef,
-    wrapperTarget: wrapperRef,
-    itemHeight,
-    overscan
-  });
+  const noMore = data.length >= total;
 
-  const loadData = useLockFn(async (num: number = current) => {
-    if (noMore.current && num !== 1) return;
+  const loadData = useMemoizedFn(
+    async ({
+      init = false,
+      ScrollContainerRef,
+      silent = false
+    }: {
+      init?: boolean;
+      ScrollContainerRef?: RefObject<HTMLDivElement>;
+      silent?: boolean;
+    } = {}) => {
+      if (!init && (noMore || isRequestingRef.current)) return;
 
-    setTrue();
+      const offset = init ? 0 : data.length;
 
-    try {
-      const res = await api({
-        current: num,
-        pageSize,
-        ...defaultParams
-      } as TParams);
+      // 请求完成到 React 提交列表更新之间，滚动监听可能再次读到旧 data.length。
+      // 用同步游标拦截相同 offset，避免同一页在这个时间窗口被重复请求。
+      if (!init && requestedOffsetRef.current === offset) return;
 
-      setCurrent(num);
-
-      if (num === 1) {
-        // init or reload
-        setData(res.list);
-        noMore.current = res.list.length >= res.total;
+      if (init) {
+        // An init request represents new filters, so cancel the old request and start immediately.
+        requestControllerRef.current?.abort();
+        requestedOffsetRef.current = undefined;
       } else {
-        const totalLength = data.length + res.list.length;
-        noMore.current = totalLength >= res.total;
-        setData((prev) => [...prev, ...res.list]);
+        requestedOffsetRef.current = offset;
       }
-    } catch (error: any) {
-      toast({
-        title: getErrText(error, '获取数据异常'),
-        status: 'error'
-      });
-      console.log(error);
+
+      const requestController = new AbortController();
+      const requestId = ++requestIdRef.current;
+      requestControllerRef.current = requestController;
+      isRequestingRef.current = true;
+
+      // 静默刷新用于后台校准数据，保留旧列表并避免整块 loading 闪烁。
+      if (!silent) {
+        setTrue();
+      } else if (init) {
+        setFalse();
+      }
+      setError(null);
+
+      if (init && !silent) {
+        setData([]);
+        setTotal(0);
+      }
+      if (init) {
+        setHasLoaded(false);
+      }
+
+      try {
+        const res = await api(
+          {
+            offset,
+            pageSize,
+            ...params
+          } as TParams,
+          requestController
+        );
+
+        if (requestController.signal.aborted || requestId !== requestIdRef.current) return;
+
+        setTotal(res.total);
+        if (offset === 0) {
+          setHasLoaded(true);
+        }
+
+        if (scrollLoadType === 'top') {
+          const prevHeight = ScrollContainerRef?.current?.scrollHeight || 0;
+          const prevScrollTop = ScrollContainerRef?.current?.scrollTop || 0;
+
+          function adjustScrollPosition() {
+            requestAnimationFrame(
+              ScrollContainerRef?.current
+                ? () => {
+                    if (ScrollContainerRef?.current) {
+                      const newHeight = ScrollContainerRef.current.scrollHeight;
+                      const heightDiff = newHeight - prevHeight;
+                      ScrollContainerRef.current.scrollTop = prevScrollTop + heightDiff;
+                    }
+                  }
+                : adjustScrollPosition
+            );
+          }
+
+          const newData = offset === 0 ? res.list : [...res.list, ...data];
+          setData(newData);
+          adjustScrollPosition();
+        } else {
+          const newData = offset === 0 ? res.list : [...data, ...res.list];
+          setData(newData);
+        }
+      } catch (error: any) {
+        if (requestController.signal.aborted || requestId !== requestIdRef.current) return;
+
+        requestedOffsetRef.current = undefined;
+        setError(error instanceof Error ? error : new Error(String(error)));
+        if (showErrorToast) {
+          toast({
+            title: t(getErrText(error, t('common:core.chat.error.data_error'))),
+            status: 'error'
+          });
+        }
+        console.log(error);
+      } finally {
+        if (requestId === requestIdRef.current) {
+          requestControllerRef.current = undefined;
+          isRequestingRef.current = false;
+          if (!silent) {
+            setFalse();
+          }
+        }
+      }
     }
+  );
 
-    setFalse();
-  });
+  useEffect(() => {
+    return () => {
+      requestIdRef.current += 1;
+      requestControllerRef.current?.abort();
+    };
+  }, []);
 
-  const scroll2Top = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = 0;
-    }
-  };
-
-  const ScrollList = useMemoizedFn(
+  const ScrollRef = useRef<HTMLDivElement>(null);
+  const ScrollData = useMemoizedFn(
     ({
       children,
-      EmptyChildren,
-      isLoading,
+      ScrollContainerRef,
+      isLoading: isLoadingProp,
+      showLoadingOverlay = true,
       ...props
     }: {
-      children: React.ReactNode;
-      EmptyChildren?: React.ReactNode;
       isLoading?: boolean;
+      showLoadingOverlay?: boolean;
+      children: ReactNode;
+      ScrollContainerRef?: RefObject<HTMLDivElement>;
     } & BoxProps) => {
+      const ref = ScrollContainerRef || ScrollRef;
+      const loadText = (() => {
+        if (isLoading || isLoadingProp) return t('common:is_requesting');
+        if (noMore) return t('common:request_end');
+        return t('common:request_more');
+      })();
+
+      const scroll = useScroll(ref);
+
+      // Watch scroll position
+      useThrottleEffect(
+        () => {
+          if (!ref?.current || noMore || isLoading || error || data.length === 0) return;
+          const { scrollTop, scrollHeight, clientHeight } = ref.current;
+
+          if (
+            (scrollLoadType === 'bottom' &&
+              scrollTop + clientHeight >= scrollHeight - thresholdVal) ||
+            (scrollLoadType === 'top' && scrollTop < thresholdVal)
+          ) {
+            loadData({ init: false, ScrollContainerRef: ref });
+          }
+        },
+        [error, scroll],
+        { wait: 50 }
+      );
+
       return (
-        <>
-          <MyBox isLoading={isLoading} ref={containerRef} overflow={'overlay'} {...props}>
-            <Box ref={wrapperRef}>{children}</Box>
-            {noMore.current && list.length > 0 && (
-              <Box py={4} textAlign={'center'} color={'myGray.600'} fontSize={'xs'}>
-                {t('common:common.No more data')}
+        <MyBox
+          ref={ref}
+          h={'100%'}
+          overflow={'auto'}
+          display={'flex'}
+          flexDirection={'column'}
+          isLoading={showLoadingOverlay && (isLoading || isLoadingProp)}
+          {...props}
+        >
+          {scrollLoadType === 'top' && total > 0 && isLoading && (
+            <Box mt={2} fontSize={'xs'} color={'blackAlpha.500'} textAlign={'center'}>
+              {t('common:is_requesting')}
+            </Box>
+          )}
+          {children}
+          {scrollLoadType === 'bottom' &&
+            showPaginationTip &&
+            !isEmpty &&
+            !(isLoading && data.length === 0) &&
+            (showNoMoreTip || !noMore) && (
+              <Box
+                mt={'auto'}
+                pt={2}
+                fontSize={'xs'}
+                color={'blackAlpha.500'}
+                textAlign={'center'}
+                cursor={loadText === t('common:request_more') ? 'pointer' : 'default'}
+                onClick={() => {
+                  if (loadText !== t('common:request_more')) return;
+                  loadData({ init: false });
+                }}
+              >
+                {loadText}
               </Box>
             )}
-            {list.length === 0 && !isLoading && EmptyChildren && <>{EmptyChildren}</>}
-          </MyBox>
-        </>
+          {isEmpty && EmptyTip}
+        </MyBox>
       );
     }
   );
 
-  useRequest(() => loadData(1), {
-    refreshDeps,
-    debounceWait: data.length === 0 ? 0 : debounceWait,
-    throttleWait
+  // Reload data
+  useRequest(
+    async () => {
+      if (disabled) return;
+      loadData({ init: true });
+    },
+    {
+      manual: false,
+      ...props
+    }
+  );
+
+  const refreshList = useMemoizedFn(() => {
+    loadData({ init: true });
   });
 
-  const scroll = useScroll(containerRef);
-  useEffect(() => {
-    if (!containerRef.current || list.length === 0) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-
-    if (scrollTop + clientHeight >= scrollHeight - 100) {
-      loadData(current + 1);
-    }
-  }, [scroll]);
-
   return {
-    containerRef,
-    list,
+    ScrollData,
+    isLoading,
+    error,
+    total: Math.max(total, data.length),
+    isEmpty,
     data,
     setData,
-    isLoading,
-    ScrollList,
+    setTotal,
     fetchData: loadData,
-    scroll2Top
+    refreshList
   };
 }

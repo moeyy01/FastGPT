@@ -1,3 +1,10 @@
+.react-flow {
+  overflow: visible;
+
+  & .nodrag {
+    cursor: default;
+  }
+}
 .react-flow__panel.react-flow__attribution {
   z-index: 0;
   left: 0;

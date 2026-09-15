@@ -1,41 +1,42 @@
 import { Box, Flex } from '@chakra-ui/react';
 import React from 'react';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import { useI18n } from '@/web/context/I18n';
-import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
 import { queryChatInputGuideList } from '@/web/core/chat/inputGuide/api';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import { useTranslation } from 'next-i18next';
 import HighlightText from '@fastgpt/web/components/common/String/HighlightText';
 import { ChatBoxContext } from '../Provider';
 import { useContextSelector } from 'use-context-selector';
+import { WorkflowRuntimeContext } from '../../context/workflowRuntimeContext';
+import type { ChatSourceTarget } from '@/web/core/chat/utils';
 
 export default function InputGuideBox({
-  appId,
+  sourceTarget,
   text,
   onSelect,
   onSend
 }: {
-  appId: string;
+  sourceTarget: ChatSourceTarget;
   text: string;
   onSelect: (text: string) => void;
   onSend: (text: string) => void;
 }) {
   const { t } = useTranslation();
-  const { chatT } = useI18n();
   const chatInputGuide = useContextSelector(ChatBoxContext, (v) => v.chatInputGuide);
-  const outLinkAuthData = useContextSelector(ChatBoxContext, (v) => v.outLinkAuthData);
+  const outLinkAuthData = useContextSelector(WorkflowRuntimeContext, (v) => v.outLinkAuthData);
 
-  const { data = [] } = useRequest2(
+  const { data = [] } = useRequest(
     async () => {
       if (!text) return [];
       // More than 20 characters, it's basically meaningless
       if (text.length > 20) return [];
       return await queryChatInputGuideList(
         {
-          appId,
+          sourceType: sourceTarget.sourceType,
+          sourceId: sourceTarget.sourceId,
           searchKey: text,
-          ...outLinkAuthData
+          outLinkAuthData
         },
         chatInputGuide.customUrl ? chatInputGuide.customUrl : undefined
       );
@@ -65,9 +66,9 @@ export default function InputGuideBox({
     >
       <Flex alignItems={'center'} fontSize={'sm'} color={'myGray.600'} gap={2} mb={2} px={2}>
         <MyIcon name={'union'} />
-        <Box>{chatT('input_guide')}</Box>
+        <Box>{t('chat:input_guide')}</Box>
       </Flex>
-      {data.map((item, index) => (
+      {data.map((item) => (
         <Flex
           alignItems={'center'}
           as={'li'}

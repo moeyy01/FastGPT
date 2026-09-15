@@ -1,19 +1,25 @@
-import { NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import type { NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import { NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
-import { DispatchNodeResultType } from '@fastgpt/global/core/workflow/runtime/type';
+import type { RuntimeNodeItemType } from '@fastgpt/global/core/workflow/runtime/type';
 import {
   IfElseResultEnum,
   VariableConditionEnum
 } from '@fastgpt/global/core/workflow/template/system/ifElse/constant';
 import {
-  ConditionListItemType,
-  IfElseConditionType,
-  IfElseListItemType
+  type ConditionListItemType,
+  type IfElseConditionType,
+  type IfElseListItemType
 } from '@fastgpt/global/core/workflow/template/system/ifElse/type';
-import { ModuleDispatchProps } from '@fastgpt/global/core/workflow/runtime/type';
+import { getIfElseBranchHandleKey } from '@fastgpt/global/core/workflow/template/system/ifElse/utils';
+import type {
+  DispatchNodeResultType,
+  ModuleDispatchProps,
+  WorkflowVariableStateLike
+} from '../../types/runtime';
 import { getElseIFLabel, getHandleId } from '@fastgpt/global/core/workflow/utils';
 import { getReferenceVariableValue } from '@fastgpt/global/core/workflow/runtime/utils';
-import { replaceRegChars } from '@fastgpt/global/common/string/tools';
+import { type ReferenceItemValueType } from '@fastgpt/global/core/workflow/type/io';
 
 type Props = ModuleDispatchProps<{
   [NodeInputKeyEnum.condition]: IfElseConditionType;
@@ -49,13 +55,13 @@ function isInclude(value: any, target: any) {
   }
 }
 
-function checkCondition(condition: VariableConditionEnum, inputValue: any, value: string) {
+function checkCondition(condition: VariableConditionEnum, inputValue: any, value: any) {
   const operations: Record<VariableConditionEnum, () => boolean> = {
     [VariableConditionEnum.isEmpty]: () => isEmpty(inputValue),
     [VariableConditionEnum.isNotEmpty]: () => !isEmpty(inputValue),
 
-    [VariableConditionEnum.equalTo]: () => String(inputValue) === value,
-    [VariableConditionEnum.notEqual]: () => String(inputValue) !== value,
+    [VariableConditionEnum.equalTo]: () => String(inputValue).trim() === String(value).trim(),
+    [VariableConditionEnum.notEqual]: () => String(inputValue).trim() !== String(value).trim(),
 
     // number
     [VariableConditionEnum.greaterThan]: () => Number(inputValue) > Number(value),
@@ -68,8 +74,8 @@ function checkCondition(condition: VariableConditionEnum, inputValue: any, value
     [VariableConditionEnum.notInclude]: () => !isInclude(inputValue, value),
 
     // string
-    [VariableConditionEnum.startWith]: () => inputValue?.startsWith(value),
-    [VariableConditionEnum.endWith]: () => inputValue?.endsWith(value),
+    [VariableConditionEnum.startWith]: () => inputValue?.trim()?.startsWith(value),
+    [VariableConditionEnum.endWith]: () => inputValue?.trim()?.endsWith(value),
     [VariableConditionEnum.reg]: () => {
       if (typeof inputValue !== 'string' || !value) return false;
       if (value.startsWith('/')) {
@@ -80,7 +86,7 @@ function checkCondition(condition: VariableConditionEnum, inputValue: any, value
       }
 
       const reg = new RegExp(value, 'g');
-      const result = reg.test(inputValue);
+      const result = reg.test(inputValue.trim());
 
       return result;
     },
@@ -100,19 +106,30 @@ function checkCondition(condition: VariableConditionEnum, inputValue: any, value
 function getResult(
   condition: IfElseConditionType,
   list: ConditionListItemType[],
-  variables: any,
-  runtimeNodes: any[]
+  variableState: WorkflowVariableStateLike,
+  runtimeNodesMap: Map<string, RuntimeNodeItemType>
 ) {
+  const runtimeVariables = variableState.toRuntimeRecord();
   const listResult = list.map((item) => {
-    const { variable, condition: variableCondition, value } = item;
+    const { variable, condition: variableCondition, value, valueType } = item;
+    if (!variableCondition) return;
 
-    const inputValue = getReferenceVariableValue({
+    const conditionLeftValue = getReferenceVariableValue({
       value: variable,
-      variables,
-      nodes: runtimeNodes
+      variables: runtimeVariables,
+      nodesMap: runtimeNodesMap
     });
 
-    return checkCondition(variableCondition as VariableConditionEnum, inputValue, value || '');
+    const conditionRightValue =
+      valueType === 'reference'
+        ? getReferenceVariableValue({
+            value: value as ReferenceItemValueType,
+            variables: runtimeVariables,
+            nodesMap: runtimeNodesMap
+          })
+        : value;
+
+    return checkCondition(variableCondition, conditionLeftValue, conditionRightValue);
   });
 
   return condition === 'AND' ? listResult.every(Boolean) : listResult.some(Boolean);
@@ -121,35 +138,48 @@ function getResult(
 export const dispatchIfElse = async (props: Props): Promise<Response> => {
   const {
     params,
-    runtimeNodes,
-    variables,
+    runtimeEdges,
+    runtimeNodesMap,
+    variableState,
     node: { nodeId }
   } = props;
   const { ifElseList } = params;
 
-  let res = IfElseResultEnum.ELSE as string;
+  let selectedLabel = IfElseResultEnum.ELSE as string;
+  let selectedHandleKey = IfElseResultEnum.ELSE as string;
   for (let i = 0; i < ifElseList.length; i++) {
     const item = ifElseList[i];
-    const result = getResult(item.condition, item.list, variables, runtimeNodes);
+    const result = getResult(item.condition, item.list, variableState, runtimeNodesMap);
     if (result) {
-      res = getElseIFLabel(i);
+      selectedLabel = getElseIFLabel(i);
+      selectedHandleKey = getIfElseBranchHandleKey(item, i);
       break;
     }
   }
 
-  const resArray = Array.from({ length: ifElseList.length + 1 }, (_, index) => {
-    const label = index < ifElseList.length ? getElseIFLabel(index) : IfElseResultEnum.ELSE;
-    return getHandleId(nodeId, 'source', label);
-  });
+  const selectedHandleId = getHandleId(nodeId, 'source', selectedHandleKey);
+  const sourceHandlePrefix = `${nodeId}-source-`;
+  const sourceHandleIds = Array.from(
+    new Set(
+      runtimeEdges
+        .filter(
+          (edge) => edge.source === nodeId && edge.sourceHandle.startsWith(sourceHandlePrefix)
+        )
+        .map((edge) => edge.sourceHandle)
+    )
+  );
 
   return {
-    [NodeOutputKeyEnum.ifElseResult]: res,
+    data: {
+      [NodeOutputKeyEnum.ifElseResult]: selectedLabel
+    },
     [DispatchNodeResponseKeyEnum.nodeResponse]: {
       totalPoints: 0,
-      ifElseResult: res
+      ifElseResult: selectedLabel
     },
-    [DispatchNodeResponseKeyEnum.skipHandleId]: resArray.filter(
-      (item) => item !== getHandleId(nodeId, 'source', res)
+    [DispatchNodeResponseKeyEnum.toolResponse]: selectedLabel,
+    [DispatchNodeResponseKeyEnum.skipHandleId]: sourceHandleIds.filter(
+      (handleId) => handleId !== selectedHandleId
     )
   };
 };

@@ -1,13 +1,25 @@
 import React, { useMemo } from 'react';
-import { Box, Flex, type FlexProps } from '@chakra-ui/react';
+import { Box, type BoxProps, Flex, type FlexProps } from '@chakra-ui/react';
 
-type ColorSchemaType = 'white' | 'blue' | 'green' | 'red' | 'yellow' | 'gray' | 'purple' | 'adora';
+export type ColorSchemaType =
+  | 'white'
+  | 'blue'
+  | 'cyan'
+  | 'green'
+  | 'red'
+  | 'lightRed'
+  | 'yellow'
+  | 'gray'
+  | 'lightGray'
+  | 'purple'
+  | 'adora';
 
 export type TagProps = FlexProps & {
   children: React.ReactNode | React.ReactNode[];
   colorSchema?: ColorSchemaType;
   type?: 'fill' | 'borderFill' | 'borderSolid';
   showDot?: boolean;
+  DotStyles?: BoxProps;
 };
 
 const colorMap: Record<
@@ -19,7 +31,7 @@ const colorMap: Record<
   }
 > = {
   white: {
-    borderColor: 'myGray.400',
+    borderColor: 'myGray.200',
     bg: 'white',
     color: 'myGray.700'
   },
@@ -48,6 +60,21 @@ const colorMap: Record<
     bg: 'primary.50',
     color: 'primary.600'
   },
+  cyan: {
+    borderColor: '#BCE7FF',
+    bg: '#F0FBFF',
+    color: '#0884DD'
+  },
+  lightRed: {
+    borderColor: 'red.200',
+    bg: 'red.50',
+    color: 'red.500'
+  },
+  lightGray: {
+    borderColor: 'myGray.200',
+    bg: 'myGray.100',
+    color: 'myGray.500'
+  },
   purple: {
     borderColor: '#ECF',
     bg: '#F6EEFA',
@@ -60,13 +87,20 @@ const colorMap: Record<
   }
 };
 
-const MyTag = ({ children, colorSchema = 'blue', type = 'fill', showDot, ...props }: TagProps) => {
+const MyTag = ({
+  children,
+  colorSchema = 'blue',
+  type = 'fill',
+  showDot,
+  DotStyles,
+  ...props
+}: TagProps) => {
   const theme = useMemo(() => {
     return colorMap[colorSchema];
   }, [colorSchema]);
 
   return (
-    <Box
+    <Flex
       display={'inline-flex'}
       px={2.5}
       lineHeight={1}
@@ -81,9 +115,11 @@ const MyTag = ({ children, colorSchema = 'blue', type = 'fill', showDot, ...prop
       bg={type !== 'borderSolid' ? theme.bg : 'transparent'}
       {...props}
     >
-      {showDot && <Box w={1.5} h={1.5} borderRadius={'md'} bg={theme.color} mr={1.5}></Box>}
+      {showDot && (
+        <Box w={1.5} h={1.5} borderRadius={'md'} bg={theme.color} mr={1.5} {...DotStyles}></Box>
+      )}
       {children}
-    </Box>
+    </Flex>
   );
 };
 

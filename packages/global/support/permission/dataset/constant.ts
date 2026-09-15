@@ -1,20 +1,30 @@
-import { NullPermission, PermissionKeyEnum, PermissionList } from '../constant';
+import { i18nT } from '../../../common/i18n/utils';
+import {
+  NullRoleVal,
+  CommonPerKeyEnum,
+  CommonRoleList,
+  CommonRolePerMap,
+  CommonPerList
+} from '../constant';
+import type { RolePerMapType } from '../type';
 
-export enum DatasetPermissionKeyEnum {}
-
-export const DatasetPermissionList = {
-  [PermissionKeyEnum.read]: {
-    ...PermissionList[PermissionKeyEnum.read],
-    description: '可查看知识库内容'
+export const DatasetRoleList = {
+  [CommonPerKeyEnum.read]: {
+    ...CommonRoleList[CommonPerKeyEnum.read],
+    description: i18nT('dataset:permission.des.read')
   },
-  [PermissionKeyEnum.write]: {
-    ...PermissionList[PermissionKeyEnum.write],
-    description: '可增加和变更知识库内容'
+  [CommonPerKeyEnum.write]: {
+    ...CommonRoleList[CommonPerKeyEnum.write],
+    description: i18nT('dataset:permission.des.write')
   },
-  [PermissionKeyEnum.manage]: {
-    ...PermissionList[PermissionKeyEnum.manage],
-    description: '可管理整个知识库数据和信息'
+  [CommonPerKeyEnum.manage]: {
+    ...CommonRoleList[CommonPerKeyEnum.manage],
+    description: i18nT('dataset:permission.des.manage')
   }
 };
 
-export const DatasetDefaultPermissionVal = NullPermission;
+export const DatasetRolePerMap: RolePerMapType = CommonRolePerMap;
+
+export const DatasetPerList = CommonPerList;
+
+export const DataSetDefaultRoleVal = NullRoleVal;

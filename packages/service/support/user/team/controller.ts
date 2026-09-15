@@ -1,5 +1,5 @@
-import { TeamTmbItemType, TeamMemberWithTeamSchema } from '@fastgpt/global/support/user/team/type';
-import { ClientSession, Types } from '../../../common/mongo';
+import { type TeamSchema, type TeamTmbItemType } from '@fastgpt/global/support/user/team/type';
+import { type ClientSession, Types } from '../../../common/mongo';
 import {
   TeamMemberRoleEnum,
   TeamMemberStatusEnum,
@@ -7,96 +7,227 @@ import {
 } from '@fastgpt/global/support/user/team/constant';
 import { MongoTeamMember } from './teamMemberSchema';
 import { MongoTeam } from './teamSchema';
-import { UpdateTeamProps } from '@fastgpt/global/support/user/team/controller';
-import { getResourcePermission } from '../../permission/controller';
+import { type UpdateTeamProps } from '@fastgpt/global/support/user/team/controller';
+import { getTmbPermission } from '../../permission/controller';
 import { PerResourceTypeEnum } from '@fastgpt/global/support/permission/constant';
 import { TeamPermission } from '@fastgpt/global/support/permission/user/controller';
+import { TeamDefaultRoleVal } from '@fastgpt/global/support/permission/user/constant';
+import { MongoMemberGroupModel } from '../../permission/memberGroup/memberGroupSchema';
+import { mongoSessionRun } from '../../../common/mongo/sessionRun';
+import { DefaultGroupName } from '@fastgpt/global/support/user/team/group/constant';
+import { getAIApi } from '../../../core/ai/config';
+import { createRootOrg } from '../../permission/org/controllers';
+import { getS3AvatarSource } from '../../../common/s3/sources/avatar';
+import { getLogger, LogCategories } from '../../../common/logger';
+import { LOGO_ICON } from '@fastgpt/global/common/system/constants';
+import { TeamDefaultPermissionVal } from '@fastgpt/global/support/permission/user/constant';
+import { initTeamFreePlan } from '../../wallet/sub/utils';
+import { getUserFallbackTeam } from './fallback';
+import {
+  assertAccountCancellationUserCanOwnTeam,
+  formatTeamAccountCancellationSummary,
+  getActiveAccountCancellationsByTeamIds
+} from '../account/cancellation';
+import { createTeamDefaultGroup } from '../../permission/memberGroup/teamDefaultGroup';
 
-async function getTeamMember(match: Record<string, any>): Promise<TeamTmbItemType> {
-  const tmb = (await MongoTeamMember.findOne(match).populate('teamId')) as TeamMemberWithTeamSchema;
-  if (!tmb) {
+const logger = getLogger(LogCategories.MODULE.USER.TEAM);
+
+/** 根据登录用户名生成与多团队默认团队一致的团队名称。 */
+export const getUserDefaultTeamName = (username: string) => {
+  const splitUsername = username.split('-');
+  const formatUsername = splitUsername.length > 1 ? splitUsername.slice(1).join('-') : username;
+  return `${formatUsername.slice(0, 10)} Team`;
+};
+
+async function getTeamMember(
+  match: Record<string, any>,
+  session?: ClientSession
+): Promise<TeamTmbItemType> {
+  const query = MongoTeamMember.findOne(match).populate<{ team: TeamSchema }>('team');
+  if (session) query.session(session);
+  const tmb = await query.lean();
+  if (!tmb || !tmb.team || tmb.team.deleteTime) {
     return Promise.reject('member not exist');
   }
 
-  const tmbPer = await getResourcePermission({
-    resourceType: PerResourceTypeEnum.team,
-    teamId: tmb.teamId._id,
-    tmbId: tmb._id
-  });
+  const [cancellation] = await getActiveAccountCancellationsByTeamIds([String(tmb.teamId)]);
+
+  const role =
+    (await getTmbPermission({
+      resourceType: PerResourceTypeEnum.team,
+      teamId: tmb.teamId,
+      tmbId: tmb._id
+    })) ?? TeamDefaultRoleVal;
 
   return {
     userId: String(tmb.userId),
-    teamId: String(tmb.teamId._id),
-    teamName: tmb.teamId.name,
+    teamId: String(tmb.teamId),
+    teamAvatar: tmb.team.avatar,
+    teamName: tmb.team.name,
     memberName: tmb.name,
-    avatar: tmb.teamId.avatar,
-    balance: tmb.teamId.balance,
+    avatar: tmb.avatar,
+    balance: tmb.team.balance,
     tmbId: String(tmb._id),
-    teamDomain: tmb.teamId?.teamDomain,
     role: tmb.role,
     status: tmb.status,
-    defaultTeam: tmb.defaultTeam,
-    lafAccount: tmb.teamId.lafAccount,
     permission: new TeamPermission({
-      per: tmbPer?.permission ?? tmb.teamId.defaultPermission,
+      role,
       isOwner: tmb.role === TeamMemberRoleEnum.owner
-    })
+    }),
+    notificationAccount: tmb.team.notificationAccount,
+
+    openaiAccount: tmb.team.openaiAccount,
+    externalWorkflowVariables: tmb.team.externalWorkflowVariables,
+    isWecomTeam: !!tmb.team.meta?.wecom,
+    ...(cancellation
+      ? {
+          accountCancellation: formatTeamAccountCancellationSummary(cancellation.record)
+        }
+      : {})
   };
 }
 
-export async function getTmbInfoByTmbId({ tmbId }: { tmbId: string }) {
+export const getTeamOwner = async (teamId: string) => {
+  const tmb = await MongoTeamMember.findOne({
+    teamId,
+    role: TeamMemberRoleEnum.owner
+  }).lean();
+  return tmb;
+};
+
+export async function getTmbInfoByTmbId({
+  tmbId,
+  session
+}: {
+  tmbId: string;
+  session?: ClientSession;
+}) {
   if (!tmbId) {
     return Promise.reject('tmbId or userId is required');
   }
-  return getTeamMember({
-    _id: new Types.ObjectId(String(tmbId)),
-    status: notLeaveStatus
-  });
+  return getTeamMember(
+    {
+      _id: new Types.ObjectId(String(tmbId)),
+      status: notLeaveStatus
+    },
+    session
+  );
 }
 
-export async function getUserDefaultTeam({ userId }: { userId: string }) {
+export async function getUserDefaultTeam({
+  userId,
+  session
+}: {
+  userId: string;
+  session?: ClientSession;
+}) {
   if (!userId) {
     return Promise.reject('tmbId or userId is required');
   }
-  return getTeamMember({
-    userId: new Types.ObjectId(userId),
-    defaultTeam: true
-  });
+  return getTeamMember(
+    {
+      userId: new Types.ObjectId(userId),
+      status: TeamMemberStatusEnum.active
+    },
+    session
+  );
 }
+
+/**
+ * 在登录事务中为没有任何可用团队的用户创建个人团队。
+ * 调用方必须在覆盖完整登录事务生命周期的用户锁中调用；函数内部再次检查团队，
+ * 避免已提交的团队被重复创建。
+ */
+export async function createUserLoginTeam({
+  userId,
+  username,
+  memberName,
+  memberAvatar,
+  session
+}: {
+  userId: string;
+  username: string;
+  memberName?: string;
+  memberAvatar?: string;
+  session: ClientSession;
+}) {
+  await assertAccountCancellationUserCanOwnTeam(userId);
+
+  const fallback = await getUserFallbackTeam({ userId, session });
+  if (fallback) return fallback.tmbId;
+
+  const [team] = await MongoTeam.create(
+    [
+      {
+        ownerId: userId,
+        name: getUserDefaultTeamName(username),
+        avatar: LOGO_ICON,
+        defaultPermission: TeamDefaultPermissionVal
+      }
+    ],
+    { session, ordered: true }
+  );
+  const [tmb] = await MongoTeamMember.create(
+    [
+      {
+        teamId: team._id,
+        userId,
+        name: memberName ?? username,
+        role: TeamMemberRoleEnum.owner,
+        status: TeamMemberStatusEnum.active,
+        avatar: memberAvatar ?? LOGO_ICON
+      }
+    ],
+    { session, ordered: true }
+  );
+
+  await MongoMemberGroupModel.create(
+    [{ teamId: team._id, name: DefaultGroupName, avatar: LOGO_ICON }],
+    { session, ordered: true }
+  );
+  await initTeamFreePlan({ teamId: String(team._id), session });
+  await createRootOrg({ teamId: String(team._id), session });
+
+  logger.info('Login fallback team created', {
+    userId,
+    teamId: team._id,
+    tmbId: tmb._id
+  });
+
+  return String(tmb._id);
+}
+
 export async function createDefaultTeam({
   userId,
   teamName = 'My Team',
   avatar = '/icon/logo.svg',
-  balance,
   session
 }: {
   userId: string;
   teamName?: string;
   avatar?: string;
-  balance?: number;
   session: ClientSession;
 }) {
   // auth default team
   const tmb = await MongoTeamMember.findOne({
-    userId: new Types.ObjectId(userId),
-    defaultTeam: true
+    userId: new Types.ObjectId(userId)
   });
 
   if (!tmb) {
-    // create
+    // create team
     const [{ _id: insertedId }] = await MongoTeam.create(
       [
         {
           ownerId: userId,
           name: teamName,
           avatar,
-          balance,
           createTime: new Date()
         }
       ],
       { session }
     );
-    await MongoTeamMember.create(
+    // create team member
+    const [tmb] = await MongoTeamMember.create(
       [
         {
           teamId: insertedId,
@@ -104,20 +235,17 @@ export async function createDefaultTeam({
           name: 'Owner',
           role: TeamMemberRoleEnum.owner,
           status: TeamMemberStatusEnum.active,
-          createTime: new Date(),
-          defaultTeam: true
+          createTime: new Date()
         }
       ],
       { session }
     );
-    console.log('create default team', userId);
+    await createTeamDefaultGroup({ teamId: tmb.teamId, avatar, session });
+    await createRootOrg({ teamId: tmb.teamId, session });
+    logger.info('Default team created', { userId, teamId: tmb.teamId, tmbId: tmb._id });
+    return tmb;
   } else {
-    console.log('default team exist', userId);
-    await MongoTeam.findByIdAndUpdate(tmb.teamId, {
-      $set: {
-        ...(balance !== undefined && { balance })
-      }
-    });
+    logger.info('Default team exists', { userId });
   }
 }
 
@@ -125,13 +253,91 @@ export async function updateTeam({
   teamId,
   name,
   avatar,
-  teamDomain,
-  lafAccount
+  openaiAccount,
+  externalWorkflowVariable
 }: UpdateTeamProps & { teamId: string }) {
-  await MongoTeam.findByIdAndUpdate(teamId, {
-    name,
-    avatar,
-    teamDomain,
-    lafAccount
+  // auth openai key
+  if (openaiAccount?.key) {
+    const baseUrl = openaiAccount?.baseUrl || 'https://api.openai.com/v1';
+    openaiAccount.baseUrl = baseUrl;
+
+    const { ai } = getAIApi({
+      userKey: openaiAccount
+    });
+
+    const response = await ai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'hi' }]
+    });
+    if (response?.choices?.[0]?.message?.content === undefined) {
+      return Promise.reject('Key response is empty');
+    }
+  }
+
+  return mongoSessionRun(async (session) => {
+    const unsetObj = (() => {
+      const obj: Record<string, 1> = {};
+      if (openaiAccount?.key === '') {
+        obj.openaiAccount = 1;
+      }
+      if (externalWorkflowVariable) {
+        if (externalWorkflowVariable.value === '') {
+          obj[`externalWorkflowVariables.${externalWorkflowVariable.key}`] = 1;
+        }
+      }
+
+      if (Object.keys(obj).length === 0) {
+        return undefined;
+      }
+      return {
+        $unset: obj
+      };
+    })();
+    const setObj = (() => {
+      const obj: Record<string, any> = {};
+      if (openaiAccount?.key && openaiAccount?.baseUrl) {
+        obj.openaiAccount = openaiAccount;
+      }
+      if (externalWorkflowVariable) {
+        if (externalWorkflowVariable.value !== '') {
+          obj[`externalWorkflowVariables.${externalWorkflowVariable.key}`] =
+            externalWorkflowVariable.value;
+        }
+      }
+      if (Object.keys(obj).length === 0) {
+        return undefined;
+      }
+      return obj;
+    })();
+
+    // This is where we get the old team
+    const team = await MongoTeam.findByIdAndUpdate(
+      teamId,
+      {
+        $set: {
+          ...(name ? { name } : {}),
+          ...(avatar ? { avatar } : {}),
+          ...setObj
+        },
+        ...unsetObj
+      },
+      { session }
+    );
+
+    // Update member group avatar
+    if (avatar) {
+      await MongoMemberGroupModel.updateOne(
+        {
+          teamId: teamId,
+          name: DefaultGroupName
+        },
+        {
+          avatar
+        },
+        { session }
+      );
+
+      await getS3AvatarSource().refreshAvatar(avatar, team?.avatar, session);
+    }
   });
 }

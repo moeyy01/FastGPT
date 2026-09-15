@@ -1,538 +1,609 @@
-import { useSpeech } from '@/web/common/hooks/useSpeech';
-import { useSystemStore } from '@/web/common/system/useSystemStore';
-import { Box, Flex, Image, Spinner, Textarea } from '@chakra-ui/react';
-import React, { useRef, useEffect, useCallback } from 'react';
+import type { FlexProps, BoxProps } from '@chakra-ui/react';
+import { Box, Flex, Textarea, useBoolean } from '@chakra-ui/react';
+import React, { useRef, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'next-i18next';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import { useSelectFile } from '@/web/common/file/hooks/useSelectFile';
-import { compressImgFileAndUpload } from '@/web/common/file/controller';
-import { ChatFileTypeEnum } from '@fastgpt/global/core/chat/constants';
-import { addDays } from 'date-fns';
 import { useRequest } from '@fastgpt/web/hooks/useRequest';
-import { MongoImageTypeEnum } from '@fastgpt/global/common/file/image/constants';
-import { ChatBoxInputFormType, ChatBoxInputType, UserInputFileItemType } from '../type';
-import { textareaMinH } from '../constants';
-import { UseFormReturn, useFieldArray } from 'react-hook-form';
+import { type ChatBoxInputFormType, type ChatBoxInputType, type SendPromptFnType } from '../type';
+import { ChatInputDefaultHeight, ChatTypeEnum, textareaMinH } from '../constants';
+import { useFieldArray, useWatch, type UseFormReturn } from 'react-hook-form';
 import { ChatBoxContext } from '../Provider';
 import dynamic from 'next/dynamic';
 import { useContextSelector } from 'use-context-selector';
-import { getNanoid } from '@fastgpt/global/common/string/tools';
+import { WorkflowRuntimeContext } from '../../context/workflowRuntimeContext';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import { ChatItemContext } from '@/web/core/chat/context/chatItemContext';
+import FilePreview from '../../components/FilePreview';
+import { useFileUpload } from '../hooks/useFileUpload';
+import { getFileUploadId } from '../utils/uploadTask';
+import { isChatFileAllowedBySelectConfig } from '../utils/file';
+import ComplianceTip from '@/components/common/ComplianceTip/index';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import VoiceInput, { type VoiceInputComponentRef } from './VoiceInput';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import type { WorkflowInteractiveResponseType } from '@fastgpt/global/core/workflow/template/system/interactive/type';
+import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
 
 const InputGuideBox = dynamic(() => import('./InputGuideBox'));
+const PLACEHOLDER_APP_NAME_TOKEN = '__APP_NAME__';
 
-const ChatInput = ({
-  onSendMessage,
-  onStop,
-  TextareaDom,
-  showFileSelector = false,
-  resetInputVal,
-  chatForm,
-  appId
-}: {
-  onSendMessage: (val: ChatBoxInputType & { autoTTSResponse?: boolean }) => void;
-  onStop: () => void;
-  showFileSelector?: boolean;
+type ChatInputProps = BoxProps & {
+  lastInteractive?: WorkflowInteractiveResponseType;
+  onSendMessage: SendPromptFnType;
+  onStopChat: () => Promise<void>;
+  enableInputGuide: boolean;
+  enableVoiceInput: boolean;
+  disableSend?: boolean;
   TextareaDom: React.MutableRefObject<HTMLTextAreaElement | null>;
   resetInputVal: (val: ChatBoxInputType) => void;
   chatForm: UseFormReturn<ChatBoxInputFormType>;
-  appId: string;
-}) => {
-  const { setValue, watch, control } = chatForm;
-  const inputValue = watch('input');
-  const {
-    update: updateFile,
-    remove: removeFile,
-    fields: fileList,
-    append: appendFile,
-    replace: replaceFile
-  } = useFieldArray({
+};
+
+const ChatInput = ({
+  lastInteractive,
+  onSendMessage,
+  onStopChat,
+  enableInputGuide,
+  enableVoiceInput,
+  disableSend,
+  TextareaDom,
+  resetInputVal,
+  chatForm,
+  ...props
+}: ChatInputProps) => {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const { isPc } = useSystem();
+  const VoiceInputRef = useRef<VoiceInputComponentRef>(null);
+
+  const { setValue, control } = chatForm;
+  const inputValue = useWatch({
+    control,
+    name: 'input'
+  });
+
+  const [focusing, { on: onFocus, off: offFocus }] = useBoolean();
+
+  // Check voice input state
+  const [mobilePreSpeak, setMobilePreSpeak] = useState(false);
+
+  const InputLeftComponent = useContextSelector(ChatBoxContext, (v) => v.InputLeftComponent);
+
+  const outLinkAuthData = useContextSelector(WorkflowRuntimeContext, (v) => v.outLinkAuthData);
+  const sourceTarget = useContextSelector(WorkflowRuntimeContext, (v) => v.sourceTarget);
+  const chatId = useContextSelector(WorkflowRuntimeContext, (v) => v.chatId);
+  const formFileUploading = useContextSelector(WorkflowRuntimeContext, (v) => v.fileUploading);
+  const isChatting = useContextSelector(ChatBoxContext, (v) => v.isChatting);
+  const inputBodyProps = useContextSelector(ChatBoxContext, (v) => v.inputBodyProps);
+  const whisperConfig = useContextSelector(ChatBoxContext, (v) => v.whisperConfig);
+  const chatInputGuide = useContextSelector(ChatBoxContext, (v) => v.chatInputGuide);
+  const fileSelectConfig = useContextSelector(ChatBoxContext, (v) => v.fileSelectConfig);
+  const dialogTips = useContextSelector(ChatBoxContext, (v) => v.dialogTips);
+  const autoTTSResponse = useContextSelector(ChatBoxContext, (v) => v.autoTTSResponse);
+  const chatType = useContextSelector(ChatBoxContext, (v) => v.chatType);
+  const appName = useContextSelector(ChatItemContext, (v) => v.chatBoxData.app.name);
+  const placeholderAppName = chatType === ChatTypeEnum.home ? 'FastGPT' : appName || 'FastGPT';
+  const appNamePlaceholderParts = useMemo(() => {
+    const placeholderText = String(
+      t('common:core.chat.Type a message to app', {
+        appName: PLACEHOLDER_APP_NAME_TOKEN
+      })
+    );
+    const tokenIndex = placeholderText.indexOf(PLACEHOLDER_APP_NAME_TOKEN);
+
+    if (tokenIndex < 0) {
+      return {
+        prefix: placeholderText,
+        suffix: ''
+      };
+    }
+
+    return {
+      prefix: placeholderText.slice(0, tokenIndex),
+      suffix: placeholderText.slice(tokenIndex + PLACEHOLDER_APP_NAME_TOKEN.length)
+    };
+  }, [t]);
+
+  const fileCtrl = useFieldArray({
     control,
     name: 'files'
   });
-
-  const { isChatting, whisperConfig, autoTTSResponse, chatInputGuide, outLinkAuthData } =
-    useContextSelector(ChatBoxContext, (v) => v);
-  const { whisperModel } = useSystemStore();
-  const { isPc } = useSystem();
-
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { t } = useTranslation();
-
+  const {
+    File,
+    onOpenSelectFile,
+    fileList,
+    onSelectFile,
+    uploadFiles,
+    selectFileIcon,
+    selectFileLabel,
+    showSelectFile,
+    showSelectImg,
+    showSelectVideo,
+    showSelectAudio,
+    showSelectCustomFileExtension,
+    cancelUploadFile,
+    clearFiles,
+    hasFileUploading
+  } = useFileUpload({
+    fileSelectConfig,
+    fileCtrl,
+    outLinkAuthData,
+    sourceTarget,
+    chatId
+  });
   const havInput = !!inputValue || fileList.length > 0;
-  const hasFileUploading = fileList.some((item) => !item.url);
-  const canSendMessage = havInput && !hasFileUploading;
-
-  /* file selector and upload */
-  const { File, onOpen: onOpenSelectFile } = useSelectFile({
-    fileType: 'image/*',
-    multiple: true,
-    maxCount: 10
-  });
-  const { mutate: uploadFile } = useRequest({
-    mutationFn: async ({ file, fileIndex }: { file: UserInputFileItemType; fileIndex: number }) => {
-      if (file.type === ChatFileTypeEnum.image && file.rawFile) {
-        try {
-          const url = await compressImgFileAndUpload({
-            type: MongoImageTypeEnum.chatImage,
-            file: file.rawFile,
-            maxW: 4320,
-            maxH: 4320,
-            maxSize: 1024 * 1024 * 16,
-            // 7 day expired.
-            expiredTime: addDays(new Date(), 7),
-            ...outLinkAuthData
-          });
-          updateFile(fileIndex, {
-            ...file,
-            url
-          });
-        } catch (error) {
-          removeFile(fileIndex);
-          console.log(error);
-          return Promise.reject(error);
-        }
-      }
-    },
-    errorToast: t('common:common.Upload File Failed')
-  });
-  const onSelectFile = useCallback(
-    async (files: File[]) => {
-      if (!files || files.length === 0) {
-        return;
-      }
-      const loadFiles = await Promise.all(
-        files.map(
-          (file) =>
-            new Promise<UserInputFileItemType>((resolve, reject) => {
-              if (file.type.includes('image')) {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = () => {
-                  const item = {
-                    id: getNanoid(6),
-                    rawFile: file,
-                    type: ChatFileTypeEnum.image,
-                    name: file.name,
-                    icon: reader.result as string
-                  };
-                  resolve(item);
-                };
-                reader.onerror = () => {
-                  reject(reader.error);
-                };
-              } else {
-                resolve({
-                  id: getNanoid(6),
-                  rawFile: file,
-                  type: ChatFileTypeEnum.file,
-                  name: file.name,
-                  icon: 'file/pdf'
-                });
-              }
-            })
-        )
-      );
-      appendFile(loadFiles);
-
-      loadFiles.forEach((file, i) =>
-        uploadFile({
-          file,
-          fileIndex: i + fileList.length
-        })
-      );
-    },
-    [appendFile, fileList.length, uploadFile]
+  const canSendMessage = havInput && !hasFileUploading && !formFileUploading && !disableSend;
+  const canUploadFile =
+    showSelectFile ||
+    showSelectImg ||
+    showSelectVideo ||
+    showSelectAudio ||
+    showSelectCustomFileExtension;
+  const isFileTypeAllowed = useCallback(
+    (file: File) => isChatFileAllowedBySelectConfig({ file, fileSelectConfig }),
+    [fileSelectConfig]
   );
+  const canUseInputGuide =
+    enableInputGuide &&
+    sourceTarget.sourceType === ChatSourceTypeEnum.app &&
+    !!sourceTarget.sourceId &&
+    !!chatInputGuide.open;
+  const canUseVoiceInput =
+    enableVoiceInput && !!sourceTarget.sourceId && !!whisperConfig?.open && !formFileUploading;
+  const isDefaultInputHeight =
+    !mobilePreSpeak && !inputValue && fileList.length === 0 && !canUseInputGuide;
+
+  // Upload files
+  useRequest(uploadFiles, {
+    manual: false,
+    errorToast: t('common:upload_file_error'),
+    refreshDeps: [fileList, outLinkAuthData, chatId]
+  });
 
   /* on send */
-  const handleSend = async (val?: string) => {
-    if (!canSendMessage) return;
-    const textareaValue = val || TextareaDom.current?.value || '';
+  const handleSend = useCallback(
+    async (val: string = inputValue) => {
+      if (!canSendMessage) return;
 
-    onSendMessage({
-      text: textareaValue.trim(),
-      files: fileList
-    });
-    replaceFile([]);
-  };
-
-  /* whisper init */
-  const {
-    isSpeaking,
-    isTransCription,
-    stopSpeak,
-    startSpeak,
-    speakingTimeString,
-    renderAudioGraph,
-    stream
-  } = useSpeech({ appId, ...outLinkAuthData });
-  useEffect(() => {
-    if (!stream) {
+      onSendMessage({
+        text: val.trim(),
+        files: fileList,
+        interactive: lastInteractive,
+        clearInput: true
+      });
+      clearFiles();
+    },
+    [inputValue, lastInteractive, canSendMessage, fileList, onSendMessage, clearFiles]
+  );
+  const { runAsync: handleStop, loading: isStopping } = useRequest(async () => {
+    try {
+      if (isChatting) {
+        await onStopChat();
+      }
+    } catch {
       return;
     }
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 4096;
-    analyser.smoothingTimeConstant = 1;
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
-    const renderCurve = () => {
-      if (!canvasRef.current) return;
-      renderAudioGraph(analyser, canvasRef.current);
-      window.requestAnimationFrame(renderCurve);
-    };
-    renderCurve();
-  }, [renderAudioGraph, stream]);
-  const finishWhisperTranscription = useCallback(
-    (text: string) => {
-      if (!text) return;
-      if (whisperConfig?.autoSend) {
-        onSendMessage({
-          text,
-          files: fileList,
-          autoTTSResponse
-        });
-        replaceFile([]);
-      } else {
-        resetInputVal({ text });
-      }
-    },
-    [autoTTSResponse, fileList, onSendMessage, replaceFile, resetInputVal, whisperConfig?.autoSend]
-  );
-  const onWhisperRecord = useCallback(() => {
-    if (isSpeaking) {
-      return stopSpeak();
-    }
-    startSpeak(finishWhisperTranscription);
-  }, [finishWhisperTranscription, isSpeaking, startSpeak, stopSpeak]);
+  });
 
-  return (
-    <Box m={['0 auto', '10px auto']} w={'100%'} maxW={['auto', 'min(800px, 100%)']} px={[0, 5]}>
-      <Box
-        pt={fileList.length > 0 ? '10px' : ['14px', '18px']}
-        pb={['14px', '18px']}
-        position={'relative'}
-        boxShadow={isSpeaking ? `0 0 10px rgba(54,111,255,0.4)` : `0 0 10px rgba(0,0,0,0.2)`}
-        borderRadius={['none', 'md']}
-        bg={'white'}
-        overflow={'display'}
-        {...(isPc
-          ? {
-              border: '1px solid',
-              borderColor: 'rgba(0,0,0,0.12)'
-            }
-          : {
-              borderTop: '1px solid',
-              borderTopColor: 'rgba(0,0,0,0.15)'
-            })}
-      >
-        {/* Chat input guide box */}
-        {chatInputGuide.open && (
-          <InputGuideBox
-            appId={appId}
-            text={inputValue}
-            onSelect={(e) => {
-              setValue('input', e);
-            }}
-            onSend={(e) => {
-              handleSend(e);
-            }}
-          />
-        )}
-
-        {/* translate loading */}
-        <Flex
-          position={'absolute'}
-          top={0}
-          bottom={0}
-          left={0}
-          right={0}
-          zIndex={10}
-          pl={5}
-          alignItems={'center'}
-          bg={'white'}
-          color={'primary.500'}
-          visibility={isSpeaking && isTransCription ? 'visible' : 'hidden'}
-        >
-          <Spinner size={'sm'} mr={4} />
-          {t('common:core.chat.Converting to text')}
-        </Flex>
-
-        {/* file preview */}
-        <Flex wrap={'wrap'} px={[2, 4]} userSelect={'none'}>
-          {fileList.map((item, index) => (
-            <Box
-              key={item.id}
-              border={'1px solid rgba(0,0,0,0.12)'}
-              mr={2}
-              mb={2}
-              rounded={'md'}
-              position={'relative'}
-              _hover={{
-                '.close-icon': { display: item.url ? 'block' : 'none' }
-              }}
-            >
-              {/* uploading */}
-              {!item.url && (
-                <Flex
-                  position={'absolute'}
-                  alignItems={'center'}
-                  justifyContent={'center'}
-                  rounded={'md'}
-                  color={'primary.500'}
-                  top={0}
-                  left={0}
-                  bottom={0}
-                  right={0}
-                  bg={'rgba(255,255,255,0.8)'}
-                >
-                  <Spinner />
-                </Flex>
-              )}
-              <MyIcon
-                name={'closeSolid'}
-                w={'16px'}
-                h={'16px'}
-                color={'myGray.700'}
-                cursor={'pointer'}
-                _hover={{ color: 'primary.500' }}
-                position={'absolute'}
-                bg={'white'}
-                right={'-8px'}
-                top={'-8px'}
-                onClick={() => {
-                  removeFile(index);
-                }}
-                className="close-icon"
-                display={['', 'none']}
-              />
-              {item.type === ChatFileTypeEnum.image && (
-                <Image
-                  alt={'img'}
-                  src={item.icon}
-                  w={['50px', '70px']}
-                  h={['50px', '70px']}
-                  borderRadius={'md'}
-                  objectFit={'contain'}
-                />
-              )}
-            </Box>
-          ))}
-        </Flex>
-
-        <Flex alignItems={'flex-end'} mt={fileList.length > 0 ? 1 : 0} pl={[2, 4]}>
-          {/* file selector */}
-          {showFileSelector && (
-            <Flex
-              h={'22px'}
-              alignItems={'center'}
-              justifyContent={'center'}
-              cursor={'pointer'}
-              transform={'translateY(1px)'}
-              onClick={() => {
-                if (isSpeaking) return;
-                onOpenSelectFile();
-              }}
-            >
-              <MyTooltip label={t('common:core.chat.Select Image')}>
-                <MyIcon name={'core/chat/fileSelect'} w={'18px'} color={'myGray.600'} />
-              </MyTooltip>
-              <File onSelect={onSelectFile} />
-            </Flex>
-          )}
-
-          {/* input area */}
+  const RenderTextarea = useMemo(
+    () => (
+      <Flex direction={'column'} mt={fileList.length > 0 ? 1 : 0} minH={'42px'}>
+        {/* Textarea */}
+        <Flex w={'100%'} position={'relative'}>
+          {/* Prompt Container */}
           <Textarea
             ref={TextareaDom}
             py={0}
-            pl={2}
-            pr={['30px', '48px']}
+            mx={0}
+            px={0}
             border={'none'}
+            borderRadius={0}
+            appearance={'none'}
             _focusVisible={{
               border: 'none'
             }}
-            placeholder={
-              isSpeaking ? t('common:core.chat.Speaking') : t('common:core.chat.Type a message')
-            }
+            placeholder={dialogTips || ''}
             resize={'none'}
             rows={1}
-            height={'22px'}
-            lineHeight={'22px'}
-            maxHeight={'50vh'}
+            bg={'transparent'}
+            height={textareaMinH}
+            lineHeight={textareaMinH}
+            maxHeight={[24, 32]}
+            minH={textareaMinH}
+            mb={0}
             maxLength={-1}
-            overflowY={'auto'}
+            overflowY={'hidden'}
+            overflowX={'hidden'}
             whiteSpace={'pre-wrap'}
-            wordBreak={'break-all'}
+            wordBreak={'break-word'}
             boxShadow={'none !important'}
             color={'myGray.900'}
-            isDisabled={isSpeaking}
+            fontWeight={400}
+            fontSize={'16px'}
+            letterSpacing={'0.5px'}
+            w={'100%'}
+            _placeholder={{
+              color: 'myGray.400',
+              fontSize: 'inherit',
+              lineHeight: 'inherit',
+              letterSpacing: 'inherit'
+            }}
             value={inputValue}
-            fontSize={['md', 'sm']}
             onChange={(e) => {
               const textarea = e.target;
               textarea.style.height = textareaMinH;
-              textarea.style.height = `${textarea.scrollHeight}px`;
-              setValue('input', textarea.value);
+              const maxHeight = 128;
+              const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+              textarea.style.height = `${newHeight}px`;
+
+              // Only show scrollbar when content exceeds max height
+              if (textarea.scrollHeight > maxHeight) {
+                textarea.style.overflowY = 'auto';
+              } else {
+                textarea.style.overflowY = 'hidden';
+              }
+
+              setValue('input', textarea.value, {
+                shouldDirty: true,
+                shouldTouch: true
+              });
             }}
             onKeyDown={(e) => {
               // enter send.(pc or iframe && enter and unPress shift)
-              const isEnter = e.keyCode === 13;
-              if (isEnter && TextareaDom.current && (e.ctrlKey || e.altKey)) {
+              const isEnter = e.key === 'Enter';
+              const textarea = e.currentTarget;
+              if (isEnter && (e.ctrlKey || e.altKey)) {
                 // Add a new line
-                const index = TextareaDom.current.selectionStart;
-                const val = TextareaDom.current.value;
-                TextareaDom.current.value = `${val.slice(0, index)}\n${val.slice(index)}`;
-                TextareaDom.current.selectionStart = index + 1;
-                TextareaDom.current.selectionEnd = index + 1;
+                const index = textarea.selectionStart;
+                const val = textarea.value;
+                textarea.value = `${val.slice(0, index)}\n${val.slice(index)}`;
+                textarea.selectionStart = index + 1;
+                textarea.selectionEnd = index + 1;
 
-                TextareaDom.current.style.height = textareaMinH;
-                TextareaDom.current.style.height = `${TextareaDom.current.scrollHeight}px`;
+                textarea.style.height = textareaMinH;
+                textarea.style.height = `${textarea.scrollHeight}px`;
 
                 return;
               }
 
-              // 全选内容
-              // @ts-ignore
-              e.key === 'a' && e.ctrlKey && e.target?.select();
+              // Select all content
+              if (e.key === 'a' && e.ctrlKey) {
+                textarea.select();
+              }
 
               if ((isPc || window !== parent) && e.keyCode === 13 && !e.shiftKey) {
-                handleSend();
+                handleSend(textarea.value);
                 e.preventDefault();
               }
             }}
             onPaste={(e) => {
               const clipboardData = e.clipboardData;
-              if (clipboardData && showFileSelector) {
+              if (clipboardData && canUploadFile) {
                 const items = clipboardData.items;
                 const files = Array.from(items)
                   .map((item) => (item.kind === 'file' ? item.getAsFile() : undefined))
-                  .filter(Boolean) as File[];
-                onSelectFile(files);
+                  .filter((file) => {
+                    return file && isFileTypeAllowed(file);
+                  }) as File[];
+                onSelectFile({ files });
+
+                if (files.length > 0) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
               }
             }}
+            onFocus={onFocus}
+            onBlur={offFocus}
           />
-          <Flex
-            alignItems={'center'}
-            position={'absolute'}
-            right={[2, 4]}
-            bottom={['10px', '12px']}
-          >
-            {/* voice-input */}
-            {whisperConfig.open && !havInput && !isChatting && !!whisperModel && (
-              <>
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    height: '30px',
-                    width: isSpeaking && !isTransCription ? '100px' : 0,
-                    background: 'white',
-                    zIndex: 0
-                  }}
-                />
-                {isSpeaking && (
-                  <MyTooltip label={t('common:core.chat.Cancel Speak')}>
-                    <Flex
-                      mr={2}
-                      alignItems={'center'}
-                      justifyContent={'center'}
-                      flexShrink={0}
-                      h={['26px', '32px']}
-                      w={['26px', '32px']}
-                      borderRadius={'md'}
-                      cursor={'pointer'}
-                      _hover={{ bg: '#F5F5F8' }}
-                      onClick={() => stopSpeak(true)}
-                    >
-                      <MyIcon
-                        name={'core/chat/cancelSpeak'}
-                        width={['20px', '22px']}
-                        height={['20px', '22px']}
-                      />
-                    </Flex>
-                  </MyTooltip>
-                )}
-                <MyTooltip
-                  label={
-                    isSpeaking ? t('common:core.chat.Finish Speak') : t('common:core.chat.Record')
-                  }
-                >
-                  <Flex
-                    mr={2}
-                    alignItems={'center'}
-                    justifyContent={'center'}
-                    flexShrink={0}
-                    h={['26px', '32px']}
-                    w={['26px', '32px']}
-                    borderRadius={'md'}
-                    cursor={'pointer'}
-                    _hover={{ bg: '#F5F5F8' }}
-                    onClick={onWhisperRecord}
-                  >
-                    <MyIcon
-                      name={isSpeaking ? 'core/chat/finishSpeak' : 'core/chat/recordFill'}
-                      width={['20px', '22px']}
-                      height={['20px', '22px']}
-                      color={isSpeaking ? 'primary.500' : 'myGray.600'}
-                    />
-                  </Flex>
-                </MyTooltip>
-              </>
-            )}
-            {/* send and stop icon */}
-            {isSpeaking ? (
-              <Box color={'#5A646E'} w={'36px'} textAlign={'right'} whiteSpace={'nowrap'}>
-                {speakingTimeString}
+          {!dialogTips && !inputValue && (
+            <Flex
+              pointerEvents={'none'}
+              position={'absolute'}
+              left={0}
+              right={0}
+              top={0}
+              h={textareaMinH}
+              alignItems={'center'}
+              color={'myGray.400'}
+              fontSize={'16px'}
+              lineHeight={textareaMinH}
+              letterSpacing={'0.5px'}
+              minW={0}
+              overflow={'hidden'}
+              whiteSpace={'nowrap'}
+            >
+              <Box flexShrink={0}>{appNamePlaceholderParts.prefix}</Box>
+              <Box
+                flex={'0 1 auto'}
+                minW={0}
+                maxW={'100%'}
+                overflow={'hidden'}
+                textOverflow={'ellipsis'}
+                whiteSpace={'nowrap'}
+              >
+                {placeholderAppName}
               </Box>
-            ) : (
+              <Box flexShrink={0}>{appNamePlaceholderParts.suffix}</Box>
+            </Flex>
+          )}
+        </Flex>
+      </Flex>
+    ),
+    [
+      fileList.length,
+      TextareaDom,
+      dialogTips,
+      appNamePlaceholderParts.prefix,
+      appNamePlaceholderParts.suffix,
+      placeholderAppName,
+      isPc,
+      inputValue,
+      onFocus,
+      offFocus,
+      setValue,
+      handleSend,
+      canUploadFile,
+      isFileTypeAllowed,
+      onSelectFile
+    ]
+  );
+
+  const RenderButtonGroup = useMemo(() => {
+    const iconSize = {
+      w: '20px',
+      h: '20px'
+    };
+
+    return (
+      <Flex
+        alignItems={'flex-start'}
+        justifyContent={'space-between'}
+        w={'100%'}
+        mt={0}
+        h={9}
+        gap={[0, 1]}
+      >
+        {/* 左侧自定义按钮组 */}
+        <Flex alignItems={'center'} gap={2} flex={'1 1 0'} minW={0} w={0}>
+          {InputLeftComponent}
+        </Flex>
+
+        {/* 右侧原有按钮组 */}
+        <Flex alignItems={'center'} gap={[0, 1]}>
+          {/* Attachment and Voice Group */}
+          <Flex alignItems={'center'} h={9}>
+            {/* file selector button */}
+            {canUploadFile && (
               <Flex
                 alignItems={'center'}
                 justifyContent={'center'}
-                flexShrink={0}
-                h={['28px', '32px']}
-                w={['28px', '32px']}
-                borderRadius={'md'}
-                bg={
-                  isSpeaking || isChatting
-                    ? ''
-                    : !havInput || hasFileUploading
-                      ? '#E5E5E5'
-                      : 'primary.500'
-                }
-                cursor={havInput ? 'pointer' : 'not-allowed'}
-                lineHeight={1}
-                onClick={() => {
-                  if (isChatting) {
-                    return onStop();
-                  }
-                  return handleSend();
+                w={9}
+                h={9}
+                p={[1, 2]}
+                borderRadius={'sm'}
+                cursor={'pointer'}
+                _hover={{ bg: 'rgba(0, 0, 0, 0.04)' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSelectFile();
                 }}
               >
-                {isChatting ? (
-                  <MyIcon
-                    animation={'zoomStopIcon 0.4s infinite alternate'}
-                    width={['22px', '25px']}
-                    height={['22px', '25px']}
-                    cursor={'pointer'}
-                    name={'stop'}
-                    color={'gray.500'}
-                  />
-                ) : (
-                  <MyTooltip label={t('common:core.chat.Send Message')}>
-                    <MyIcon
-                      name={'core/chat/sendFill'}
-                      width={['18px', '20px']}
-                      height={['18px', '20px']}
-                      color={'white'}
-                    />
-                  </MyTooltip>
-                )}
+                <MyTooltip label={selectFileLabel}>
+                  <MyIcon name={selectFileIcon as any} {...iconSize} color={'myGray.500'} />
+                </MyTooltip>
+                <File onSelect={(files) => onSelectFile({ files })} />
+              </Flex>
+            )}
+
+            {/* Voice input button */}
+            {canUseVoiceInput && !inputValue && (
+              <Flex
+                alignItems={'center'}
+                justifyContent={'center'}
+                w={9}
+                h={9}
+                p={[1, 2]}
+                borderRadius={'sm'}
+                cursor={'pointer'}
+                _hover={{ bg: 'rgba(0, 0, 0, 0.04)' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  VoiceInputRef.current?.onSpeak?.();
+                }}
+              >
+                <MyTooltip label={t('common:core.chat.Record')}>
+                  <MyIcon name={'core/chat/recordFill'} {...iconSize} color={'myGray.500'} />
+                </MyTooltip>
               </Flex>
             )}
           </Flex>
+
+          {/* Divider Container */}
+          {((canUseVoiceInput && !inputValue) || canUploadFile) && (
+            <Flex alignItems={'center'} justifyContent={'center'} w={2} h={4} mr={2}>
+              <Box w={'2px'} h={5} bg={'myGray.200'} />
+            </Flex>
+          )}
+
+          {/* Send Button Container */}
+          <Flex alignItems={'center'} w={9} h={9} borderRadius={'lg'}>
+            <MyBox
+              isLoading={isStopping}
+              display={'flex'}
+              alignItems={'center'}
+              justifyContent={'center'}
+              w={9}
+              h={9}
+              p={[1, 2]}
+              bg={
+                isChatting ? 'primary.50' : canSendMessage ? 'primary.500' : 'rgba(17, 24, 36, 0.1)'
+              }
+              borderRadius={['md', 'lg']}
+              cursor={isChatting ? 'pointer' : canSendMessage ? 'pointer' : 'not-allowed'}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isChatting) {
+                  void handleStop();
+                  return;
+                }
+                return void handleSend(inputValue);
+              }}
+            >
+              {isChatting ? (
+                <MyIcon {...iconSize} name={'stop'} color={'primary.600'} />
+              ) : (
+                <MyTooltip label={t('common:core.chat.Send Message')}>
+                  <MyIcon name={'core/chat/sendFill'} {...iconSize} color={'white'} />
+                </MyTooltip>
+              )}
+            </MyBox>
+          </Flex>
         </Flex>
-      </Box>
+      </Flex>
+    );
+  }, [
+    InputLeftComponent,
+    canUploadFile,
+    selectFileLabel,
+    selectFileIcon,
+    File,
+    canUseVoiceInput,
+    inputValue,
+    t,
+    isStopping,
+    isChatting,
+    canSendMessage,
+    onOpenSelectFile,
+    onSelectFile,
+    handleSend,
+    handleStop
+  ]);
+
+  const activeStyles: FlexProps = {
+    boxShadow: '0px 5px 20px -4px rgba(19, 51, 107, 0.13)',
+    border: '1px solid',
+    borderColor: 'myGray.250'
+  };
+
+  return (
+    <Box
+      w={'100%'}
+      maxW={inputBodyProps?.maxW ?? ['100%', '780px']}
+      mx={inputBodyProps?.mx ?? inputBodyProps?.margin ?? 'auto'}
+      pb={inputBodyProps?.pb ?? ['calc(16px + env(safe-area-inset-bottom))', 4]}
+      {...props}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+
+        if (!canUploadFile) return;
+        const files = Array.from(e.dataTransfer.files);
+
+        const droppedFiles: File[] = [];
+        const invalidFiles: File[] = [];
+        files.forEach((file) => {
+          if (isFileTypeAllowed(file)) {
+            droppedFiles.push(file);
+          } else {
+            invalidFiles.push(file);
+          }
+        });
+        if (droppedFiles.length > 0) {
+          onSelectFile({ files: droppedFiles });
+        }
+
+        const invalidFileName = invalidFiles.map((file) => file.name).join(', ');
+        if (invalidFileName) {
+          toast({
+            status: 'warning',
+            title: t('chat:unsupported_file_type'),
+            description: invalidFileName
+          });
+        }
+      }}
+    >
+      {/* Real Chat Input */}
+      <Flex
+        direction={'column'}
+        h={isDefaultInputHeight ? ChatInputDefaultHeight : undefined}
+        minH={mobilePreSpeak ? '48px' : ChatInputDefaultHeight}
+        p={mobilePreSpeak ? [0, 4] : 4}
+        mb={0}
+        position={'relative'}
+        borderRadius={['xl', 'xxl']}
+        bg={'white'}
+        overflow={mobilePreSpeak ? 'hidden' : 'display'}
+        {...(focusing
+          ? activeStyles
+          : {
+              _hover: activeStyles,
+              border: '1px solid',
+              borderColor: 'myGray.200',
+              boxShadow: `0px 5px 16px -4px rgba(19, 51, 107, 0.08)`
+            })}
+        onClick={() => TextareaDom?.current?.focus()}
+      >
+        <Box flex={1}>
+          {/* Chat input guide box */}
+          {canUseInputGuide && (
+            <InputGuideBox
+              sourceTarget={sourceTarget}
+              text={inputValue}
+              onSelect={(e) => {
+                setValue('input', e, {
+                  shouldDirty: true,
+                  shouldTouch: true
+                });
+              }}
+              onSend={(e) => {
+                handleSend(e);
+              }}
+            />
+          )}
+          {/* file preview */}
+          {(!mobilePreSpeak || isPc || inputValue) && (
+            <Box>
+              <FilePreview
+                fileList={fileList}
+                onRemoveFile={(file) => cancelUploadFile(getFileUploadId(file))}
+                pt={0}
+              />
+            </Box>
+          )}
+
+          {/* voice input and loading container */}
+          {canUseVoiceInput && !inputValue && (
+            <VoiceInput
+              ref={VoiceInputRef}
+              handleSend={(text) => {
+                onSendMessage({
+                  text: text.trim(),
+                  files: fileList,
+                  autoTTSResponse,
+                  clearInput: true
+                });
+                clearFiles();
+              }}
+              resetInputVal={(val) => {
+                setMobilePreSpeak(false);
+                resetInputVal({
+                  text: val,
+                  files: fileList
+                });
+              }}
+              mobilePreSpeak={mobilePreSpeak}
+              setMobilePreSpeak={setMobilePreSpeak}
+            />
+          )}
+
+          {RenderTextarea}
+        </Box>
+
+        {!mobilePreSpeak && <Box>{RenderButtonGroup}</Box>}
+      </Flex>
+      <ComplianceTip type={'chat'} pt={4} pb={0} />
     </Box>
   );
 };

@@ -1,19 +1,60 @@
-import { getMongoModel, Schema } from '../../common/mongo';
+import { defineIndex, getMongoModel, Schema } from '../../common/mongo';
 import {
-  DatasetStatusEnum,
-  DatasetStatusMap,
+  ChunkSettingModeEnum,
+  ChunkTriggerConfigTypeEnum,
+  DataChunkSplitModeEnum,
+  DatasetCollectionDataProcessModeEnum,
   DatasetTypeEnum,
-  DatasetTypeMap
+  DatasetTypeMap,
+  ParagraphChunkAIModeEnum
 } from '@fastgpt/global/core/dataset/constants';
 import {
   TeamCollectionName,
   TeamMemberCollectionName
 } from '@fastgpt/global/support/user/team/constant';
-import { DatasetDefaultPermissionVal } from '@fastgpt/global/support/permission/dataset/constant';
-import { getPermissionSchema } from '@fastgpt/global/support/permission/utils';
-import type { DatasetSchemaType } from '@fastgpt/global/core/dataset/type.d';
+import { userCollectionName } from '../../support/user/schema';
+import type { DatasetSchemaType } from '@fastgpt/global/core/dataset/type';
 
 export const DatasetCollectionName = 'datasets';
+
+export const ChunkSettings = {
+  trainingType: {
+    type: String,
+    enum: Object.values(DatasetCollectionDataProcessModeEnum)
+  },
+
+  chunkTriggerType: {
+    type: String,
+    enum: Object.values(ChunkTriggerConfigTypeEnum)
+  },
+  chunkTriggerMinSize: Number,
+
+  dataEnhanceCollectionName: Boolean,
+
+  imageIndex: Boolean,
+  autoIndexes: Boolean,
+  indexPrefixTitle: Boolean,
+
+  chunkSettingMode: {
+    type: String,
+    enum: Object.values(ChunkSettingModeEnum)
+  },
+  chunkSplitMode: {
+    type: String,
+    enum: Object.values(DataChunkSplitModeEnum)
+  },
+  paragraphChunkAIMode: {
+    type: String,
+    enum: Object.values(ParagraphChunkAIModeEnum)
+  },
+  paragraphChunkDeep: Number,
+  paragraphChunkMinSize: Number,
+  chunkSize: Number,
+  chunkSplitter: String,
+
+  indexSize: Number,
+  qaPrompt: String
+};
 
 const DatasetSchema = new Schema({
   parentId: {
@@ -24,7 +65,7 @@ const DatasetSchema = new Schema({
   userId: {
     //abandon
     type: Schema.Types.ObjectId,
-    ref: 'user'
+    ref: userCollectionName
   },
   teamId: {
     type: Schema.Types.ObjectId,
@@ -42,15 +83,7 @@ const DatasetSchema = new Schema({
     required: true,
     default: DatasetTypeEnum.dataset
   },
-  status: {
-    type: String,
-    enum: Object.keys(DatasetStatusMap),
-    default: DatasetStatusEnum.active
-  },
-  avatar: {
-    type: String,
-    default: '/icon/logo.svg'
-  },
+  avatar: String,
   name: {
     type: String,
     required: true
@@ -59,15 +92,25 @@ const DatasetSchema = new Schema({
     type: Date,
     default: () => new Date()
   },
+  createTime: {
+    type: Date,
+    default: () => new Date()
+  },
   vectorModel: {
-    type: String,
-    required: true,
-    default: 'text-embedding-3-small'
+    type: String
+  },
+  vectorModelId: {
+    type: String
   },
   agentModel: {
-    type: String,
-    required: true,
-    default: 'gpt-4o-mini'
+    type: String
+  },
+  agentModelId: {
+    type: String
+  },
+  vlmModel: String,
+  vlmModelId: {
+    type: String
   },
   intro: {
     type: String,
@@ -85,16 +128,50 @@ const DatasetSchema = new Schema({
       }
     }
   },
-  externalReadUrl: {
-    type: String
+  chunkSettings: {
+    type: ChunkSettings
   },
-  ...getPermissionSchema(DatasetDefaultPermissionVal)
+  // 外部文档解析服务开关,整体存取;缺失字段由读取层用固定默认值补全
+  sangforFileParseConfig: {
+    type: {
+      keep_header_footer: Boolean,
+      keep_appendix: Boolean,
+      image_analysis: Boolean,
+      chart_analysis: Boolean
+    }
+  },
+  inheritPermission: {
+    type: Boolean,
+    default: true
+  },
+
+  apiDatasetServer: Object,
+
+  // 软删除标记字段
+  deleteTime: {
+    type: Date,
+    default: null // null表示未删除，有值表示删除时间
+  },
+
+  autoSync: Boolean,
+  /** @deprecated */
+  externalReadUrl: String,
+  /** @deprecated */
+  defaultPermission: Number,
+  /** @deprecated */
+  apiServer: Object,
+  /** @deprecated */
+  feishuServer: Object,
+  /** @deprecated */
+  yuqueServer: Object
 });
 
-try {
-  DatasetSchema.index({ teamId: 1 });
-} catch (error) {
-  console.log(error);
-}
+defineIndex(DatasetSchema, { key: { teamId: 1, createTime: 1 } });
+defineIndex(DatasetSchema, { key: { teamId: 1, updateTime: -1 } });
+defineIndex(DatasetSchema, { key: { teamId: 1, parentId: 1 } });
+defineIndex(DatasetSchema, { key: { type: 1 } }); // Admin count
+defineIndex(DatasetSchema, { key: { deleteTime: 1 } }); // 添加软删除字段索引
+
+defineIndex(DatasetSchema, { key: { teamId: 1 }, deprecated: true });
 
 export const MongoDataset = getMongoModel<DatasetSchemaType>(DatasetCollectionName, DatasetSchema);

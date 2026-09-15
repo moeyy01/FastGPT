@@ -1,15 +1,43 @@
-import { addLog } from '../../common/system/log';
-import mongoose, { Model } from 'mongoose';
+import { isTestEnv } from '@fastgpt/global/common/system/constants';
+import { getLogger, LogCategories } from '../logger';
+import type {
+  AnyBulkWriteOperation,
+  ClientSession,
+  Model,
+  Mongoose as MongooseType,
+  PipelineStage
+} from 'mongoose';
+import mongoose, { Mongoose } from 'mongoose';
+import { serviceEnv } from '../../env';
+import { MongoIndexManager } from './indexManager';
+
+const logger = getLogger(LogCategories.INFRA.MONGO);
 
 export default mongoose;
-export * from 'mongoose';
+export { Schema, Types } from 'mongoose';
+export type {
+  AnyBulkWriteOperation,
+  ClientSession,
+  Model,
+  MongooseType as Mongoose,
+  PipelineStage
+};
+
+export const MONGO_URL = serviceEnv.MONGODB_URI;
+export const MONGO_LOG_URL = serviceEnv.MONGODB_LOG_URI ?? serviceEnv.MONGODB_URI;
 
 export const connectionMongo = (() => {
   if (!global.mongodb) {
-    global.mongodb = mongoose;
+    global.mongodb = new Mongoose();
   }
-
   return global.mongodb;
+})();
+
+export const connectionLogMongo = (() => {
+  if (!global.mongodbLog) {
+    global.mongodbLog = new Mongoose();
+  }
+  return global.mongodbLog;
 })();
 
 const addCommonMiddleware = (schema: mongoose.Schema) => {
@@ -39,39 +67,130 @@ const addCommonMiddleware = (schema: mongoose.Schema) => {
       if (this._startTime) {
         const duration = Date.now() - this._startTime;
 
-        const warnLogData = {
-          query: this._query,
-          op,
-          duration
+        const getLogData = () => {
+          const collectionName = this.model?.collection?.name || this._model?.collection?.name;
+          const op = (() => {
+            if (this.op) return this.op;
+            if (this._pipeline) {
+              return 'aggregate';
+            }
+            if (this.constructor?.name === 'model') {
+              return 'save/create';
+            }
+            return this.constructor?.name || 'unknown';
+          })();
+          return {
+            duration,
+            collectionName,
+            op,
+            ...(this._query && { query: this._query }),
+            ...(this._pipeline && { pipeline: this._pipeline }),
+            ...(this._update && { update: this._update }),
+            ...(this._delete && { delete: this._delete })
+          };
         };
 
-        if (duration > 1000) {
-          addLog.warn(`Slow operation ${duration}ms`, warnLogData);
+        if (duration > 2000) {
+          logger.warn('MongoDB slow query (>2s)', getLogData());
+        } else if (duration > 500) {
+          logger.warn('MongoDB slow query (>500ms)', getLogData());
         }
       }
       next();
+    });
+
+    // Convert _id to string
+    schema.post(/^find/, function (docs) {
+      if (!docs) return;
+
+      const convertObjectIds = (obj: any) => {
+        if (!obj) return;
+
+        // Convert _id
+        if (obj._id && obj._id.toString) {
+          obj._id = obj._id.toString();
+        }
+
+        // Convert other ObjectId fields
+        Object.keys(obj).forEach((key) => {
+          if (obj[key] && obj[key]._bsontype === 'ObjectId') {
+            obj[key] = obj[key].toString();
+          }
+        });
+      };
+
+      if (Array.isArray(docs)) {
+        docs.forEach((doc) => convertObjectIds(doc));
+      } else {
+        convertObjectIds(docs);
+      }
     });
   });
 
   return schema;
 };
 
-export const getMongoModel = <T>(name: string, schema: mongoose.Schema) => {
+export const getMongoModel = <T>(name: string, schema: mongoose.Schema): Model<T> => {
   if (connectionMongo.models[name]) return connectionMongo.models[name] as Model<T>;
-  console.log('Load model======', name);
+  if (!isTestEnv) logger.debug('Loading MongoDB model', { modelName: name });
   addCommonMiddleware(schema);
 
-  const model = connectionMongo.model<T>(name, schema);
+  const model = connectionMongo.model(name, schema) as Model<T>;
 
-  if (process.env.SYNC_INDEX !== '0') {
-    try {
-      model.syncIndexes({ background: true });
-    } catch (error) {
-      addLog.error('Create index error', error);
-    }
-  }
+  syncMongoIndex(model);
 
   return model;
 };
 
+export const getMongoLogModel = <T>(name: string, schema: mongoose.Schema): Model<T> => {
+  if (connectionLogMongo.models[name]) return connectionLogMongo.models[name] as Model<T>;
+  logger.debug('Loading MongoDB log model', { modelName: name });
+
+  const model = connectionLogMongo.model(name, schema) as Model<T>;
+
+  syncMongoIndex(model);
+
+  return model;
+};
+
+const syncMongoIndex = (model: Model<any>) => {
+  if (
+    process.env.NODE_ENV === 'test' ||
+    process.env.NEXT_PHASE === 'phase-production-build' ||
+    !serviceEnv.SYNC_INDEX ||
+    !MONGO_URL
+  ) {
+    return;
+  }
+
+  void MongoIndexManager.syncModelIndexes({
+    model,
+    logger
+  }).catch((error) => {
+    logger.error('Failed to ensure MongoDB indexes', {
+      modelName: model.modelName,
+      collectionName: model.collection.collectionName,
+      error
+    });
+  });
+};
+
 export const ReadPreference = connectionMongo.mongo.ReadPreference;
+
+export { MongoIndexManager } from './indexManager';
+export {
+  getDeprecatedIndexes as getSchemaDeprecatedMongoIndexes,
+  defineIndex
+} from './schemaIndexes';
+export type {
+  MongoIndexCleanupAction,
+  MongoIndexCleanupReport,
+  MongoIndexCleanupReportItem,
+  MongoIndexCleanupSummary,
+  MongoIndexSyncResult
+} from './indexManager';
+export type {
+  DefineMongoIndexOptions,
+  DeprecatedMongoIndexDefinition,
+  DeprecatedMongoIndexOptions
+} from './schemaIndexes';

@@ -1,0 +1,66 @@
+import { OrgCollectionName } from '@fastgpt/global/support/user/team/org/constant';
+import { defineIndex, connectionMongo, getMongoModel } from '../../../common/mongo';
+import {
+  TeamCollectionName,
+  TeamMemberCollectionName
+} from '@fastgpt/global/support/user/team/constant';
+import { type OrgMemberSchemaType } from '@fastgpt/global/support/user/team/org/type';
+import { getLogger, LogCategories } from '../../../common/logger';
+const { Schema } = connectionMongo;
+
+export const OrgMemberCollectionName = 'team_org_members';
+
+export const OrgMemberSchema = new Schema({
+  teamId: {
+    type: Schema.Types.ObjectId,
+    ref: TeamCollectionName,
+    required: true
+  },
+  orgId: {
+    type: Schema.Types.ObjectId,
+    ref: OrgCollectionName,
+    required: true
+  },
+  tmbId: {
+    type: Schema.Types.ObjectId,
+    ref: TeamMemberCollectionName,
+    required: true
+  }
+  // role: {
+  //   type: String,
+  //   enum: Object.values(OrgMemberRole),
+  //   required: true,
+  //   default: OrgMemberRole.member
+  // }
+});
+
+OrgMemberSchema.virtual('org', {
+  ref: OrgCollectionName,
+  localField: 'orgId',
+  foreignField: '_id',
+  justOne: true
+});
+
+const logger = getLogger(LogCategories.INFRA.MONGO);
+
+defineIndex(OrgMemberSchema, {
+  key: {
+    teamId: 1,
+    orgId: 1,
+    tmbId: 1
+  },
+  options: {
+    unique: true
+  }
+});
+defineIndex(OrgMemberSchema, {
+  key: {
+    teamId: 1,
+    tmbId: 1
+  }
+});
+
+export const MongoOrgMemberModel = getMongoModel<OrgMemberSchemaType>(
+  OrgMemberCollectionName,
+  OrgMemberSchema
+);

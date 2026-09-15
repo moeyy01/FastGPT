@@ -1,239 +1,660 @@
-import React, { useMemo, useState } from 'react';
-import MyModal from '@fastgpt/web/components/common/MyModal';
-import { useTranslation } from 'next-i18next';
-import { useForm } from 'react-hook-form';
+import AIModelSelector from '@/components/Select/AIModelSelector';
+import { getDocPath } from '@/web/common/system/doc';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { getModelDetail } from '@/web/core/ai/model/modelData';
+import { useModelDetail } from '@/web/core/ai/model/useModelDetail';
 import {
   Box,
-  BoxProps,
   Button,
   Flex,
-  Link,
-  ModalBody,
-  ModalFooter,
-  Switch
+  HStack,
+  Input,
+  Switch,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+  VStack
 } from '@chakra-ui/react';
-import { useSystemStore } from '@/web/common/system/useSystemStore';
-import MySlider from '@/components/Slider';
+import { ModelTypeEnum, reasoningEffortList } from '@fastgpt/global/core/ai/constants';
+import type { ReasoningEffort } from '@fastgpt/global/core/ai/llm/type';
+import { getLLMSupportParams } from '@fastgpt/global/core/ai/llm/utils';
+import type { SettingAIDataType } from '@fastgpt/global/core/app/type';
 import { NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
-import type { SettingAIDataType } from '@fastgpt/global/core/app/type.d';
-import { getDocPath } from '@/web/common/system/doc';
-import AIModelSelector from '@/components/Select/AIModelSelector';
-import { LLMModelItemType } from '@fastgpt/global/core/ai/model.d';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import MySelect from '@fastgpt/web/components/common/MySelect';
+import MultipleSelect from '@fastgpt/web/components/common/MySelect/MultipleSelect';
+import InputSlider from '@fastgpt/web/components/common/MySlider/InputSlider';
 import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import JsonEditor from '@fastgpt/web/components/common/Textarea/JsonEditor';
+import { FixedTableLayout } from '@fastgpt/web/components/common/FixedTable';
+import MyModal from '@fastgpt/web/components/v2/common/MyModal';
+import { useTranslation } from 'next-i18next';
+import dynamic from 'next/dynamic';
+import React, { useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { PriceLine } from '../PriceTiersLabel';
+import { filterModelMultimodalSettings } from '../SettingLLMModel/utils';
+
+type MultimodalValue =
+  | NodeInputKeyEnum.aiChatVision
+  | NodeInputKeyEnum.aiChatAudio
+  | NodeInputKeyEnum.aiChatVideo;
+
+const ModelPriceModal = dynamic(() =>
+  import('@/components/core/ai/ModelTable').then((mod) => mod.ModelPriceModal)
+);
+
+const RIGHT_AREA_WIDTH = '320px';
+
+const SectionCard = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <Box w="full" bg="white" border="1px solid" borderColor="myGray.200" borderRadius="md" p={4}>
+    <VStack spacing={2.5} align="stretch">
+      <Box
+        fontSize="10px"
+        fontWeight={500}
+        color="myGray.400"
+        letterSpacing="0.2px"
+        lineHeight="14px"
+      >
+        {title}
+      </Box>
+      {children}
+    </VStack>
+  </Box>
+);
+
+const SettingRow = ({
+  label,
+  tip,
+  switchControl,
+  children
+}: {
+  label: React.ReactNode;
+  tip?: string;
+  switchControl?: React.ReactNode;
+  children?: React.ReactNode;
+}) => (
+  <Flex w="full" alignItems="center" justifyContent="space-between" minH="45px">
+    <HStack spacing={0.5} fontSize="sm" color="myGray.900" fontWeight={500}>
+      <Box>{label}</Box>
+      {tip && <QuestionTip label={tip} />}
+    </HStack>
+    <HStack spacing={4} w={RIGHT_AREA_WIDTH} justifyContent="flex-start">
+      {switchControl}
+      {children && (
+        <Box flex="1 0 0" minW={0}>
+          {children}
+        </Box>
+      )}
+    </HStack>
+  </Flex>
+);
+
+export type AIChatSettingsModalProps = {
+  showMaxToken?: boolean;
+  showTemperature?: boolean;
+  showTopP?: boolean;
+  showStopSign?: boolean;
+  showResponseFormat?: boolean;
+  showReasoning?: boolean;
+  showMultimodalConfig?: boolean;
+};
 
 const AIChatSettingsModal = ({
   onClose,
   onSuccess,
   defaultData,
-  llmModels = []
-}: {
+  showMaxToken = true,
+  showTemperature = true,
+  showTopP = true,
+  showStopSign = true,
+  showResponseFormat = true,
+  showReasoning = true,
+  showMultimodalConfig = true
+}: AIChatSettingsModalProps & {
   onClose: () => void;
   onSuccess: (e: SettingAIDataType) => void;
   defaultData: SettingAIDataType;
-  llmModels?: LLMModelItemType[];
 }) => {
   const { t } = useTranslation();
   const [refresh, setRefresh] = useState(false);
-  const { feConfigs, llmModelList } = useSystemStore();
+  const { feConfigs } = useSystemStore();
 
-  const { handleSubmit, getValues, setValue, watch } = useForm({
+  const { handleSubmit, getValues, setValue, watch, register } = useForm<SettingAIDataType>({
     defaultValues: defaultData
   });
-  const model = watch('model');
+  const modelId = watch('modelId');
+  const reasoning = watch(NodeInputKeyEnum.aiChatReasoning);
+  const reasoningEffort = watch(NodeInputKeyEnum.aiChatReasoningEffort);
   const showResponseAnswerText = watch(NodeInputKeyEnum.aiChatIsResponseText) !== undefined;
+  const showMultimodalSetting =
+    showMultimodalConfig && watch(NodeInputKeyEnum.aiChatVision) !== undefined;
   const showMaxHistoriesSlider = watch('maxHistories') !== undefined;
-  const selectedModel = llmModelList.find((item) => item.model === model) || llmModelList[0];
+
+  const maxToken = watch('maxToken');
+  const temperature = watch('temperature');
+  const useVision = watch('aiChatVision');
+  const useAudio = watch(NodeInputKeyEnum.aiChatAudio);
+  const useVideo = watch(NodeInputKeyEnum.aiChatVideo);
+  const extractFiles = watch(NodeInputKeyEnum.aiChatExtractFiles);
+
+  const {
+    model: modelData,
+    loading: modelLoading,
+    error: modelError,
+    refresh: retryModel
+  } = useModelDetail({ modelId, modelType: ModelTypeEnum.llm });
+  const data = useMemo(() => {
+    const support = getLLMSupportParams(modelData);
+
+    return {
+      selectedModel: modelData,
+      supportParams: support
+    };
+  }, [modelData]);
+  const selectedModel = data.selectedModel;
+  const supportParams = data.supportParams;
+  const multimodalOptions = useMemo(
+    () =>
+      [
+        supportParams.vision && {
+          label: t('app:llm_multimodal_image'),
+          value: NodeInputKeyEnum.aiChatVision
+        },
+        supportParams.audio && {
+          label: t('app:llm_multimodal_audio'),
+          value: NodeInputKeyEnum.aiChatAudio
+        },
+        supportParams.video && {
+          label: t('app:llm_multimodal_video'),
+          value: NodeInputKeyEnum.aiChatVideo
+        }
+      ].filter(Boolean) as {
+        label: string;
+        value: MultimodalValue;
+      }[],
+    [supportParams.audio, supportParams.video, supportParams.vision, t]
+  );
+  const singleMultimodalOption = multimodalOptions[0];
+  const multimodalSettingLabel =
+    multimodalOptions.length === 1 &&
+    singleMultimodalOption?.value === NodeInputKeyEnum.aiChatVision
+      ? t('app:llm_use_vision')
+      : t('app:llm_use_multimodal');
+  const selectedMultimodalValues = [
+    useVision && supportParams.vision && NodeInputKeyEnum.aiChatVision,
+    useAudio && supportParams.audio && NodeInputKeyEnum.aiChatAudio,
+    useVideo && supportParams.video && NodeInputKeyEnum.aiChatVideo
+  ].filter(Boolean) as MultimodalValue[];
+  const showAdvancedConfig =
+    (supportParams.temperature && showTemperature) ||
+    (supportParams.topP && showTopP) ||
+    (supportParams.stop && showStopSign) ||
+    (supportParams.responseFormat && showResponseFormat);
+  const showExtractFilesSetting = showMultimodalSetting && supportParams.multimodal;
+
+  const onChangeMultimodalValues = (values: MultimodalValue[]) => {
+    setValue(NodeInputKeyEnum.aiChatVision, values.includes(NodeInputKeyEnum.aiChatVision));
+    setValue(NodeInputKeyEnum.aiChatAudio, values.includes(NodeInputKeyEnum.aiChatAudio));
+    setValue(NodeInputKeyEnum.aiChatVideo, values.includes(NodeInputKeyEnum.aiChatVideo));
+  };
+
+  const topP = watch(NodeInputKeyEnum.aiChatTopP);
+  const stopSign = watch(NodeInputKeyEnum.aiChatStopSign);
+  const responseFormat = watch(NodeInputKeyEnum.aiChatResponseFormat);
+  const jsonSchema = watch(NodeInputKeyEnum.aiChatJsonSchema);
 
   const tokenLimit = useMemo(() => {
-    return llmModelList.find((item) => item.model === model)?.maxResponse || 4096;
-  }, [llmModelList, model]);
+    return selectedModel?.config.maxResponse ?? 1_000_000;
+  }, [selectedModel?.config.maxResponse]);
 
-  const onChangeModel = (e: string) => {
-    setValue('model', e);
+  const onChangeModel = async (e: string) => {
+    setValue('modelId', e);
 
-    // update max tokens
-    const modelData = llmModelList.find((item) => item.model === e);
+    // 同一 ID 的 hook 会展示加载失败和重试入口，事件处理不再抛出未捕获异常。
+    const modelData = await getModelDetail({ modelId: e, modelType: ModelTypeEnum.llm }).catch(
+      () => undefined
+    );
+    if (getValues('modelId') !== e) return;
     if (modelData) {
-      setValue('maxToken', modelData.maxResponse / 2);
+      setValue('maxToken', modelData.config.maxResponse / 2);
+      if (showMultimodalSetting) {
+        const settings = filterModelMultimodalSettings({
+          settings: getValues(),
+          support: getLLMSupportParams(modelData)
+        });
+        setValue(NodeInputKeyEnum.aiChatVision, settings.aiChatVision);
+        setValue(NodeInputKeyEnum.aiChatAudio, settings.aiChatAudio);
+        setValue(NodeInputKeyEnum.aiChatVideo, settings.aiChatVideo);
+      }
     }
 
     setRefresh(!refresh);
   };
 
-  const LabelStyles: BoxProps = {
-    display: 'flex',
-    alignItems: 'center',
-    fontSize: 'sm',
-    color: 'myGray.900',
-    width: ['80px', '90px']
-  };
+  const showReasoningSection = supportParams.reasoning && showReasoning;
 
   return (
     <MyModal
       isOpen
-      iconSrc="/imgs/workflow/AI.png"
       onClose={onClose}
       title={
-        <>
-          {t('common:core.ai.AI settings')}
+        <HStack>
+          <Box>{t('app:ai_settings')}</Box>
           {feConfigs?.docUrl && (
-            <Link
-              href={getDocPath('/docs/course/ai_settings/')}
-              target={'_blank'}
-              ml={1}
-              textDecoration={'underline'}
-              fontWeight={'normal'}
-              fontSize={'md'}
-            >
-              {t('common:common.Read intro')}
-            </Link>
+            <MyIcon
+              name="book"
+              color={'primary.600'}
+              w={'24px'}
+              cursor={'pointer'}
+              onClick={() => {
+                window.open(getDocPath('/guide/build/general/ai_settings'), '_blank');
+              }}
+            />
           )}
+        </HStack>
+      }
+      w={'580px'}
+      maxW={'90vw'}
+      footer={
+        <>
+          <Button variant={'whiteBase'} onClick={onClose}>
+            {t('common:Close')}
+          </Button>
+          <Button
+            isLoading={modelLoading}
+            isDisabled={!!modelError}
+            onClick={handleSubmit(onSuccess)}
+          >
+            {t('common:Confirm')}
+          </Button>
         </>
       }
-      w={'500px'}
     >
-      <ModalBody overflowY={'auto'}>
-        <Flex alignItems={'center'}>
-          <Box {...LabelStyles} mr={2}>
-            {t('common:core.ai.Model')}
-          </Box>
-          <Box flex={'1 0 0'}>
-            <AIModelSelector
-              width={'100%'}
-              value={model}
-              list={llmModels.map((item) => ({
-                value: item.model,
-                label: item.name
-              }))}
-              onchange={onChangeModel}
-            />
-          </Box>
-        </Flex>
-        {feConfigs && (
-          <Flex mt={8}>
-            <Box {...LabelStyles} mr={2}>
-              {t('common:core.ai.Ai point price')}
-            </Box>
-            <Box flex={1} ml={'10px'}>
-              {t('support.wallet.Ai point every thousand tokens', {
-                points: selectedModel?.charsPointsPrice || 0
-              })}
-            </Box>
-          </Flex>
+      <VStack spacing={4} align="stretch">
+        {modelLoading && <Box color="myGray.500">{t('common:model_loading')}</Box>}
+        {!!modelError && (
+          <Button onClick={retryModel}>{t('common:model_detail_load_failed')}</Button>
         )}
-        <Flex mt={8}>
-          <Box {...LabelStyles} mr={2}>
-            {t('common:core.ai.Max context')}
-          </Box>
-          <Box flex={1} ml={'10px'}>
-            {selectedModel?.maxContext || 4096}Tokens
-          </Box>
-        </Flex>
-        <Flex mt={8}>
-          <Box {...LabelStyles} mr={2}>
-            {t('common:core.ai.Support tool')}
-            <QuestionTip ml={1} label={t('common:core.module.template.AI support tool tip')} />
-          </Box>
-          <Box flex={1} ml={'10px'}>
-            {selectedModel?.toolChoice || selectedModel?.functionCall ? '支持' : '不支持'}
-          </Box>
-        </Flex>
-        <Flex mt={8}>
-          <Box {...LabelStyles} mr={2}>
-            {t('common:core.app.Temperature')}
-          </Box>
-          <Box flex={1} ml={'10px'}>
-            <MySlider
-              markList={[
-                { label: t('common:core.app.deterministic'), value: 0 },
-                { label: t('common:core.app.Random'), value: 10 }
-              ]}
-              width={'95%'}
-              min={0}
-              max={10}
-              value={getValues(NodeInputKeyEnum.aiChatTemperature)}
-              onChange={(e) => {
-                setValue(NodeInputKeyEnum.aiChatTemperature, e);
-                setRefresh(!refresh);
-              }}
+        {/* 基础配置 */}
+        <SectionCard title={t('app:ai_setting_basic_config')}>
+          <SettingRow label={t('common:core.ai.Model')}>
+            <AIModelSelector
+              modelType={ModelTypeEnum.llm}
+              width={'100%'}
+              h={'36px'}
+              value={modelId}
+              onChange={onChangeModel}
             />
-          </Box>
-        </Flex>
-        <Flex mt={8}>
-          <Box {...LabelStyles} mr={2}>
-            {t('common:core.app.Max tokens')}
-          </Box>
-          <Box flex={1} ml={'10px'}>
-            <MySlider
-              markList={[
-                { label: '100', value: 100 },
-                { label: `${tokenLimit}`, value: tokenLimit }
-              ]}
-              width={'95%'}
-              min={100}
-              max={tokenLimit}
-              step={50}
-              value={getValues(NodeInputKeyEnum.aiChatMaxToken)}
-              onChange={(val) => {
-                setValue(NodeInputKeyEnum.aiChatMaxToken, val);
-                setRefresh(!refresh);
-              }}
-            />
-          </Box>
-        </Flex>
-        {showMaxHistoriesSlider && (
-          <Flex mt={8}>
-            <Box {...LabelStyles} mr={2}>
-              {t('common:core.app.Max histories')}
-            </Box>
-            <Box flex={1} ml={'10px'}>
-              <MySlider
-                markList={[
-                  { label: 0, value: 0 },
-                  { label: 30, value: 30 }
-                ]}
-                width={'95%'}
+          </SettingRow>
+
+          <FixedTableLayout
+            scrollMode="normal"
+            rootProps={{
+              h: 'auto',
+              borderRadius: 'sm',
+              borderWidth: '1px',
+              borderColor: 'myGray.200',
+              overflow: 'hidden'
+            }}
+            bodyProps={{ flex: '1 1 auto', overflowX: 'auto' }}
+            renderHeader={({ headerTableWidth }) => (
+              <Table
+                variant={'bordered'}
+                sx={{ tableLayout: 'fixed', width: `${headerTableWidth} !important` }}
+              >
+                <colgroup>
+                  <col style={{ width: '40%' }} />
+                  <col style={{ width: '30%' }} />
+                  <col style={{ width: '30%' }} />
+                </colgroup>
+                <Thead>
+                  <Tr>
+                    <Th>
+                      <HStack spacing={1}>
+                        <Box>{t('app:ai_point_price')}</Box>
+                        <ModelPriceModal>
+                          {({ onOpen }) => (
+                            <QuestionTip label={t('app:look_ai_point_price')} onClick={onOpen} />
+                          )}
+                        </ModelPriceModal>
+                      </HStack>
+                    </Th>
+                    <Th>{t('common:core.ai.Max context')}</Th>
+                    <Th>
+                      <HStack spacing={1}>
+                        <Box>{t('common:core.ai.Support tool')}</Box>
+                        <QuestionTip label={t('common:core.module.template.AI support tool tip')} />
+                      </HStack>
+                    </Th>
+                  </Tr>
+                </Thead>
+              </Table>
+            )}
+            renderBody={() => (
+              <Table variant={'bordered'} w={'100%'} sx={{ tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: '40%' }} />
+                  <col style={{ width: '30%' }} />
+                  <col style={{ width: '30%' }} />
+                </colgroup>
+                <Tbody>
+                  <Tr>
+                    <Td>
+                      {!!selectedModel && (
+                        <PriceLine
+                          config={selectedModel}
+                          unitLabel={t('common:support.wallet.subscription.point') + ' / 1K Tokens'}
+                          priceKey={'input'}
+                          fontSize={'mini'}
+                        />
+                      )}
+                    </Td>
+                    <Td rowSpan={2}>
+                      {selectedModel
+                        ? `${Math.round(selectedModel.config.maxContext / 1000)}K`
+                        : '—'}
+                    </Td>
+                    <Td rowSpan={2}>
+                      {selectedModel?.config.toolChoice || selectedModel?.config.functionCall
+                        ? t('common:support')
+                        : t('common:not_support')}
+                    </Td>
+                  </Tr>
+                  <Tr>
+                    <Td>
+                      {!!selectedModel && (
+                        <PriceLine
+                          config={selectedModel}
+                          unitLabel={t('common:support.wallet.subscription.point') + ' / 1K Tokens'}
+                          priceKey={'output'}
+                          fontSize={'mini'}
+                        />
+                      )}
+                    </Td>
+                  </Tr>
+                </Tbody>
+              </Table>
+            )}
+          />
+
+          {showMaxHistoriesSlider && (
+            <SettingRow
+              label={t('app:max_histories_number')}
+              tip={t('app:max_histories_number_tip')}
+            >
+              <Box ml={'52px'}>
+                <InputSlider
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={getValues('maxHistories') ?? 6}
+                  inputVariant={'whiteOutline'}
+                  onChange={(e) => {
+                    setValue('maxHistories', e);
+                    setRefresh(!refresh);
+                  }}
+                />
+              </Box>
+            </SettingRow>
+          )}
+          {showMaxToken && (
+            <SettingRow
+              label={t('app:max_tokens')}
+              switchControl={
+                <Switch
+                  isChecked={maxToken !== undefined}
+                  onChange={(e) => {
+                    setValue('maxToken', e.target.checked ? tokenLimit / 2 : undefined);
+                  }}
+                />
+              }
+            >
+              <InputSlider
                 min={0}
-                max={30}
-                value={getValues('maxHistories') ?? 6}
-                onChange={(e) => {
-                  setValue('maxHistories', e);
+                max={tokenLimit}
+                step={200}
+                inputVariant={'whiteOutline'}
+                isDisabled={maxToken === undefined}
+                value={maxToken}
+                onChange={(val) => {
+                  setValue(NodeInputKeyEnum.aiChatMaxToken, val);
                   setRefresh(!refresh);
                 }}
               />
-            </Box>
-          </Flex>
-        )}
-        {showResponseAnswerText && (
-          <Flex mt={8} alignItems={'center'}>
-            <Box {...LabelStyles}>
-              {t('common:core.app.Ai response')}
-              <QuestionTip
-                ml={1}
-                label={t('common:core.module.template.AI response switch tip')}
-              ></QuestionTip>
-            </Box>
-            <Box flex={1} ml={'10px'}>
-              <Switch
-                isChecked={getValues(NodeInputKeyEnum.aiChatIsResponseText)}
-                onChange={(e) => {
-                  const value = e.target.checked;
-                  setValue(NodeInputKeyEnum.aiChatIsResponseText, value);
-                  setRefresh((state) => !state);
-                }}
+            </SettingRow>
+          )}
+          {showMultimodalSetting && (
+            <SettingRow
+              label={multimodalSettingLabel}
+              switchControl={
+                !supportParams.multimodal ? (
+                  <Box fontSize={'sm'} color={'myGray.500'}>
+                    {t('app:llm_not_support_multimodal')}
+                  </Box>
+                ) : multimodalOptions.length === 1 && singleMultimodalOption ? (
+                  <Switch
+                    isChecked={selectedMultimodalValues.length > 0}
+                    onChange={(e) => {
+                      onChangeMultimodalValues(
+                        e.target.checked ? [singleMultimodalOption.value] : []
+                      );
+                    }}
+                  />
+                ) : undefined
+              }
+            >
+              {supportParams.multimodal && multimodalOptions.length > 1 && (
+                <MultipleSelect
+                  h={'36px'}
+                  value={selectedMultimodalValues}
+                  list={multimodalOptions}
+                  placeholder={t('app:llm_multimodal_select_placeholder')}
+                  onSelect={onChangeMultimodalValues}
+                />
+              )}
+            </SettingRow>
+          )}
+          {showExtractFilesSetting && (
+            <SettingRow
+              label={t('app:extract_chat_files')}
+              tip={t('app:extract_chat_files_tip')}
+              switchControl={
+                <Switch
+                  isChecked={!!extractFiles}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatExtractFiles, e.target.checked);
+                  }}
+                />
+              }
+            />
+          )}
+          {showResponseAnswerText && (
+            <SettingRow
+              label={t('app:hide_response')}
+              tip={t('app:hide_response_tip')}
+              switchControl={
+                <Switch
+                  isChecked={!getValues(NodeInputKeyEnum.aiChatIsResponseText)}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatIsResponseText, !e.target.checked);
+                    setRefresh((state) => !state);
+                  }}
+                />
+              }
+            />
+          )}
+        </SectionCard>
+
+        {/* 思考配置 */}
+        {showReasoningSection && (
+          <SectionCard title={t('app:ai_setting_reasoning_config')}>
+            <SettingRow
+              label={t('app:reasoning_effort')}
+              tip={t('app:ai_setting_reasoning_config_tip')}
+            >
+              {supportParams.reasoningEffort ? (
+                <MySelect<ReasoningEffort>
+                  h={'36px'}
+                  list={reasoningEffortList.map((item) => ({
+                    label: t(item.label),
+                    value: item.value
+                  }))}
+                  value={reasoningEffort ?? null}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatReasoningEffort, e);
+                  }}
+                />
+              ) : (
+                <Box fontSize={'sm'} color={'myGray.900'}>
+                  {t('app:reasoning_effort_unsupported')}
+                </Box>
+              )}
+            </SettingRow>
+            {reasoningEffort !== 'none' && (
+              <SettingRow
+                label={t('app:reasoning_response')}
+                switchControl={
+                  <Switch
+                    isChecked={!reasoning}
+                    onChange={(e) => {
+                      setValue(NodeInputKeyEnum.aiChatReasoning, !e.target.checked);
+                    }}
+                  />
+                }
               />
-            </Box>
-          </Flex>
+            )}
+          </SectionCard>
         )}
-      </ModalBody>
-      <ModalFooter>
-        <Button variant={'whiteBase'} onClick={onClose}>
-          {t('common:common.Close')}
-        </Button>
-        <Button ml={4} onClick={handleSubmit(onSuccess)}>
-          {t('common:common.Confirm')}
-        </Button>
-      </ModalFooter>
+
+        {/* 高级配置 */}
+        {showAdvancedConfig && (
+          <SectionCard title={t('app:ai_setting_advanced_config')}>
+            {supportParams.temperature && showTemperature && (
+              <SettingRow
+                label={t('app:temperature')}
+                tip={t('app:temperature_tip')}
+                switchControl={
+                  <Switch
+                    isChecked={temperature !== undefined}
+                    onChange={(e) => {
+                      setValue('temperature', e.target.checked ? 0 : undefined);
+                    }}
+                  />
+                }
+              >
+                <InputSlider
+                  min={0}
+                  max={10}
+                  step={1}
+                  value={temperature}
+                  inputVariant={'whiteOutline'}
+                  isDisabled={temperature === undefined}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatTemperature, e);
+                    setRefresh(!refresh);
+                  }}
+                />
+              </SettingRow>
+            )}
+            {supportParams.topP && showTopP && (
+              <SettingRow
+                label="Top_p"
+                tip={t('app:show_top_p_tip')}
+                switchControl={
+                  <Switch
+                    isChecked={topP !== undefined}
+                    onChange={(e) => {
+                      setValue(NodeInputKeyEnum.aiChatTopP, e.target.checked ? 1 : undefined);
+                    }}
+                  />
+                }
+              >
+                <InputSlider
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={topP}
+                  inputVariant={'whiteOutline'}
+                  isDisabled={topP === undefined}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatTopP, e);
+                    setRefresh(!refresh);
+                  }}
+                />
+              </SettingRow>
+            )}
+            {showStopSign && supportParams.stop && (
+              <SettingRow
+                label={t('app:stop_sign')}
+                switchControl={
+                  <Switch
+                    isChecked={stopSign !== undefined}
+                    onChange={(e) => {
+                      setValue(NodeInputKeyEnum.aiChatStopSign, e.target.checked ? '' : undefined);
+                    }}
+                  />
+                }
+              >
+                <Input
+                  isDisabled={stopSign === undefined}
+                  h={'36px'}
+                  {...register(NodeInputKeyEnum.aiChatStopSign)}
+                  placeholder={t('app:stop_sign_placeholder')}
+                />
+              </SettingRow>
+            )}
+            {showResponseFormat && supportParams.responseFormat && (
+              <SettingRow
+                label={t('app:response_format')}
+                switchControl={
+                  <Switch
+                    isChecked={responseFormat !== undefined}
+                    onChange={(e) => {
+                      setValue(
+                        NodeInputKeyEnum.aiChatResponseFormat,
+                        e.target.checked ? selectedModel?.config.responseFormatList?.[0] : undefined
+                      );
+                    }}
+                  />
+                }
+              >
+                <MySelect<string>
+                  isDisabled={responseFormat === undefined}
+                  placeholder={t('app:response_format_placeholder')}
+                  h={'36px'}
+                  list={(selectedModel?.config.responseFormatList ?? []).map((item) => ({
+                    value: item,
+                    label: item
+                  }))}
+                  value={responseFormat}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatResponseFormat, e);
+                  }}
+                />
+              </SettingRow>
+            )}
+            {showResponseFormat && responseFormat === 'json_schema' && (
+              <Box w="full" pt={2}>
+                <HStack spacing={1} fontSize="sm" color="myGray.900" fontWeight={500} mb={2}>
+                  <Box>JSON Schema</Box>
+                  <QuestionTip label={t('app:json_schema_tip')} />
+                </HStack>
+                <JsonEditor
+                  value={jsonSchema || ''}
+                  onChange={(e) => {
+                    setValue(NodeInputKeyEnum.aiChatJsonSchema, e);
+                  }}
+                  bg={'myGray.25'}
+                />
+              </Box>
+            )}
+          </SectionCard>
+        )}
+      </VStack>
     </MyModal>
   );
 };

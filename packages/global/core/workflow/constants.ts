@@ -1,14 +1,14 @@
+import { i18nT } from '../../common/i18n/utils';
+import type { JsonSchemaPropertiesItemType } from '../app/jsonschema';
+
 export enum FlowNodeTemplateTypeEnum {
   systemInput = 'systemInput',
   ai = 'ai',
-  function = 'function',
+  interactive = 'interactive',
   tools = 'tools',
-
-  search = 'search',
-  multimodal = 'multimodal',
-  communication = 'communication',
-
   other = 'other',
+
+  // Team app type
   teamApp = 'teamApp'
 }
 
@@ -17,10 +17,12 @@ export enum WorkflowIOValueTypeEnum {
   number = 'number',
   boolean = 'boolean',
   object = 'object',
+
   arrayString = 'arrayString',
   arrayNumber = 'arrayNumber',
   arrayBoolean = 'arrayBoolean',
   arrayObject = 'arrayObject',
+  arrayAny = 'arrayAny',
   any = 'any',
 
   chatHistory = 'chatHistory',
@@ -29,14 +31,90 @@ export enum WorkflowIOValueTypeEnum {
   dynamic = 'dynamic',
 
   // plugin special type
-  selectApp = 'selectApp',
-  selectDataset = 'selectDataset'
+  selectDataset = 'selectDataset',
+
+  // abandon
+  selectApp = 'selectApp'
 }
+
+export const toolValueTypeList: {
+  label: string;
+  value: WorkflowIOValueTypeEnum;
+  jsonSchema: JsonSchemaPropertiesItemType;
+}[] = [
+  {
+    label: WorkflowIOValueTypeEnum.string,
+    value: WorkflowIOValueTypeEnum.string,
+    jsonSchema: {
+      type: 'string'
+    }
+  },
+  {
+    label: WorkflowIOValueTypeEnum.number,
+    value: WorkflowIOValueTypeEnum.number,
+    jsonSchema: {
+      type: 'number'
+    }
+  },
+  {
+    label: WorkflowIOValueTypeEnum.boolean,
+    value: WorkflowIOValueTypeEnum.boolean,
+    jsonSchema: {
+      type: 'boolean'
+    }
+  },
+  {
+    label: 'array<string>',
+    value: WorkflowIOValueTypeEnum.arrayString,
+    jsonSchema: {
+      type: 'array',
+      items: {
+        type: 'string'
+      }
+    }
+  },
+  {
+    label: 'array<number>',
+    value: WorkflowIOValueTypeEnum.arrayNumber,
+    jsonSchema: {
+      type: 'array',
+      items: {
+        type: 'number'
+      }
+    }
+  },
+  {
+    label: 'array<boolean>',
+    value: WorkflowIOValueTypeEnum.arrayBoolean,
+    jsonSchema: {
+      type: 'array',
+      items: {
+        type: 'boolean'
+      }
+    }
+  },
+  {
+    label: 'object',
+    value: WorkflowIOValueTypeEnum.object,
+    jsonSchema: {
+      type: 'object'
+    }
+  }
+];
+export const valueTypeJsonSchemaMap: Record<string, JsonSchemaPropertiesItemType> =
+  toolValueTypeList.reduce(
+    (acc, item) => {
+      acc[item.value] = item.jsonSchema;
+      return acc;
+    },
+    {} as Record<string, JsonSchemaPropertiesItemType>
+  );
 
 /* reg: modulename key */
 export enum NodeInputKeyEnum {
   // old
   welcomeText = 'welcomeText',
+  welcomeQuestions = 'welcomeQuestions',
   switch = 'switch', // a trigger switch
   history = 'history',
   answerText = 'text',
@@ -48,6 +126,11 @@ export enum NodeInputKeyEnum {
   variables = 'variables',
   scheduleTrigger = 'scheduleTrigger',
   chatInputGuide = 'chatInputGuide',
+  autoExecute = 'autoExecute',
+  entryPoints = 'entryPoints',
+
+  // plugin config
+  instruction = 'instruction',
 
   // entry
   userChatInput = 'userChatInput',
@@ -57,12 +140,17 @@ export enum NodeInputKeyEnum {
 
   // latest
   // common
+  aiModelId = 'modelId',
+  /** @deprecated */
   aiModel = 'model',
   aiSystemPrompt = 'systemPrompt',
   description = 'description',
   anyInput = 'system_anyInput',
   textareaInput = 'system_textareaInput',
   addInputParam = 'system_addInputParam',
+  forbidStream = 'system_forbid_stream',
+  headerSecret = 'system_header_secret',
+  systemInputConfig = 'system_input_config',
 
   // history
   historyMaxAmount = 'maxContext',
@@ -72,19 +160,58 @@ export enum NodeInputKeyEnum {
   aiChatMaxToken = 'maxToken',
   aiChatSettingModal = 'aiSettings',
   aiChatIsResponseText = 'isResponseAnswerText',
+  aiChatQuoteRole = 'aiChatQuoteRole',
   aiChatQuoteTemplate = 'quoteTemplate',
   aiChatQuotePrompt = 'quotePrompt',
   aiChatDatasetQuote = 'quoteQA',
+  aiChatVision = 'aiChatVision',
+  aiChatAudio = 'aiChatAudio',
+  aiChatVideo = 'aiChatVideo',
+  aiChatExtractFiles = 'aiChatExtractFiles',
+  stringQuoteText = 'stringQuoteText',
+  aiChatReasoning = 'aiChatReasoning',
+  aiChatReasoningEffort = 'aiChatReasoningEffort',
+  aiChatTopP = 'aiChatTopP',
+  aiChatStopSign = 'aiChatStopSign',
+  aiChatResponseFormat = 'aiChatResponseFormat',
+  aiChatJsonSchema = 'aiChatJsonSchema',
+
+  // agent
+  selectedTools = 'agent_selectedTools',
+  datasetParams = 'agent_datasetParams',
+  skills = 'skills',
+  useAgentSandbox = 'useAgentSandbox',
+  sandboxEntrypoint = 'sandboxEntrypoint',
+  editSkillId = 'editSkillId',
 
   // dataset
   datasetSelectList = 'datasets',
   datasetSimilarity = 'similarity',
   datasetMaxTokens = 'limit',
   datasetSearchMode = 'searchMode',
+  datasetSearchEmbeddingWeight = 'embeddingWeight',
+
   datasetSearchUsingReRank = 'usingReRank',
+  datasetSearchRerankWeight = 'rerankWeight',
+  datasetSearchRerankModelId = 'rerankModelId',
+  /** @deprecated */
+  datasetSearchRerankModel = 'rerankModel',
+
   datasetSearchUsingExtensionQuery = 'datasetSearchUsingExtensionQuery',
+  datasetSearchExtensionModelId = 'datasetSearchExtensionModelId',
+  /** @deprecated */
   datasetSearchExtensionModel = 'datasetSearchExtensionModel',
   datasetSearchExtensionBg = 'datasetSearchExtensionBg',
+  datasetSearchInput = 'datasetSearchInput',
+  collectionFilterVersion = 'collectionFilterVersion',
+  collectionFilterMatch = 'collectionFilterMatch',
+  authTmbId = 'authTmbId',
+  datasetDeepSearch = 'datasetDeepSearch',
+  datasetDeepSearchModelId = 'datasetDeepSearchModelId',
+  /** @deprecated */
+  datasetDeepSearchModel = 'datasetDeepSearchModel',
+  datasetDeepSearchMaxTimes = 'datasetDeepSearchMaxTimes',
+  datasetDeepSearchBg = 'datasetDeepSearchBg',
 
   // concat dataset
   datasetQuoteList = 'system_datasetQuoteList',
@@ -99,6 +226,9 @@ export enum NodeInputKeyEnum {
   httpMethod = 'system_httpMethod',
   httpParams = 'system_httpParams',
   httpJsonBody = 'system_httpJsonBody',
+  httpFormBody = 'system_httpFormBody',
+  httpContentType = 'system_httpContentType',
+  httpTimeout = 'system_httpTimeout',
   abandon_httpUrl = 'url',
 
   // app
@@ -117,20 +247,64 @@ export enum NodeInputKeyEnum {
 
   // code
   code = 'code',
-  codeType = 'codeType' // js|py
+  codeType = 'codeType', // js|py
+
+  // read files
+  fileUrlList = 'fileUrlList',
+
+  // user select
+  userSelectOptions = 'userSelectOptions',
+
+  // nested container (loop / parallelRun)
+  nestedInputArray = 'loopInputArray',
+  childrenNodeIdList = 'childrenNodeIdList',
+  nodeWidth = 'nodeWidth',
+  nodeHeight = 'nodeHeight',
+  nestedNodeInputHeight = 'loopNodeInputHeight',
+  // nested start
+  nestedStartInput = 'loopStartInput',
+  nestedStartIndex = 'loopStartIndex',
+  // nested end
+  nestedEndInput = 'loopEndInput',
+  // parallel run
+  parallelRunMaxConcurrency = 'parallelRunMaxConcurrency',
+  parallelRunMaxRetryTimes = 'parallelRunMaxRetryTimes',
+
+  // loopRun
+  loopRunMode = 'loopRunMode',
+  loopRunInputArray = 'loopRunInputArray',
+  loopCustomOutputs = 'loopCustomOutputs',
+
+  // form input
+  userInputForms = 'userInputForms',
+
+  // comment
+  commentText = 'commentText',
+  commentSize = 'commentSize',
+
+  // Tool
+  toolData = 'system_toolData',
+  toolSetData = 'system_toolSetData'
 }
 
 export enum NodeOutputKeyEnum {
   // common
   userChatInput = 'userChatInput',
   history = 'history',
-  answerText = 'answerText', // module answer. the value will be show and save to history
+  answerText = 'answerText', // node answer. the value will be show and save to history
+  reasoningText = 'reasoningText', // node reasoning. the value will be show but not save to history
   success = 'success',
   failed = 'failed',
-  error = 'error',
   text = 'system_text',
   addOutputParam = 'system_addOutputParam',
   rawResponse = 'system_rawResponse',
+
+  systemError = 'system_error',
+  errorText = 'system_error_text',
+  error = 'error',
+
+  // start
+  userFiles = 'userFiles',
 
   // dataset
   datasetQuoteQA = 'quoteQA',
@@ -149,48 +323,224 @@ export enum NodeOutputKeyEnum {
 
   // http
   httpRawResponse = 'httpRawResponse',
+  httpRawError = 'system_httpRawError',
 
   // plugin
   pluginStart = 'pluginStart',
 
-  ifElseResult = 'ifElseResult'
+  // if else
+  ifElseResult = 'ifElseResult',
+
+  //user select
+  selectResult = 'selectResult',
+
+  // nested container result (loop)
+  nestedArrayResult = 'loopArray',
+  // nested start
+  nestedStartInput = 'loopStartInput',
+  nestedStartIndex = 'loopStartIndex',
+
+  // parallel run outputs
+  parallelSuccessResults = 'parallelSuccessResults',
+  parallelFullResults = 'parallelFullResults',
+  parallelStatus = 'parallelStatus',
+
+  // loopRunStart dynamic outputs
+  currentIndex = 'currentIndex',
+  currentItem = 'currentItem',
+  currentIteration = 'currentIteration',
+
+  // form input
+  formInputResult = 'formInputResult',
+
+  // File
+  fileTitle = 'fileTitle'
+}
+
+export enum ParallelRunStatusEnum {
+  success = 'success',
+  partial_success = 'partial_success',
+  failed = 'failed'
 }
 
 export enum VariableInputEnum {
   input = 'input',
   textarea = 'textarea',
+  numberInput = 'numberInput',
   select = 'select',
-  custom = 'custom'
+  multipleSelect = 'multipleSelect',
+  timePointSelect = 'timePointSelect',
+  timeRangeSelect = 'timeRangeSelect',
+  switch = 'switch',
+  password = 'password',
+  file = 'file',
+
+  llmSelect = 'llmSelect',
+  datasetSelect = 'datasetSelect',
+
+  custom = 'custom',
+  internal = 'internal'
 }
-export const variableMap = {
-  [VariableInputEnum.input]: {
-    icon: 'core/app/variable/input',
-    title: 'core.module.variable.input type',
-    desc: ''
-  },
+
+type VariableConfigType = {
+  icon: string;
+  label: string;
+  value: VariableInputEnum;
+  defaultValueType: WorkflowIOValueTypeEnum;
+  description?: string;
+};
+
+export const textInputVariableValueTypes: WorkflowIOValueTypeEnum[] = [
+  WorkflowIOValueTypeEnum.string,
+  WorkflowIOValueTypeEnum.object,
+  WorkflowIOValueTypeEnum.arrayString,
+  WorkflowIOValueTypeEnum.arrayNumber,
+  WorkflowIOValueTypeEnum.arrayBoolean,
+  WorkflowIOValueTypeEnum.arrayObject
+];
+
+export const variableConfigs: VariableConfigType[][] = [
+  [
+    {
+      icon: 'core/workflow/inputType/input',
+      label: i18nT('common:core.workflow.inputType.textInput'),
+      value: VariableInputEnum.input,
+      defaultValueType: WorkflowIOValueTypeEnum.string
+    },
+    {
+      icon: 'core/workflow/inputType/password',
+      label: i18nT('common:core.workflow.inputType.password'),
+      value: VariableInputEnum.password,
+      defaultValueType: WorkflowIOValueTypeEnum.string
+    },
+    {
+      icon: 'core/workflow/inputType/numberInput',
+      label: i18nT('common:core.workflow.inputType.number input'),
+      value: VariableInputEnum.numberInput,
+      defaultValueType: WorkflowIOValueTypeEnum.number
+    },
+    {
+      icon: 'core/workflow/inputType/option',
+      label: i18nT('common:core.workflow.inputType.select'),
+      value: VariableInputEnum.select,
+      defaultValueType: WorkflowIOValueTypeEnum.string
+    },
+    {
+      icon: 'core/workflow/inputType/multipleSelect',
+      label: i18nT('common:core.workflow.inputType.multipleSelect'),
+      value: VariableInputEnum.multipleSelect,
+      defaultValueType: WorkflowIOValueTypeEnum.arrayString
+    },
+    {
+      icon: 'core/workflow/inputType/switch',
+      label: i18nT('common:core.workflow.inputType.switch'),
+      value: VariableInputEnum.switch,
+      defaultValueType: WorkflowIOValueTypeEnum.boolean
+    },
+    {
+      icon: 'core/workflow/inputType/timePointSelect',
+      label: i18nT('common:core.workflow.inputType.timePointSelect'),
+      value: VariableInputEnum.timePointSelect,
+      defaultValueType: WorkflowIOValueTypeEnum.string
+    },
+    {
+      icon: 'core/workflow/inputType/timeRangeSelect',
+      label: i18nT('common:core.workflow.inputType.timeRangeSelect'),
+      value: VariableInputEnum.timeRangeSelect,
+      defaultValueType: WorkflowIOValueTypeEnum.arrayString
+    }
+  ],
+  [
+    {
+      icon: 'core/workflow/inputType/model',
+      label: i18nT('common:core.workflow.inputType.modelSelect'),
+      value: VariableInputEnum.llmSelect,
+      defaultValueType: WorkflowIOValueTypeEnum.string
+    },
+    {
+      icon: 'core/workflow/inputType/file',
+      label: i18nT('common:core.workflow.inputType.file'),
+      value: VariableInputEnum.file,
+      defaultValueType: WorkflowIOValueTypeEnum.arrayString
+    }
+  ],
+  [
+    {
+      icon: 'core/workflow/inputType/external',
+      label: i18nT('common:core.workflow.inputType.custom'),
+      value: VariableInputEnum.custom,
+      defaultValueType: WorkflowIOValueTypeEnum.string,
+      description: i18nT('app:variable.select type_desc')
+    },
+    {
+      icon: 'core/workflow/inputType/internal',
+      label: i18nT('common:core.workflow.inputType.internal'),
+      value: VariableInputEnum.internal,
+      defaultValueType: WorkflowIOValueTypeEnum.string,
+      description: i18nT('app:variable.internal_type_desc')
+    }
+  ]
+];
+
+export const variableMap: Record<VariableInputEnum, VariableConfigType> = {
+  ...variableConfigs
+    .flat()
+    .reduce(
+      (acc, config) => ({ ...acc, [config.value]: config }),
+      {} as Record<VariableInputEnum, VariableConfigType>
+    ),
   [VariableInputEnum.textarea]: {
-    icon: 'core/app/variable/textarea',
-    title: 'core.module.variable.textarea type',
-    desc: '允许用户最多输入4000字的对话框。'
-  },
-  [VariableInputEnum.select]: {
-    icon: 'core/app/variable/select',
-    title: 'core.module.variable.select type',
-    desc: ''
-  },
-  [VariableInputEnum.custom]: {
-    icon: 'core/app/variable/external',
-    title: 'core.module.variable.Custom type',
-    desc: '可以定义一个无需用户填写的全局变量。\n该变量的值可以来自于 API 接口，分享链接的 Query 或通过【变量更新】模块进行赋值。'
+    icon: 'core/workflow/inputType/textarea',
+    label: i18nT('common:core.workflow.inputType.textarea'),
+    value: VariableInputEnum.textarea,
+    defaultValueType: WorkflowIOValueTypeEnum.string,
+    description: i18nT('app:variable.textarea_type_desc')
   }
 };
 
-/* run time */
-export enum RuntimeEdgeStatusEnum {
-  'waiting' = 'waiting',
-  'active' = 'active',
-  'skipped' = 'skipped'
-}
+// Keep backward compatibility
+export const variableMapGroups = variableConfigs;
 
 export const VARIABLE_NODE_ID = 'VARIABLE_NODE_ID';
 export const DYNAMIC_INPUT_REFERENCE_KEY = 'DYNAMIC_INPUT_REFERENCE_KEY';
+
+// http node body content type
+export enum ContentTypes {
+  none = 'none',
+  formData = 'form-data',
+  xWwwFormUrlencoded = 'x-www-form-urlencoded',
+  json = 'json',
+  xml = 'xml',
+  raw = 'raw-text'
+}
+
+export const contentTypeMap = {
+  [ContentTypes.none]: '',
+  [ContentTypes.formData]: '',
+  [ContentTypes.xWwwFormUrlencoded]: 'application/x-www-form-urlencoded',
+  [ContentTypes.json]: 'application/json',
+  [ContentTypes.xml]: 'application/xml',
+  [ContentTypes.raw]: 'text/plain'
+};
+
+// http request methods
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+export const ArrayTypeMap: Record<WorkflowIOValueTypeEnum, WorkflowIOValueTypeEnum> = {
+  [WorkflowIOValueTypeEnum.string]: WorkflowIOValueTypeEnum.arrayString,
+  [WorkflowIOValueTypeEnum.number]: WorkflowIOValueTypeEnum.arrayNumber,
+  [WorkflowIOValueTypeEnum.boolean]: WorkflowIOValueTypeEnum.arrayBoolean,
+  [WorkflowIOValueTypeEnum.object]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.arrayString]: WorkflowIOValueTypeEnum.arrayString,
+  [WorkflowIOValueTypeEnum.arrayNumber]: WorkflowIOValueTypeEnum.arrayNumber,
+  [WorkflowIOValueTypeEnum.arrayBoolean]: WorkflowIOValueTypeEnum.arrayBoolean,
+  [WorkflowIOValueTypeEnum.arrayObject]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.chatHistory]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.datasetQuote]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.dynamic]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.selectDataset]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.selectApp]: WorkflowIOValueTypeEnum.arrayObject,
+  [WorkflowIOValueTypeEnum.arrayAny]: WorkflowIOValueTypeEnum.arrayAny,
+  [WorkflowIOValueTypeEnum.any]: WorkflowIOValueTypeEnum.arrayAny
+};

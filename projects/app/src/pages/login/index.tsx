@@ -1,134 +1,85 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Center, Flex, useDisclosure } from '@chakra-ui/react';
-import { LoginPageTypeEnum } from '@/web/support/user/login/constants';
-import { useSystemStore } from '@/web/common/system/useSystemStore';
-import type { ResLogin } from '@/global/support/api/userRes.d';
+import React, { useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { useUserStore } from '@/web/support/user/useUserStore';
-import { useChatStore } from '@/web/core/chat/context/storeChat';
-import LoginForm from './components/LoginForm/LoginForm';
-import dynamic from 'next/dynamic';
-import { serviceSideProps } from '@/web/common/utils/i18n';
-import { clearToken, setToken } from '@/web/support/user/auth';
-import Script from 'next/script';
-import Loading from '@fastgpt/web/components/common/MyLoading';
+import { serviceSideProps } from '@/web/common/i18n/utils';
+import { clearToken } from '@/web/support/user/auth';
 import { useMount } from 'ahooks';
-
-const RegisterForm = dynamic(() => import('./components/RegisterForm'));
-const ForgetPasswordForm = dynamic(() => import('./components/ForgetPasswordForm'));
-const WechatForm = dynamic(() => import('./components/LoginForm/WechatForm'));
-const CommunityModal = dynamic(() => import('@/components/CommunityModal'));
+import LoginModal from '@/pageComponents/login/LoginModal';
+import { postAcceptInvitationLink } from '@/web/support/user/team/api';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import { useTranslation } from 'next-i18next';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { subRoute } from '@fastgpt/web/common/system/utils';
+import { validateRedirectUrl } from '@/web/common/utils/uri';
+import type { LoginSuccessResponseType } from '@fastgpt/global/openapi/support/user/account/login/api';
+import { useLoginRedirectAfterLogin } from '@/web/support/user/loginRedirect';
+import { resetUserModelCatalogAfterLogin } from '@/web/core/ai/model/useUserModelStore';
 
 const Login = () => {
   const router = useRouter();
-  const { lastRoute = '' } = router.query as { lastRoute: string };
-  const { feConfigs } = useSystemStore();
-  const [pageType, setPageType] = useState<`${LoginPageTypeEnum}`>();
+  const { lastRoute = '', lastTmbId = '' } = router.query as {
+    lastRoute: string;
+    lastTmbId?: string;
+  };
+  const { t } = useTranslation();
+  const { toast } = useToast();
   const { setUserInfo } = useUserStore();
-  const { setLastChatId, setLastChatAppId } = useChatStore();
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const resolveLoginRedirect = useLoginRedirectAfterLogin();
 
   const loginSuccess = useCallback(
-    (res: ResLogin) => {
-      // init store
-      setLastChatId('');
-      setLastChatAppId('');
+    async (res: LoginSuccessResponseType) => {
+      const decodeLastRoute = validateRedirectUrl(lastRoute);
 
+      const navigateTo = await (async () => {
+        if (res.user.team.status !== 'active') {
+          if (decodeLastRoute.includes('/account/team?invitelinkid=')) {
+            const id = decodeLastRoute.split('invitelinkid=')[1];
+            await postAcceptInvitationLink(id);
+            return '/dashboard/agent';
+          } else {
+            toast({
+              status: 'warning',
+              title: t('common:not_active_team')
+            });
+          }
+        }
+        if (decodeLastRoute.startsWith(`${subRoute}/config`)) {
+          return '/dashboard/agent';
+        }
+
+        return decodeLastRoute;
+      })();
+
+      const targetRoute = navigateTo
+        ? await resolveLoginRedirect({
+            user: res.user,
+            fallbackRoute: navigateTo,
+            lastTmbId
+          })
+        : undefined;
+
+      resetUserModelCatalogAfterLogin();
       setUserInfo(res.user);
-      setToken(res.token);
-      setTimeout(() => {
-        router.push(lastRoute ? decodeURIComponent(lastRoute) : '/app/list');
-      }, 300);
+
+      if (targetRoute) {
+        router.replace(targetRoute);
+      }
     },
-    [lastRoute, router, setLastChatId, setLastChatAppId, setUserInfo]
+    [lastRoute, lastTmbId, resolveLoginRedirect, router, setUserInfo, t, toast]
   );
-
-  function DynamicComponent({ type }: { type: `${LoginPageTypeEnum}` }) {
-    const TypeMap = {
-      [LoginPageTypeEnum.passwordLogin]: LoginForm,
-      [LoginPageTypeEnum.register]: RegisterForm,
-      [LoginPageTypeEnum.forgetPassword]: ForgetPasswordForm,
-      [LoginPageTypeEnum.wechat]: WechatForm
-    };
-
-    const Component = TypeMap[type];
-
-    return <Component setPageType={setPageType} loginSuccess={loginSuccess} />;
-  }
-
-  /* default login type */
-  useEffect(() => {
-    setPageType(
-      feConfigs?.oauth?.wechat ? LoginPageTypeEnum.wechat : LoginPageTypeEnum.passwordLogin
-    );
-  }, [feConfigs.oauth]);
 
   useMount(() => {
     clearToken();
-    router.prefetch('/app/list');
+    router.prefetch('/dashboard/agent');
   });
 
-  return (
-    <>
-      {feConfigs.googleClientVerKey && (
-        <Script
-          src={`https://www.recaptcha.net/recaptcha/api.js?render=${feConfigs.googleClientVerKey}`}
-        ></Script>
-      )}
-      <Flex
-        alignItems={'center'}
-        justifyContent={'center'}
-        bg={`url('/icon/login-bg.svg') no-repeat`}
-        backgroundSize={'cover'}
-        userSelect={'none'}
-        h={'100%'}
-        px={[0, '10vw']}
-      >
-        <Flex
-          flexDirection={'column'}
-          w={['100%', 'auto']}
-          h={['100%', '700px']}
-          maxH={['100%', '90vh']}
-          bg={'white'}
-          px={['5vw', '88px']}
-          py={'5vh'}
-          borderRadius={[0, '24px']}
-          boxShadow={[
-            '',
-            '0px 0px 1px 0px rgba(19, 51, 107, 0.20), 0px 32px 64px -12px rgba(19, 51, 107, 0.20)'
-          ]}
-        >
-          <Box w={['100%', '380px']} flex={'1 0 0'}>
-            {pageType ? (
-              <DynamicComponent type={pageType} />
-            ) : (
-              <Center w={'full'} h={'full'} position={'relative'}>
-                <Loading fixed={false} />
-              </Center>
-            )}
-          </Box>
-          {feConfigs?.concatMd && (
-            <Box
-              mt={8}
-              color={'primary.700'}
-              cursor={'pointer'}
-              textAlign={'center'}
-              onClick={onOpen}
-            >
-              无法登录，点击联系
-            </Box>
-          )}
-        </Flex>
-
-        {isOpen && <CommunityModal onClose={onClose} />}
-      </Flex>
-    </>
-  );
+  return <LoginModal onSuccess={loginSuccess} />;
 };
 
 export async function getServerSideProps(context: any) {
   return {
-    props: { ...(await serviceSideProps(context, ['app'])) }
+    props: {
+      ...(await serviceSideProps(context, ['app', 'user', 'login']))
+    }
   };
 }
 

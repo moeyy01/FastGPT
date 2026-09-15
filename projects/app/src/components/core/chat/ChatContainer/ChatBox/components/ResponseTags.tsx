@@ -1,274 +1,319 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { type ChatHistoryItemResType } from '@fastgpt/global/core/chat/type.d';
-import { DispatchNodeResponseType } from '@fastgpt/global/core/workflow/runtime/type.d';
-import { Flex, useDisclosure, Box, Collapse } from '@chakra-ui/react';
+import React, { useMemo, useState } from 'react';
+import { Flex, useDisclosure, Box } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
-import type { SearchDataResponseItemType } from '@fastgpt/global/core/dataset/type';
+import type { ToolCiteLinksType } from '@fastgpt/global/core/chat/type';
+import type { SearchDataResponseQuoteListItemType } from '@fastgpt/global/core/dataset/type';
 import dynamic from 'next/dynamic';
 import MyTag from '@fastgpt/web/components/common/Tag/index';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
-import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
 import { getSourceNameIcon } from '@fastgpt/global/core/dataset/utils';
-import ChatBoxDivider from '@/components/core/chat/Divider';
-import { strIsLink } from '@fastgpt/global/common/string/tools';
 import MyIcon from '@fastgpt/web/components/common/Icon';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import type { ChatSiteItemType } from '../type';
+import { addStatisticalDataToHistoryItem } from '@/global/core/chat/utils';
 import { useSize } from 'ahooks';
+import { useContextSelector } from 'use-context-selector';
+import { ChatBoxContext } from '../Provider';
+import { ChatItemContext } from '@/web/core/chat/context/chatItemContext';
 
-const QuoteModal = dynamic(() => import('./QuoteModal'));
-const ContextModal = dynamic(() => import('./ContextModal'));
+export type CitationRenderItem = {
+  type: 'dataset' | 'link';
+  key: string;
+  displayText: string;
+  icon?: string;
+  onClick: () => any;
+};
+
 const WholeResponseModal = dynamic(() => import('../../../components/WholeResponseModal'));
 
-const isLLMNode = (item: ChatHistoryItemResType) =>
-  item.moduleType === FlowNodeTypeEnum.chatNode || item.moduleType === FlowNodeTypeEnum.tools;
+const CitationListCard = React.memo(function CitationListCard({
+  items,
+  onOpenAll
+}: {
+  items: CitationRenderItem[];
+  onOpenAll: () => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const cardContentRef = React.useRef<HTMLDivElement>(null);
+  const cardContentSize = useSize(cardContentRef);
+  const collapsedMaxHeight = 80;
+  const isOverflow = (cardContentSize?.height || 0) > collapsedMaxHeight;
+
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      <Box
+        display={['none', 'block']}
+        mt={3}
+        w={'100%'}
+        border={'1px solid'}
+        borderColor={'myGray.200'}
+        borderRadius={'12px'}
+        bg={'white'}
+        overflow={'hidden'}
+        _hover={{
+          background: 'linear-gradient(0deg, #FFF 56.25%, #F7F8FA 100%)'
+        }}
+      >
+        <Box
+          position={'relative'}
+          maxH={!expanded && isOverflow ? `${collapsedMaxHeight}px` : 'none'}
+          overflow={'hidden'}
+          p={'8px'}
+        >
+          <Box ref={cardContentRef}>
+            <Flex h={'28px'} alignItems={'center'} justifyContent={'space-between'} px={'8px'}>
+              <MyTooltip label={t('chat:view_citations')}>
+                <Flex
+                  alignItems={'center'}
+                  gap={'6px'}
+                  color={'myGray.600'}
+                  fontSize={'14px'}
+                  lineHeight={'20px'}
+                  fontWeight={500}
+                  cursor={'pointer'}
+                  _hover={{
+                    color: 'primary.600',
+                    '.citation-count': {
+                      color: 'primary.600'
+                    },
+                    '.citation-arrow': {
+                      color: 'primary.600'
+                    }
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenAll();
+                  }}
+                >
+                  <Box>
+                    {t('chat:citation_card_prefix')}
+                    <Box as={'span'} className="citation-count" color={'myGray.900'}>
+                      {items.length}
+                    </Box>
+                    {t('chat:citation_card_suffix')}
+                  </Box>
+                  <MyIcon
+                    className="citation-arrow"
+                    name={'common/arrowRight'}
+                    w={'14px'}
+                    color={'myGray.400'}
+                    transform={'rotate(-45deg)'}
+                  />
+                </Flex>
+              </MyTooltip>
+
+              {isOverflow && (
+                <MyIcon
+                  name={expanded ? 'core/chat/chevronUp' : 'core/chat/chevronDown'}
+                  w={'16px'}
+                  color={'myGray.500'}
+                  cursor={'pointer'}
+                  _hover={{ color: 'primary.600' }}
+                  onClick={() => setExpanded((state) => !state)}
+                />
+              )}
+            </Flex>
+
+            <Flex mt={'4px'} flexWrap={'wrap'} gap={'4px'}>
+              {items.map((item) => (
+                <MyTooltip key={item.key} label={t('common:core.chat.quote.Read Quote')}>
+                  <Flex
+                    alignItems={'center'}
+                    minW={0}
+                    w={'max-content'}
+                    maxW={'100%'}
+                    px={'8px'}
+                    py={'6px'}
+                    borderRadius={'8px'}
+                    bg={'myGray.50'}
+                    color={'myGray.900'}
+                    fontSize={'14px'}
+                    lineHeight={'20px'}
+                    cursor={'pointer'}
+                    _hover={{ bg: 'myGray.100' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      item.onClick?.();
+                    }}
+                  >
+                    <MyIcon name={item.icon as any} mr={2} flexShrink={0} w={'14px'} />
+                    <Box className={'textEllipsis'} minW={0}>
+                      {item.displayText}
+                    </Box>
+                  </Flex>
+                </MyTooltip>
+              ))}
+            </Flex>
+          </Box>
+
+          {!expanded && isOverflow && (
+            <Box
+              position={'absolute'}
+              left={0}
+              right={0}
+              bottom={0}
+              h={'32px'}
+              zIndex={1}
+              bgGradient={'linear(to-b, rgba(255,255,255,0), rgba(255,255,255,1.0))'}
+              pointerEvents={'none'}
+            />
+          )}
+        </Box>
+      </Box>
+
+      <Flex
+        display={['inline-flex', 'none']}
+        mt={3}
+        alignItems={'center'}
+        gap={'4px'}
+        color={'primary.600'}
+        fontSize={'14px'}
+        lineHeight={'20px'}
+        fontWeight={500}
+        cursor={'pointer'}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenAll();
+        }}
+      >
+        <MyIcon name={'common/link'} w={'16px'} h={'16px'} color={'primary.600'} />
+        <Box>{t('chat:citation_card_title', { num: items.length })}</Box>
+      </Flex>
+    </>
+  );
+});
 
 const ResponseTags = ({
-  flowResponses = [],
-  showDetail
+  showTags,
+  historyItem,
+  onOpenCiteModal,
+  showFooterMeta = true
 }: {
-  flowResponses?: ChatHistoryItemResType[];
-  showDetail: boolean;
+  showTags: boolean;
+  historyItem: ChatSiteItemType;
+  onOpenCiteModal: (e?: {
+    collectionId?: string;
+    sourceId?: string;
+    sourceName?: string;
+    datasetId?: string;
+    quoteId?: string;
+  }) => void;
+  showFooterMeta?: boolean;
 }) => {
   const { isPc } = useSystem();
   const { t } = useTranslation();
-  const quoteListRef = React.useRef<HTMLDivElement>(null);
-  const [quoteModalData, setQuoteModalData] = useState<{
-    rawSearch: SearchDataResponseItemType[];
-    metadata?: {
-      collectionId: string;
-      sourceId?: string;
-      sourceName: string;
+  const dataId = historyItem.dataId;
+
+  const durationSeconds = historyItem.durationSeconds || 0;
+  const isShowCite = useContextSelector(ChatItemContext, (v) => v.isShowCite);
+  const showWholeResponse = useContextSelector(ChatItemContext, (v) => v.showWholeResponse ?? true);
+  const responseTags = useMemo(() => {
+    return {
+      ...addStatisticalDataToHistoryItem(historyItem),
+      ...(!isShowCite
+        ? {
+            totalQuoteList: []
+          }
+        : {})
     };
-  }>();
-  const [quoteFolded, setQuoteFolded] = useState<boolean>(true);
-  const [contextModalData, setContextModalData] =
-    useState<DispatchNodeResponseType['historyPreview']>();
+  }, [historyItem, isShowCite]);
+  const chatType = useContextSelector(ChatBoxContext, (v) => v.chatType);
+
+  const notSharePage = useMemo(() => chatType !== 'share', [chatType]);
+
   const {
     isOpen: isOpenWholeModal,
     onOpen: onOpenWholeModal,
     onClose: onCloseWholeModal
   } = useDisclosure();
 
-  const quoteListSize = useSize(quoteListRef);
-  const quoteIsOverflow = quoteListRef.current
-    ? quoteListRef.current.scrollHeight > (isPc ? 50 : 55)
-    : true;
+  const citationRenderList: CitationRenderItem[] = useMemo(() => {
+    if (!isShowCite) return [];
+    const quoteList: SearchDataResponseQuoteListItemType[] = responseTags.totalQuoteList ?? [];
+    const toolCiteLinks: ToolCiteLinksType[] = responseTags.toolCiteLinks ?? [];
 
-  const {
-    llmModuleAccount,
-    quoteList = [],
-    sourceList = [],
-    historyPreview = [],
-    runningTime = 0
-  } = useMemo(() => {
-    const flatResponse = flowResponses
-      .map((item) => {
-        if (item.pluginDetail || item.toolDetail) {
-          return [item, ...(item.pluginDetail || []), ...(item.toolDetail || [])];
-        }
-        return item;
-      })
-      .flat();
-
-    const chatData = flatResponse.find(isLLMNode);
-    const quoteList = flatResponse
-      .filter((item) => item.moduleType === FlowNodeTypeEnum.datasetSearchNode)
-      .map((item) => item.quoteList)
-      .flat()
-      .filter(Boolean) as SearchDataResponseItemType[];
-
-    const sourceList = quoteList.reduce(
-      (acc: Record<string, SearchDataResponseItemType[]>, cur) => {
+    // Dataset citations
+    const datasetItems = Object.values(
+      quoteList.reduce((acc: Record<string, SearchDataResponseQuoteListItemType[]>, cur) => {
         if (!acc[cur.collectionId]) {
           acc[cur.collectionId] = [cur];
         }
         return acc;
-      },
-      {}
-    );
-    return {
-      llmModuleAccount: flatResponse.filter(isLLMNode).length,
-      quoteList,
-      sourceList: Object.values(sourceList)
-        .flat()
-        .map((item) => ({
-          sourceName: item.sourceName,
-          sourceId: item.sourceId,
-          icon: getSourceNameIcon({ sourceId: item.sourceId, sourceName: item.sourceName }),
-          canReadQuote: showDetail || strIsLink(item.sourceId),
-          collectionId: item.collectionId
-        })),
-      historyPreview: chatData?.historyPreview,
-      runningTime: +flowResponses.reduce((sum, item) => sum + (item.runningTime || 0), 0).toFixed(2)
-    };
-  }, [showDetail, flowResponses]);
+      }, {})
+    )
+      .flat()
+      .map((item) => ({
+        type: 'dataset' as const,
+        key: item.collectionId,
+        displayText: item.sourceName,
+        icon:
+          'imageId' in item && item.imageId
+            ? 'core/dataset/imageFill'
+            : getSourceNameIcon({ sourceId: item.sourceId, sourceName: item.sourceName }) ||
+              'core/chat/quoteFill',
+        onClick: () => {
+          onOpenCiteModal({
+            collectionId: item.collectionId,
+            sourceId: item.sourceId,
+            sourceName: item.sourceName,
+            datasetId: item.datasetId
+          });
+        }
+      }));
 
-  return flowResponses.length === 0 ? null : (
+    // Link citations
+    const linkItems = toolCiteLinks.map((r, index) => ({
+      type: 'link' as const,
+      key: `${r.url}-${index}`,
+      displayText: r.name,
+      icon: 'common/link',
+      onClick: () => {
+        window.open(r.url, '_blank');
+      }
+    }));
+
+    return [...datasetItems, ...linkItems];
+  }, [responseTags, onOpenCiteModal, isShowCite]);
+
+  const notEmptyTags =
+    (showFooterMeta && notSharePage) || (showFooterMeta && isPc && durationSeconds > 0);
+
+  return !showTags ? null : (
     <>
-      {sourceList.length > 0 && (
-        <>
-          <Flex justifyContent={'space-between'} alignItems={'center'}>
-            <Box width={'100%'}>
-              <ChatBoxDivider icon="core/chat/quoteFill" text={t('common:core.chat.Quote')} />{' '}
-            </Box>
-            {quoteFolded && quoteIsOverflow && (
-              <MyIcon
-                _hover={{ color: 'primary.500', cursor: 'pointer' }}
-                name="core/chat/chevronDown"
-                w={'14px'}
-                onClick={() => setQuoteFolded(!quoteFolded)}
-              />
-            )}
-          </Flex>
-
-          <Flex
-            ref={quoteListRef}
-            alignItems={'center'}
-            position={'relative'}
-            flexWrap={'wrap'}
-            gap={2}
-            maxH={quoteFolded && quoteIsOverflow ? ['50px', '55px'] : 'auto'}
-            overflow={'hidden'}
-            _after={
-              quoteFolded && quoteIsOverflow
-                ? {
-                    content: '""',
-                    position: 'absolute',
-                    zIndex: 2,
-                    bottom: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '50%',
-                    background:
-                      'linear-gradient(to bottom, rgba(247,247,247,0), rgba(247, 247, 247, 0.91))'
-                  }
-                : {}
-            }
-          >
-            {sourceList.map((item) => {
-              return (
-                <MyTooltip key={item.collectionId} label={t('common:core.chat.quote.Read Quote')}>
-                  <Flex
-                    alignItems={'center'}
-                    fontSize={'xs'}
-                    border={'sm'}
-                    py={1.5}
-                    px={2}
-                    borderRadius={'sm'}
-                    _hover={{
-                      '.controller': {
-                        display: 'flex'
-                      }
-                    }}
-                    overflow={'hidden'}
-                    position={'relative'}
-                    cursor={'pointer'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setQuoteModalData({
-                        rawSearch: quoteList,
-                        metadata: {
-                          collectionId: item.collectionId,
-                          sourceId: item.sourceId,
-                          sourceName: item.sourceName
-                        }
-                      });
-                    }}
-                  >
-                    <MyIcon name={item.icon as any} mr={1} flexShrink={0} w={'12px'} />
-                    <Box className="textEllipsis3" wordBreak={'break-all'} flex={'1 0 0'}>
-                      {item.sourceName}
-                    </Box>
-                  </Flex>
-                </MyTooltip>
-              );
-            })}
-            {!quoteFolded && (
-              <MyIcon
-                position={'absolute'}
-                bottom={0}
-                right={0}
-                _hover={{ color: 'primary.500', cursor: 'pointer' }}
-                name="core/chat/chevronUp"
-                w={'14px'}
-                onClick={() => setQuoteFolded(!quoteFolded)}
-              />
-            )}
-          </Flex>
-        </>
+      {/* quote */}
+      {citationRenderList.length > 0 && (
+        <CitationListCard items={citationRenderList} onOpenAll={() => onOpenCiteModal()} />
       )}
-      {showDetail && (
+
+      {notEmptyTags && (
         <Flex alignItems={'center'} mt={3} flexWrap={'wrap'} gap={2}>
-          {quoteList.length > 0 && (
-            <MyTooltip label="查看引用">
+          {showFooterMeta && isPc && durationSeconds > 0 && (
+            <MyTooltip label={t('chat:module_runtime_and')}>
+              <MyTag colorSchema="purple" type="borderSolid" cursor={'default'}>
+                {durationSeconds.toFixed(2)}s
+              </MyTag>
+            </MyTooltip>
+          )}
+
+          {showFooterMeta && notSharePage && showWholeResponse && (
+            <MyTooltip label={t('chat:response.read_complete_response_tips')}>
               <MyTag
-                colorSchema="blue"
+                colorSchema="gray"
                 type="borderSolid"
                 cursor={'pointer'}
-                onClick={() => setQuoteModalData({ rawSearch: quoteList })}
+                onClick={onOpenWholeModal}
               >
-                {quoteList.length}条引用
+                {t('chat:response.read_complete_response')}
               </MyTag>
             </MyTooltip>
           )}
-          {llmModuleAccount === 1 && (
-            <>
-              {historyPreview.length > 0 && (
-                <MyTooltip label={'点击查看上下文预览'}>
-                  <MyTag
-                    colorSchema="green"
-                    cursor={'pointer'}
-                    type="borderSolid"
-                    onClick={() => setContextModalData(historyPreview)}
-                  >
-                    {historyPreview.length}条上下文
-                  </MyTag>
-                </MyTooltip>
-              )}
-            </>
-          )}
-          {llmModuleAccount > 1 && (
-            <MyTag type="borderSolid" colorSchema="blue">
-              多组 AI 对话
-            </MyTag>
-          )}
-
-          {isPc && runningTime > 0 && (
-            <MyTooltip label={'模块运行时间和'}>
-              <MyTag colorSchema="purple" type="borderSolid" cursor={'default'}>
-                {runningTime}s
-              </MyTag>
-            </MyTooltip>
-          )}
-          <MyTooltip label={t('common:core.chat.response.Read complete response tips')}>
-            <MyTag
-              colorSchema="gray"
-              type="borderSolid"
-              cursor={'pointer'}
-              onClick={onOpenWholeModal}
-            >
-              {t('common:core.chat.response.Read complete response')}
-            </MyTag>
-          </MyTooltip>
         </Flex>
       )}
-      {!!quoteModalData && (
-        <QuoteModal
-          {...quoteModalData}
-          showDetail={showDetail}
-          onClose={() => setQuoteModalData(undefined)}
-        />
-      )}
-      {!!contextModalData && (
-        <ContextModal context={contextModalData} onClose={() => setContextModalData(undefined)} />
-      )}
-      {isOpenWholeModal && (
-        <WholeResponseModal
-          response={flowResponses}
-          showDetail={showDetail}
-          onClose={onCloseWholeModal}
-        />
-      )}
+
+      {isOpenWholeModal && <WholeResponseModal dataId={dataId} onClose={onCloseWholeModal} />}
     </>
   );
 };

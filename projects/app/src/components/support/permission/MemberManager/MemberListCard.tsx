@@ -1,16 +1,19 @@
-import { Box, BoxProps, Flex } from '@chakra-ui/react';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { Box, type BoxProps, Flex } from '@chakra-ui/react';
+import { DefaultGroupName } from '@fastgpt/global/support/user/team/group/constant';
+import Avatar from '@fastgpt/web/components/common/Avatar';
 import MyBox from '@fastgpt/web/components/common/MyBox';
+import Tag, { type TagProps } from '@fastgpt/web/components/common/Tag';
+import { useClientTranslation } from '@fastgpt/web/i18n/useClientTranslation';
 import React from 'react';
 import { useContextSelector } from 'use-context-selector';
 import { CollaboratorContext } from './context';
-import Tag, { TagProps } from '@fastgpt/web/components/common/Tag';
-import Avatar from '@fastgpt/web/components/common/Avatar';
-import { useTranslation } from 'next-i18next';
 
 export type MemberListCardProps = BoxProps & { tagStyle?: Omit<TagProps, 'children'> };
 
 const MemberListCard = ({ tagStyle, ...props }: MemberListCardProps) => {
-  const { t } = useTranslation();
+  const { t } = useClientTranslation(['user']);
+  const { userInfo } = useUserStore();
 
   const { collaboratorList, isFetchingCollaborator } = useContextSelector(
     CollaboratorContext,
@@ -27,10 +30,15 @@ const MemberListCard = ({ tagStyle, ...props }: MemberListCardProps) => {
         <Flex gap="2" flexWrap={'wrap'}>
           {collaboratorList?.map((member) => {
             return (
-              <Tag key={member.tmbId} type={'fill'} colorSchema="white" {...tagStyle}>
-                <Avatar src={member.avatar} w="1.25rem" />
+              <Tag
+                key={member.tmbId || member.groupId || member.orgId}
+                type={'fill'}
+                colorSchema="white"
+                {...tagStyle}
+              >
+                <Avatar src={member.avatar} w="1.25rem" rounded={'50%'} />
                 <Box fontSize={'sm'} ml={1}>
-                  {member.name}
+                  {member.name === DefaultGroupName ? userInfo?.team.teamName : member.name}
                 </Box>
               </Tag>
             );

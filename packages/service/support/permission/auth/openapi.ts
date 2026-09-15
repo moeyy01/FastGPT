@@ -1,16 +1,18 @@
-import { AuthModeType, AuthResponseType } from '../type';
-import { OpenApiSchema } from '@fastgpt/global/support/openapi/type';
-import { parseHeaderCert } from '../controller';
+import { type AuthModeType, type AuthResponseType } from '../type';
+import { type OpenApiSchema } from '@fastgpt/global/support/openapi/type';
 import { getTmbInfoByTmbId } from '../../user/team/controller';
 import { MongoOpenApi } from '../../openapi/schema';
 import { OpenApiErrEnum } from '@fastgpt/global/common/error/code/openapi';
-import { OwnerPermissionVal } from '@fastgpt/global/support/permission/constant';
-import { authAppByTmbId } from '../app/auth';
-import { Permission } from '@fastgpt/global/support/permission/controller';
+import { parseHeaderCert } from './common';
 
+/**
+ * 校验当前登录成员是否可以管理指定 APIKey。
+ *
+ * 新版 APIKey 只属于创建它的团队成员，team owner 或 app owner 不再拥有跨成员
+ * 查看、复制、更新、删除的特权。返回的团队权限仅用于调用点判断 authProxy 开关。
+ */
 export async function authOpenApiKeyCrud({
   id,
-  per = OwnerPermissionVal,
   ...props
 }: AuthModeType & {
   id: string;
@@ -21,6 +23,7 @@ export async function authOpenApiKeyCrud({
 > {
   const result = await parseHeaderCert(props);
   const { tmbId, teamId } = result;
+  const { permission: tmbPer } = await getTmbInfoByTmbId({ tmbId });
 
   const { openapi, permission } = await (async () => {
     const openapi = await MongoOpenApi.findOne({ _id: id, teamId });
@@ -28,26 +31,17 @@ export async function authOpenApiKeyCrud({
       return Promise.reject(OpenApiErrEnum.unExist);
     }
 
-    if (!!openapi.appId) {
-      // if is not global openapi, then auth app
-      const { app } = await authAppByTmbId({ appId: openapi.appId!, tmbId, per });
-      return {
-        permission: app.permission,
-        openapi
-      };
+    if (String(openapi.teamId) !== teamId) {
+      return Promise.reject(OpenApiErrEnum.unAuth);
     }
-    // if is global openapi, then auth openapi
-    const { permission: tmbPer } = await getTmbInfoByTmbId({ tmbId });
 
-    if (!tmbPer.checkPer(per) && tmbId !== String(openapi.tmbId)) {
+    if (String(openapi.tmbId) !== tmbId) {
       return Promise.reject(OpenApiErrEnum.unAuth);
     }
 
     return {
       openapi,
-      permission: new Permission({
-        per
-      })
+      permission: tmbPer
     };
   })();
 

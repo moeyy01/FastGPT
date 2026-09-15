@@ -1,27 +1,108 @@
 import { MongoDatasetCollection } from '@fastgpt/service/core/dataset/collection/schema';
-import { getCollectionUpdateTime } from '@fastgpt/service/core/dataset/collection/utils';
-import { authDatasetCollection } from '@fastgpt/service/support/permission/dataset/auth';
+import {
+  createOrGetCollectionTags,
+  getCollectionUpdateTime
+} from '@fastgpt/service/core/dataset/collection/utils';
+import {
+  authDataset,
+  authDatasetCollection
+} from '@fastgpt/service/support/permission/dataset/auth';
 import { NextAPI } from '@/service/middleware/entry';
 import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
 import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
+import { type ApiRequestProps } from '@fastgpt/next/type';
+import { DatasetCollectionTypeEnum } from '@fastgpt/global/core/dataset/constants';
+import { type ClientSession } from '@fastgpt/service/common/mongo';
+import { type CollectionWithDatasetType } from '@fastgpt/global/core/dataset/type';
+import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { getI18nDatasetType } from '@fastgpt/service/support/user/audit/util';
+import { UpdateDatasetCollectionBodySchema } from '@fastgpt/global/openapi/core/dataset/collection/api';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
 
-export type UpdateDatasetCollectionParams = {
-  id: string;
-  parentId?: string;
-  name?: string;
-  forbid?: boolean;
+// Set folder collection children forbid status
+const updateFolderChildrenForbid = async ({
+  collection,
+  forbid,
+  session
+}: {
+  collection: CollectionWithDatasetType;
+  forbid: boolean;
+  session: ClientSession;
+}) => {
+  // 从 collection 作为 parent 进行递归查找，找到它所有 forbid 与它相同的 child
+  const find = async (parentId: string): Promise<string[]> => {
+    const children = await MongoDatasetCollection.find(
+      {
+        teamId: collection.teamId,
+        datasetId: collection.datasetId,
+        parentId
+      },
+      '_id',
+      { session }
+    );
+
+    const idList = children.map((item) => String(item._id));
+
+    const IdChildren = (await Promise.all(idList.map(find))).flat();
+
+    return [...idList, ...IdChildren];
+  };
+
+  const allChildrenIdList = await find(collection._id);
+
+  await MongoDatasetCollection.updateMany(
+    {
+      _id: { $in: allChildrenIdList }
+    },
+    {
+      $set: {
+        forbid
+      }
+    },
+    {
+      session
+    }
+  );
 };
 
-async function handler(req: ApiRequestProps<UpdateDatasetCollectionParams>) {
-  const { id, parentId, name, forbid } = req.body;
+async function handler(req: ApiRequestProps) {
+  const {
+    datasetId,
+    externalFileId,
+    id: parsedCollectionId,
+    parentId,
+    name,
+    tags,
+    forbid,
+    createTime
+  } = parseApiInput({ req, bodySchema: UpdateDatasetCollectionBodySchema }).body;
+  let id = parsedCollectionId;
+
+  // 通过 externalFileId 查找 collection：先鉴权 dataset，再查询
+  if (datasetId && externalFileId) {
+    await authDataset({
+      req,
+      authToken: true,
+      authApiKey: true,
+      datasetId,
+      per: WritePermissionVal
+    });
+
+    const collection = await MongoDatasetCollection.findOne({ datasetId, externalFileId }, '_id');
+    if (!collection) {
+      return Promise.reject(CommonErrEnum.fileNotFound);
+    }
+    id = collection._id;
+  }
 
   if (!id) {
     return Promise.reject(CommonErrEnum.missingParams);
   }
 
   // 凭证校验
-  await authDatasetCollection({
+  const { collection, teamId, tmbId } = await authDatasetCollection({
     req,
     authToken: true,
     authApiKey: true,
@@ -29,15 +110,54 @@ async function handler(req: ApiRequestProps<UpdateDatasetCollectionParams>) {
     per: WritePermissionVal
   });
 
-  const updateFields: Record<string, any> = {
-    ...(parentId !== undefined && { parentId: parentId || null }),
-    ...(name && { name, updateTime: getCollectionUpdateTime({ name }) }),
-    ...(forbid !== undefined && { forbid })
-  };
+  await mongoSessionRun(async (session) => {
+    const collectionTags = await createOrGetCollectionTags({
+      tags,
+      teamId,
+      datasetId: collection.datasetId,
+      session
+    });
 
-  await MongoDatasetCollection.findByIdAndUpdate(id, {
-    $set: updateFields
+    await MongoDatasetCollection.updateOne(
+      {
+        _id: id
+      },
+      {
+        $set: {
+          ...(parentId !== undefined && { parentId: parentId || null }),
+          ...(name && { name, updateTime: getCollectionUpdateTime({ name }) }),
+          ...(collectionTags !== undefined && { tags: collectionTags }),
+          ...(forbid !== undefined && { forbid }),
+          ...(createTime !== undefined && { createTime })
+        }
+      },
+      {
+        session
+      }
+    );
+
+    // Folder update forbid
+    if (collection.type === DatasetCollectionTypeEnum.folder && forbid !== undefined) {
+      await updateFolderChildrenForbid({
+        collection,
+        forbid,
+        session
+      });
+    }
   });
+
+  (async () => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.UPDATE_COLLECTION,
+      params: {
+        collectionName: collection.name,
+        datasetName: collection.dataset?.name || '',
+        datasetType: getI18nDatasetType(collection.dataset?.type || '')
+      }
+    });
+  })();
 }
 
 export default NextAPI(handler);

@@ -1,26 +1,33 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest } from 'next';
 import type {
   ParentIdType,
   ParentTreePathItemType
-} from '@fastgpt/global/common/parentFolder/type.d';
+} from '@fastgpt/global/common/parentFolder/type';
 import { NextAPI } from '@/service/middleware/entry';
 import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
 import { MongoApp } from '@fastgpt/service/core/app/schema';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  GetAppFolderPathQuerySchema,
+  GetAppFolderPathResponseSchema
+} from '@fastgpt/global/openapi/core/app/folder/api';
 
-async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<any>
-): Promise<ParentTreePathItemType[]> {
-  const { parentId } = req.query as { parentId: string };
+async function handler(req: NextApiRequest): Promise<ParentTreePathItemType[]> {
+  const { sourceId: appId, type = 'current' } = parseApiInput({
+    req,
+    querySchema: GetAppFolderPathQuerySchema
+  }).query;
 
-  if (!parentId) {
+  if (!appId) {
     return [];
   }
 
-  await authApp({ req, authToken: true, appId: parentId, per: ReadPermissionVal });
+  const { app } = await authApp({ req, authToken: true, appId, per: ReadPermissionVal });
 
-  return await getParents(parentId);
+  return GetAppFolderPathResponseSchema.parse(
+    await getParents(type === 'current' ? appId : app.parentId)
+  );
 }
 
 export default NextAPI(handler);

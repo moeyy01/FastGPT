@@ -1,0 +1,212 @@
+import React, { useCallback, useMemo } from 'react';
+import { Box, Flex, HStack, IconButton, useDisclosure } from '@chakra-ui/react';
+import { useContextSelector } from 'use-context-selector';
+import { AppContext } from '../context';
+import { useTranslation } from 'next-i18next';
+import Avatar from '@fastgpt/web/components/common/Avatar';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import dynamic from 'next/dynamic';
+import MyTag from '@fastgpt/web/components/common/Tag/index';
+import { publishStatusStyle } from '../constants';
+import MyPopover from '@fastgpt/web/components/common/MyPopover';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import { WorkflowUtilsContext } from './context/workflowUtilsContext';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+
+const ImportSettings = dynamic(() => import('./Flow/ImportSettings'));
+const ExportConfigPopover = dynamic(
+  () => import('@/pageComponents/app/detail/ExportConfigPopover')
+);
+
+const AppCard = ({ showSaveStatus, isSaved }: { showSaveStatus: boolean; isSaved: boolean }) => {
+  const { t } = useTranslation();
+
+  const appDetail = useContextSelector(AppContext, (v) => v.appDetail);
+  const onOpenInfoEdit = useContextSelector(AppContext, (v) => v.onOpenInfoEdit);
+  const onDelApp = useContextSelector(AppContext, (v) => v.onDelApp);
+  const flowData2StoreData = useContextSelector(WorkflowUtilsContext, (v) => v.flowData2StoreData);
+
+  const { isOpen: isOpenImport, onOpen: onOpenImport, onClose: onCloseImport } = useDisclosure();
+
+  const renderInfoMenu = useCallback(
+    (children: React.ReactNode) => {
+      return (
+        <MyPopover
+          placement={'bottom-end'}
+          hasArrow={false}
+          offset={[2, 4]}
+          w={'116px'}
+          trigger={'hover'}
+          Trigger={children}
+        >
+          {() => (
+            <Box p={1.5}>
+              <MyBox
+                display={'flex'}
+                size={'md'}
+                px={1}
+                py={1.5}
+                rounded={'4px'}
+                _hover={{ color: 'primary.600', bg: 'rgba(17, 24, 36, 0.05)' }}
+                cursor={'pointer'}
+                onClick={onOpenInfoEdit}
+              >
+                <MyIcon name={'edit'} w={'16px'} mr={2} />
+                <Box fontSize={'sm'}>{t('app:edit_info')}</Box>
+              </MyBox>
+              <MyBox
+                display={'flex'}
+                size={'md'}
+                px={1}
+                py={1.5}
+                rounded={'4px'}
+                _hover={{ color: 'primary.600', bg: 'rgba(17, 24, 36, 0.05)' }}
+                cursor={'pointer'}
+                onClick={onOpenInfoEdit}
+              >
+                <MyIcon name={'key'} w={'16px'} mr={2} />
+                <Box fontSize={'sm'}>{t('app:Role_setting')}</Box>
+              </MyBox>
+              <Box w={'full'} h={'1px'} bg={'myGray.200'} my={1} />
+              <MyBox
+                display={'flex'}
+                size={'md'}
+                px={1}
+                py={1.5}
+                rounded={'4px'}
+                _hover={{ color: 'primary.600', bg: 'rgba(17, 24, 36, 0.05)' }}
+                cursor={'pointer'}
+                onClick={onOpenImport}
+              >
+                <MyIcon name={'common/importLight'} w={'16px'} mr={2} />
+                <Box fontSize={'sm'}>{t('app:import_configs')}</Box>
+              </MyBox>
+              <MyBox
+                display={'flex'}
+                size={'md'}
+                px={1}
+                py={1.5}
+                rounded={'4px'}
+                _hover={{ color: 'primary.600', bg: 'rgba(17, 24, 36, 0.05)' }}
+                cursor={'pointer'}
+              >
+                <ExportConfigPopover
+                  appType={appDetail.type}
+                  chatConfig={appDetail.chatConfig}
+                  appName={appDetail.name}
+                  appIntro={appDetail.intro}
+                  getWorkflowData={flowData2StoreData}
+                />
+              </MyBox>
+              {appDetail.permission.isOwner && (
+                <>
+                  <Box w={'full'} h={'1px'} bg={'myGray.200'} my={1} />
+
+                  <MyBox
+                    display={'flex'}
+                    size={'md'}
+                    px={1}
+                    py={1.5}
+                    rounded={'4px'}
+                    color={'red.600'}
+                    _hover={{ bg: 'rgba(17, 24, 36, 0.05)' }}
+                    cursor={'pointer'}
+                    onClick={onDelApp}
+                  >
+                    <MyIcon name={'delete'} w={'16px'} mr={2} />
+                    <Box fontSize={'sm'}>{t('common:Delete')}</Box>
+                  </MyBox>
+                </>
+              )}
+            </Box>
+          )}
+        </MyPopover>
+      );
+    },
+    [
+      appDetail.chatConfig,
+      appDetail.intro,
+      appDetail.name,
+      appDetail.permission.isOwner,
+      appDetail.type,
+      flowData2StoreData,
+      onDelApp,
+      onOpenImport,
+      onOpenInfoEdit,
+      t
+    ]
+  );
+
+  const Render = useMemo(() => {
+    return (
+      <HStack flex={1} justifyContent={'space-between'}>
+        <HStack minW={0}>
+          <Avatar src={appDetail.avatar} w={'1.75rem'} borderRadius={'md'} flexShrink={0} />
+          <Box minW={0}>
+            <HStack spacing={1} minW={0}>
+              <MyTooltip label={appDetail.name} showOnlyWhenOverflow>
+                <Box color={'myGray.900'} maxW={['45vw', '280px']} className="textEllipsis">
+                  {appDetail.name}
+                </Box>
+              </MyTooltip>
+            </HStack>
+            {showSaveStatus && (
+              <Flex alignItems={'center'} fontSize={'mini'} lineHeight={1}>
+                <MyTag
+                  py={0}
+                  px={1}
+                  showDot
+                  bg={'transparent'}
+                  colorSchema={
+                    isSaved
+                      ? publishStatusStyle.published.colorSchema
+                      : publishStatusStyle.unPublish.colorSchema
+                  }
+                >
+                  {t(
+                    isSaved ? publishStatusStyle.published.text : publishStatusStyle.unPublish.text
+                  )}
+                </MyTag>
+              </Flex>
+            )}
+          </Box>
+        </HStack>
+
+        {renderInfoMenu(
+          <IconButton
+            aria-label="Expand"
+            icon={<MyIcon name={'common/select'} w={'18px'} color={'myGray.500'} />}
+            w={'32px'}
+            h={'32px'}
+            minW={'32px'}
+            minH={'32px'}
+            flexShrink={0}
+            bg={'white'}
+            border={'1px solid'}
+            borderColor={'myGray.250'}
+            borderRadius={'sm'}
+            boxShadow={'0 1px 2px 0 rgba(19, 51, 107, 0.05), 0 0 1px 0 rgba(19, 51, 107, 0.08)'}
+            _hover={{
+              bg: 'myGray.50'
+            }}
+          />
+        )}
+
+        {isOpenImport && <ImportSettings onClose={onCloseImport} />}
+      </HStack>
+    );
+  }, [
+    appDetail.avatar,
+    appDetail.name,
+    isOpenImport,
+    isSaved,
+    onCloseImport,
+    renderInfoMenu,
+    showSaveStatus,
+    t
+  ]);
+
+  return Render;
+};
+
+export default AppCard;

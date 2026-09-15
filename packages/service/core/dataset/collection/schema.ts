@@ -1,8 +1,8 @@
-import { connectionMongo, getMongoModel, type Model } from '../../../common/mongo';
-const { Schema, model, models } = connectionMongo;
-import { DatasetCollectionSchemaType } from '@fastgpt/global/core/dataset/type.d';
-import { TrainingTypeMap, DatasetCollectionTypeMap } from '@fastgpt/global/core/dataset/constants';
-import { DatasetCollectionName } from '../schema';
+import { defineIndex, connectionMongo, getMongoModel } from '../../../common/mongo';
+const { Schema } = connectionMongo;
+import { type DatasetCollectionSchemaType } from '@fastgpt/global/core/dataset/type';
+import { DatasetCollectionTypeMap } from '@fastgpt/global/core/dataset/constants';
+import { ChunkSettings, DatasetCollectionName } from '../schema';
 import {
   TeamCollectionName,
   TeamMemberCollectionName
@@ -31,6 +31,8 @@ const DatasetCollectionSchema = new Schema({
     ref: DatasetCollectionName,
     required: true
   },
+
+  // Basic info
   type: {
     type: String,
     enum: Object.keys(DatasetCollectionTypeMap),
@@ -40,6 +42,11 @@ const DatasetCollectionSchema = new Schema({
     type: String,
     required: true
   },
+  tags: {
+    type: [],
+    default: []
+  },
+
   createTime: {
     type: Date,
     default: () => new Date()
@@ -48,69 +55,88 @@ const DatasetCollectionSchema = new Schema({
     type: Date,
     default: () => new Date()
   },
-  forbid: {
-    type: Boolean,
-    default: false
-  },
 
-  // chunk filed
-  trainingType: {
-    type: String,
-    enum: Object.keys(TrainingTypeMap)
-  },
-  chunkSize: {
-    type: Number,
-    required: true
-  },
-  chunkSplitter: {
-    type: String
-  },
-  qaPrompt: {
-    type: String
-  },
-
-  tags: {
-    type: [String],
-    default: []
-  },
-
+  // Metadata
   // local file collection
-  fileId: {
-    type: Schema.Types.ObjectId,
-    ref: 'dataset.files'
-  },
+  // Support both GridFS ObjectId (string) and S3 key (string)
+  fileId: String,
   // web link collection
   rawLink: String,
-  // external collection
+  // Api collection
+  apiFileId: String,
+  // external collection(Abandoned)
   externalFileId: String,
+  externalFileUrl: String, // external import url
 
-  // metadata
   rawTextLength: Number,
   hashRawText: String,
-  externalFileUrl: String, // external import url
+
   metadata: {
     type: Object,
     default: {}
-  }
+  },
+
+  forbid: Boolean,
+
+  // Parse settings
+  customPdfParse: Boolean,
+  apiFileParentId: String,
+
+  // Chunk settings
+  ...ChunkSettings
 });
 
-try {
-  // auth file
-  DatasetCollectionSchema.index({ teamId: 1, fileId: 1 });
+DatasetCollectionSchema.virtual('dataset', {
+  ref: DatasetCollectionName,
+  localField: 'datasetId',
+  foreignField: '_id',
+  justOne: true
+});
 
-  // list collection; deep find collections
-  DatasetCollectionSchema.index({
+// auth file
+defineIndex(DatasetCollectionSchema, { key: { teamId: 1, fileId: 1 } });
+
+// list collection; deep find collections
+defineIndex(DatasetCollectionSchema, {
+  key: {
     teamId: 1,
     datasetId: 1,
     parentId: 1,
     updateTime: -1
-  });
+  }
+});
 
-  // get forbid
-  // DatasetCollectionSchema.index({ teamId: 1, datasetId: 1, forbid: 1 });
-} catch (error) {
-  console.log(error);
-}
+// Tag filter
+defineIndex(DatasetCollectionSchema, {
+  key: { teamId: 1, datasetId: 1, tags: 1 }
+});
+// New format tags.tagId filter
+defineIndex(DatasetCollectionSchema, {
+  key: { teamId: 1, datasetId: 1, 'tags.tagId': 1 }
+});
+// create time filter
+defineIndex(DatasetCollectionSchema, {
+  key: { teamId: 1, datasetId: 1, createTime: 1 }
+});
+
+// Get collection by external file id
+defineIndex(DatasetCollectionSchema, {
+  key: { datasetId: 1, externalFileId: 1 },
+  options: {
+    unique: true,
+    partialFilterExpression: {
+      externalFileId: { $exists: true }
+    }
+  }
+});
+
+// Clear invalid image
+defineIndex(DatasetCollectionSchema, {
+  key: {
+    teamId: 1,
+    'metadata.relatedImgId': 1
+  }
+});
 
 export const MongoDatasetCollection = getMongoModel<DatasetCollectionSchemaType>(
   DatasetColCollectionName,

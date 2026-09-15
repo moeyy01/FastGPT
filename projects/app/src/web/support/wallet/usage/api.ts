@@ -1,10 +1,14 @@
-import { GET, POST } from '@/web/common/api/request';
-import { CreateTrainingUsageProps } from '@fastgpt/global/support/wallet/usage/api.d';
-import type { PagingData, RequestPaging } from '@/types';
-import type { UsageItemType } from '@fastgpt/global/support/wallet/usage/type';
+import { POST } from '@/web/common/api/request';
+import type {
+  GetUsageDashboardProps,
+  GetUsageDashboardResponseItem,
+  GetUsageProps
+} from '@fastgpt/global/support/wallet/usage/api';
+import type { UsageListItemType } from '@fastgpt/global/support/wallet/usage/type';
+import type { PaginationProps, PaginationResponse } from '@fastgpt/global/openapi/api';
 
-export const getUserUsages = (data: RequestPaging) =>
-  POST<PagingData<UsageItemType>>(`/proApi/support/wallet/usage/getUsage`, data);
+export const getUserUsages = (data: PaginationProps<GetUsageProps>) =>
+  POST<PaginationResponse<UsageListItemType>>(`/proApi/support/wallet/usage/getUsage`, data);
 
-export const postCreateTrainingUsage = (data: CreateTrainingUsageProps) =>
-  POST<string>(`/support/wallet/usage/createTrainingUsage`, data);
+export const getDashboardData = (data: GetUsageDashboardProps) =>
+  POST<GetUsageDashboardResponseItem[]>(`/proApi/support/wallet/usage/getDashboardData`, data);

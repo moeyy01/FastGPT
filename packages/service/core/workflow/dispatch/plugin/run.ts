@@ -1,107 +1,382 @@
-import type { ModuleDispatchProps } from '@fastgpt/global/core/workflow/runtime/type';
-import { dispatchWorkFlow } from '../index';
-import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
-import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
-import { getPluginRuntimeById } from '../../../app/plugin/controller';
+import { splitCombineToolId } from '@fastgpt/global/core/app/tool/utils';
 import {
-  getDefaultEntryNodeIds,
-  initWorkflowEdgeStatus,
+  filterWorkflowToolInputVariables,
+  getWorkflowToolInputsFromStoreNodes
+} from '@fastgpt/global/core/app/tool/workflowTool/utils';
+import { chatValue2RuntimePrompt } from '@fastgpt/global/core/chat/adapt';
+import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { AppToolSourceEnum } from '@fastgpt/global/core/app/tool/constants';
+import {
+  FlowNodeInputTypeEnum,
+  FlowNodeTypeEnum
+} from '@fastgpt/global/core/workflow/node/constant';
+import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
+
+import {
+  getWorkflowEntryNodeIds,
+  storeEdges2RuntimeEdges,
   storeNodes2RuntimeNodes
 } from '@fastgpt/global/core/workflow/runtime/utils';
-import { DispatchNodeResultType } from '@fastgpt/global/core/workflow/runtime/type';
-import { updateToolInputValue } from '../agent/runTool/utils';
-import { authPluginByTmbId } from '../../../../support/permission/app/auth';
+import type { DispatchNodeResultType, ModuleDispatchProps } from '../../types/runtime';
+import { authWorkflowToolByTmbId } from '../../../../support/permission/app/auth';
 import { ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
-import { computedPluginUsage } from '../../../app/plugin/utils';
+import { computedAppToolUsage, getAppToolOutputError } from '../../../app/tool/runtime/utils';
+import { getNodeErrResponse } from '../utils';
+import { serverGetWorkflowToolRunUserQuery } from '../../../app/tool/workflowTool/utils';
+import { type NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import { runWorkflow } from '../index';
+import { getUserChatInfo } from '../../../../support/user/team/utils';
+import { dispatchRunTool } from '../child/runTool';
+import type { AppToolRuntimeType } from '@fastgpt/global/core/app/tool/type';
+import { anyValueDecrypt } from '../../../../common/secret/utils';
+import { getAppVersionById } from '../../../app/version/controller';
+import { parseI18nString } from '@fastgpt/global/common/i18n/utils';
+import {
+  getWorkflowFileInputsFromValue,
+  getWorkflowFileVariableInputs,
+  WorkflowVariableState
+} from '../utils/variables';
+import { SystemToolRepo } from '../../../app/tool/systemTool/systemTool.repo';
+import { getRuntimeNodeResponseSummary } from '../utils';
+import { runWithDerivedWorkflowFileContext } from '../../utils/context';
 
 type RunPluginProps = ModuleDispatchProps<{
+  [NodeInputKeyEnum.forbidStream]?: boolean;
   [key: string]: any;
 }>;
-type RunPluginResponse = DispatchNodeResultType<{}>;
+type RunPluginResponse = DispatchNodeResultType<
+  {
+    [key: string]: any;
+  },
+  {
+    [NodeOutputKeyEnum.errorText]?: string;
+  }
+>;
 
+/**
+ * 工作流插件处理函数
+ * 1. 系统工具 systemTool- 转发到 dispatchRunTool （为了兼容旧的数据）
+ * 2. personal （自己的插件）
+ * 3. commercial （系统级别的工作流插件）
+ */
 export const dispatchRunPlugin = async (props: RunPluginProps): Promise<RunPluginResponse> => {
   const {
-    node: { pluginId },
-    app: workflowApp,
-    mode,
-    teamId,
-    params: data
+    node: { pluginId, version },
+    runningAppInfo,
+    query,
+    params: { system_forbid_stream = false, ...data } // Plugin input
   } = props;
-
   if (!pluginId) {
-    return Promise.reject('pluginId can not find');
+    return getNodeErrResponse({ error: 'pluginId can not find' });
   }
 
-  // auth plugin
-  await authPluginByTmbId({
-    appId: pluginId,
-    tmbId: workflowApp.tmbId,
-    per: ReadPermissionVal
-  });
+  let workflowTool: AppToolRuntimeType | undefined;
 
-  const plugin = await getPluginRuntimeById(pluginId);
-
-  // concat dynamic inputs
-  const inputModule = plugin.nodes.find(
-    (item) => item.flowNodeType === FlowNodeTypeEnum.pluginInput
-  );
-  if (!inputModule) return Promise.reject('Plugin error, It has no set input.');
-
-  const { flowResponses, flowUsages, assistantResponses } = await dispatchWorkFlow({
-    ...props,
-    runtimeNodes: storeNodes2RuntimeNodes(plugin.nodes, getDefaultEntryNodeIds(plugin.nodes)).map(
-      (node) => {
-        if (node.flowNodeType === FlowNodeTypeEnum.pluginInput) {
-          return {
-            ...node,
-            showStatus: false,
-            inputs: updateToolInputValue({
-              inputs: node.inputs,
-              params: data
-            })
-          };
+  try {
+    // Adapt <= 4.10 system tool
+    const { source, pluginId: appId } = splitCombineToolId(pluginId);
+    if (source === AppToolSourceEnum.systemTool) {
+      return await dispatchRunTool({
+        ...props,
+        node: {
+          ...props.node,
+          toolConfig: {
+            systemTool: {
+              toolId: pluginId
+            }
+          }
         }
+      });
+    }
+
+    if (source !== AppToolSourceEnum.commercial && source !== AppToolSourceEnum.personal) {
+      return getNodeErrResponse({ error: 'pluginId can not find' });
+    }
+
+    /**
+      1. Team app (personal): 走 team 权限校验
+      2. Admin selected system tool (commercial): 系统级工具，不做用户态权限校验
+    */
+    const { files } = chatValue2RuntimePrompt(query);
+
+    // 仅在 personal 分支需要 toolData 来判断 pluginDetail 的可见性
+    const toolData =
+      source === AppToolSourceEnum.personal
+        ? await authWorkflowToolByTmbId({
+            appId,
+            tmbId: runningAppInfo.tmbId,
+            per: ReadPermissionVal
+          })
+        : undefined;
+
+    if (source === AppToolSourceEnum.personal && toolData) {
+      const toolVersion = await getAppVersionById({
+        appId: toolData._id,
+        versionId: version,
+        app: toolData
+      });
+
+      workflowTool = {
+        id: String(toolData._id),
+        teamId: toolData.teamId,
+        tmbId: toolData.tmbId,
+        name: parseI18nString(toolData.name, props.lang),
+        avatar: toolData.avatar || '',
+        showStatus: true,
+        currentCost: 0,
+        systemKeyCost: 0,
+        nodes: toolVersion.nodes,
+        edges: toolVersion.edges,
+        chatConfig: toolVersion.chatConfig,
+        hasTokenFee: false
+      };
+    } else {
+      const systemToolRepo = SystemToolRepo.getInstance();
+      // commercial: 通过系统工具加载（内部会解析 associatedPluginId 对应的 app 版本）
+      const systemTool = await systemToolRepo.getSystemToolWorkflowRuntime({
+        pluginId,
+        version
+      });
+
+      workflowTool = {
+        id: pluginId,
+        teamId: systemTool.teamId,
+        tmbId: systemTool.tmbId,
+        name: parseI18nString(systemTool.name, props.lang),
+        avatar: systemTool.avatar || '',
+        showStatus: true,
+        currentCost: systemTool.currentCost ?? 0,
+        systemKeyCost: systemTool.systemKeyCost ?? 0,
+        nodes: systemTool.nodes,
+        edges: systemTool.edges,
+        chatConfig: systemTool.chatConfig,
+        hasTokenFee: !!systemTool.hasTokenFee,
+        associatedPluginId: systemTool.associatedPluginId
+      };
+    }
+    const childWorkflowTool = workflowTool;
+
+    const outputFilterMap =
+      childWorkflowTool.nodes
+        .find((node) => node.flowNodeType === FlowNodeTypeEnum.pluginOutput)
+        ?.inputs.reduce<Record<string, boolean>>((acc, cur) => {
+          acc[cur.key] = cur.isToolOutput === false ? false : true;
+          return acc;
+        }, {}) ?? {};
+    const pluginInputs = getWorkflowToolInputsFromStoreNodes(childWorkflowTool.nodes);
+    const workflowToolVariables = filterWorkflowToolInputVariables({
+      inputs: pluginInputs,
+      variables: data
+    });
+    const runtimeNodes = storeNodes2RuntimeNodes(
+      childWorkflowTool.nodes,
+      getWorkflowEntryNodeIds(childWorkflowTool.nodes)
+    ).map((node) => {
+      // Update workflowTool input value
+      if (node.flowNodeType === FlowNodeTypeEnum.pluginInput) {
         return {
           ...node,
-          showStatus: false
+          showStatus: false,
+          inputs: node.inputs.map((input) => {
+            const hasExternalValue = Object.prototype.hasOwnProperty.call(
+              workflowToolVariables,
+              input.key
+            );
+            let val = hasExternalValue ? workflowToolVariables[input.key] : input.value;
+            val ??= input.defaultValue;
+            if (input.renderTypeList.includes(FlowNodeInputTypeEnum.password)) {
+              val = anyValueDecrypt(val);
+            } else if (
+              input.renderTypeList.includes(FlowNodeInputTypeEnum.fileSelect) &&
+              Array.isArray(val) &&
+              hasExternalValue
+            ) {
+              workflowToolVariables[input.key] = val.map((item) =>
+                typeof item === 'string' ? item : item.url
+              );
+            }
+
+            return {
+              ...input,
+              value: val
+            };
+          })
         };
       }
-    ),
-    runtimeEdges: initWorkflowEdgeStatus(plugin.edges)
-  });
+      return {
+        ...node,
+        showStatus: false
+      };
+    });
 
-  const output = flowResponses.find((item) => item.moduleType === FlowNodeTypeEnum.pluginOutput);
+    const { externalProvider } = await getUserChatInfo(runningAppInfo.tmbId);
+    const childRunningAppInfo = {
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: String(childWorkflowTool.id),
+      name: childWorkflowTool.name,
+      teamId: childWorkflowTool.teamId || runningAppInfo.teamId,
+      tmbId: childWorkflowTool.tmbId || runningAppInfo.tmbId,
+      isChildApp: true
+    };
+    const childFileInputs = [
+      ...files,
+      ...getWorkflowFileVariableInputs({
+        variablesConfig: childWorkflowTool.chatConfig?.variables,
+        inputVariables: {}
+      }),
+      ...childWorkflowTool.nodes.flatMap((node) =>
+        node.flowNodeType === FlowNodeTypeEnum.pluginInput
+          ? node.inputs.flatMap((input) =>
+              input.renderTypeList.includes(FlowNodeInputTypeEnum.fileSelect)
+                ? getWorkflowFileInputsFromValue(
+                    workflowToolVariables[input.key] ?? input.value ?? input.defaultValue,
+                    input.maxFiles
+                  )
+                : []
+            )
+          : []
+      )
+    ];
+    const shouldStoreChildNodeResponses = !childWorkflowTool.associatedPluginId;
+    const {
+      flowUsages,
+      assistantResponses,
+      runTimes,
+      system_memories,
+      runtimeNodeResponseSummary,
+      [DispatchNodeResponseKeyEnum.customFeedbacks]: customFeedbacks
+    } = await runWithDerivedWorkflowFileContext({
+      histories: props.histories,
+      files: childFileInputs,
+      fn: async ({ resolveInputFile, histories: childHistories, filterFiles }) => {
+        const childRuntimeNodes = runtimeNodes.map((node) =>
+          node.flowNodeType === FlowNodeTypeEnum.pluginInput
+            ? {
+                ...node,
+                inputs: node.inputs.map((input) => ({
+                  ...input,
+                  value:
+                    input.renderTypeList.includes(FlowNodeInputTypeEnum.fileSelect) &&
+                    Array.isArray(input.value)
+                      ? filterFiles(input.value)
+                      : input.value
+                }))
+              }
+            : node
+        );
+        const childVariableState = await WorkflowVariableState.create({
+          timezone: props.timezone,
+          runningAppInfo: childRunningAppInfo,
+          uid: props.uid,
+          chatId: props.chatId,
+          responseChatItemId: props.responseChatItemId,
+          histories: childHistories,
+          variablesConfig: childWorkflowTool.chatConfig?.variables ?? [],
+          inputVariables: {},
+          externalVariables: externalProvider?.externalWorkflowVariables,
+          sourceVariableState: props.variableState,
+          resolveInputFile
+        });
+        const runtimeVariables = childVariableState.toRuntimeRecord();
 
-  if (output) {
-    output.moduleLogo = plugin.avatar;
-  }
-
-  const isError = !!output?.pluginOutput?.error;
-  const usagePoints = isError ? 0 : await computedPluginUsage(plugin, flowUsages);
-
-  return {
-    assistantResponses,
-    // responseData, // debug
-    [DispatchNodeResponseKeyEnum.nodeResponse]: {
-      moduleLogo: plugin.avatar,
-      totalPoints: usagePoints,
-      pluginOutput: output?.pluginOutput,
-      pluginDetail:
-        mode === 'test' && plugin.teamId === teamId
-          ? flowResponses.filter((item) => {
-              const filterArr = [FlowNodeTypeEnum.pluginOutput];
-              return !filterArr.includes(item.moduleType as any);
-            })
-          : undefined
-    },
-    [DispatchNodeResponseKeyEnum.nodeDispatchUsages]: [
-      {
-        moduleName: plugin.name,
-        totalPoints: usagePoints,
-        tokens: 0
+        return runWorkflow({
+          ...props,
+          // 系统级 workflow tool 只保留工具节点自身的响应，不展开保存其内部 workflow 详情。
+          ...(shouldStoreChildNodeResponses ? {} : { nodeResponseSink: undefined }),
+          // Rewrite stream mode
+          ...(system_forbid_stream
+            ? {
+                stream: false,
+                workflowStreamResponse: undefined
+              }
+            : {}),
+          runningAppInfo: {
+            sourceType: ChatSourceTypeEnum.app,
+            sourceId: String(childWorkflowTool.id),
+            name: childWorkflowTool.name,
+            // 如果系统插件有 teamId 和 tmbId，则使用系统插件的 teamId 和 tmbId（管理员指定了插件作为系统插件）
+            teamId: childWorkflowTool.teamId || runningAppInfo.teamId,
+            tmbId: childWorkflowTool.tmbId || runningAppInfo.tmbId,
+            isChildApp: true
+          },
+          variableState: childVariableState,
+          histories: childHistories,
+          query: serverGetWorkflowToolRunUserQuery({
+            pluginInputs,
+            variables: {
+              ...runtimeVariables,
+              ...workflowToolVariables
+            },
+            files: filterFiles(files)
+          }).value,
+          chatConfig: childWorkflowTool.chatConfig ?? {},
+          runtimeNodes: childRuntimeNodes,
+          runtimeEdges: storeEdges2RuntimeEdges(childWorkflowTool.edges)
+        });
       }
-    ],
-    [DispatchNodeResponseKeyEnum.toolResponses]: output?.pluginOutput ? output.pluginOutput : {},
-    ...(output ? output.pluginOutput : {})
-  };
+    });
+    const runtimeSummary = getRuntimeNodeResponseSummary({
+      runtimeNodeResponseSummary
+    });
+    const pluginOutput = runtimeSummary.pluginOutput;
+    const pluginOutputError = getAppToolOutputError({
+      plugin: workflowTool,
+      pluginOutput
+    });
+
+    const usagePoints = await computedAppToolUsage({
+      plugin: workflowTool,
+      childrenUsage: flowUsages,
+      error: runtimeSummary.hasError || !pluginOutput || !!pluginOutputError
+    });
+    // Child run not push usage
+    props.usagePush([
+      {
+        moduleName: workflowTool.name,
+        totalPoints: usagePoints
+      }
+    ]);
+    const childResponseCount = runtimeSummary.childResponseCount;
+    const toolResponse = pluginOutput
+      ? Object.keys(pluginOutput)
+          .filter((key) => outputFilterMap[key])
+          .reduce<Record<string, any>>((acc, key) => {
+            acc[key] = pluginOutput[key];
+            return acc;
+          }, {})
+      : undefined;
+
+    return {
+      data: pluginOutput || {},
+      ...(pluginOutputError
+        ? {
+            error: {
+              [NodeOutputKeyEnum.errorText]: pluginOutputError
+            }
+          }
+        : {}),
+      // 嵌套运行时，如果 childApp stream=false，实际上不会有任何内容输出给用户，所以不需要存储
+      assistantResponses: system_forbid_stream ? [] : assistantResponses,
+      system_memories,
+      // responseData, // debug
+      [DispatchNodeResponseKeyEnum.runTimes]: runTimes,
+      [DispatchNodeResponseKeyEnum.nodeResponse]: {
+        moduleLogo: workflowTool.avatar,
+        totalPoints: usagePoints,
+        toolInput: workflowToolVariables,
+        pluginOutput,
+        childResponseCount,
+        ...(pluginOutputError ? { errorText: pluginOutputError } : {})
+      },
+      [DispatchNodeResponseKeyEnum.toolResponse]: pluginOutputError
+        ? { ...toolResponse, error: pluginOutputError }
+        : toolResponse,
+      [DispatchNodeResponseKeyEnum.customFeedbacks]: customFeedbacks
+    };
+  } catch (error) {
+    return getNodeErrResponse({
+      error,
+      [DispatchNodeResponseKeyEnum.nodeResponse]: { moduleLogo: workflowTool?.avatar }
+    });
+  }
 };

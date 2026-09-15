@@ -1,77 +1,495 @@
-import type { ChatItemType, ChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import type { ChatItemMiniType } from '@fastgpt/global/core/chat/type';
+import { AgentPlanReadSchema } from '@fastgpt/global/core/ai/agent/type';
 import { MongoChatItem } from './chatItemSchema';
-import { addLog } from '../../common/system/log';
-import { ChatItemValueTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { MongoChat } from './chatSchema';
+import { ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
+import { MongoChatItemResponse } from './chatItemResponseSchema';
+import type { ClientSession } from '../../common/mongo';
+import { UserError } from '@fastgpt/global/common/error/utils';
+import { getLogger, LogCategories } from '../../common/logger';
+import { composeChatItemResponseData } from './nodeResponseStorage';
+import type { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import {
+  buildChatSourceAggregateMatch,
+  buildChatSourceQuery,
+  type ChatSourceParams
+} from './source';
+
+const logger = getLogger(LogCategories.MODULE.CHAT.HISTORY);
+
+export type ChatItemNodeResponseMode = 'none' | 'preview' | 'full';
+type ChatItemResponsePreviewProjection = Record<string, 1>;
+
+const defaultNodeResponsePreviewProjection = {
+  chatItemDataId: 1,
+  'data.id': 1,
+  'data.parentId': 1,
+  'data.moduleType': 1,
+  'data.moduleName': 1,
+  'data.quoteList.id': 1,
+  'data.quoteList.collectionId': 1,
+  'data.quoteList.datasetId': 1,
+  'data.quoteList.sourceId': 1,
+  'data.quoteList.sourceName': 1,
+  'data.quoteList.chunkIndex': 1,
+  'data.quoteList.score': 1,
+  'data.toolId': 1,
+  'data.toolRes.citeLinks': 1,
+  'data.errorText': 1,
+  'data.errorCaptured': 1
+} as const;
 
 export async function getChatItems({
-  appId,
+  includeDeleted = false,
+  sourceType,
+  sourceId,
   chatId,
-  limit = 30,
-  field
+  field,
+  limit,
+  nodeResponseMode,
+  nodeResponsePreviewProjection,
+
+  offset,
+  initialId,
+  prevId,
+  nextId
 }: {
-  appId: string;
+  includeDeleted?: boolean;
+  sourceType: ChatSourceTypeEnum;
+  sourceId: string;
   chatId?: string;
-  limit?: number;
   field: string;
-}): Promise<{ histories: ChatItemType[] }> {
-  if (!chatId) {
-    return { histories: [] };
-  }
+  limit: number;
+  nodeResponseMode?: ChatItemNodeResponseMode;
+  nodeResponsePreviewProjection?: ChatItemResponsePreviewProjection;
 
-  const histories = await MongoChatItem.find({ appId, chatId }, field)
-    .sort({ _id: -1 })
-    .limit(limit)
-    .lean();
+  offset?: number;
+  initialId?: string;
+  prevId?: string;
+  nextId?: string;
+}): Promise<{
+  histories: ChatItemMiniType[];
+  total: number;
+  hasMorePrev: boolean;
+  hasMoreNext: boolean;
+}> {
+  /**
+   * 只在读取边界迁移历史 Agent 数据，避免回写数据库或让旧字段扩散到客户端。
+   * 旧 ask 使用 planId 关联卡片、调用和回答；兼容读取后统一输出 askId。
+   */
+  const normalizePersistedAgentData = (histories: ChatItemMiniType[]) => {
+    const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+      !!value && typeof value === 'object' && !Array.isArray(value);
 
-  histories.reverse();
+    const normalizeLegacyAskId = (value: unknown) => {
+      if (!isObjectRecord(value)) return;
 
-  histories.forEach((item) => {
-    // @ts-ignore
-    item.value = adaptStringValue(item.value);
-  });
-
-  return { histories };
-}
-/* 临时适配旧的对话记录 */
-export const adaptStringValue = (value: any): ChatItemValueItemType[] => {
-  if (typeof value === 'string') {
-    return [
-      {
-        type: ChatItemValueTypeEnum.text,
-        text: {
-          content: value
-        }
+      const askId =
+        typeof value.askId === 'string' && value.askId
+          ? value.askId
+          : typeof value.planId === 'string' && value.planId
+            ? value.planId
+            : undefined;
+      if (askId) {
+        value.askId = askId;
       }
-    ];
+      delete value.planId;
+    };
+
+    const normalizeInteractiveAsk = (interactive: unknown) => {
+      let current = isObjectRecord(interactive) ? interactive : undefined;
+      let depth = 0;
+
+      while (current && depth < 100) {
+        const params = isObjectRecord(current.params) ? current.params : undefined;
+        const childrenResponse = isObjectRecord(params?.childrenResponse)
+          ? params.childrenResponse
+          : undefined;
+        if (!childrenResponse) break;
+
+        current = childrenResponse;
+        depth++;
+      }
+
+      if (current?.type === 'agentPlanAskQuery') {
+        normalizeLegacyAskId(current);
+      }
+    };
+
+    histories.forEach((item) => {
+      if (!item.value) return;
+
+      if (item.obj === ChatRoleEnum.Human) {
+        item.value.forEach(normalizeLegacyAskId);
+        return;
+      }
+
+      if (item.obj !== ChatRoleEnum.AI) return;
+
+      item.value.forEach((value) => {
+        normalizeLegacyAskId(value.agentAsk);
+        normalizeInteractiveAsk(value.interactive);
+
+        if (!value.plan) return;
+
+        const parsedPlan = AgentPlanReadSchema.safeParse(value.plan);
+        if (parsedPlan.success) {
+          value.plan = parsedPlan.data;
+          return;
+        }
+
+        logger.warn('Failed to parse persisted agent plan', {
+          planId: value.plan.planId,
+          issues: parsedPlan.error.issues
+        });
+        value.plan = undefined;
+      });
+    });
+  };
+
+  if (!chatId) {
+    return { histories: [], total: 0, hasMorePrev: false, hasMoreNext: false };
   }
-  return value;
-};
 
-export const addCustomFeedbacks = async ({
-  appId,
+  const chatSource = { sourceType, sourceId };
+  const shouldReadNodeResponse = nodeResponseMode || 'none';
+  field = `dataId ${field}`;
+
+  const baseCondition = includeDeleted
+    ? { ...buildChatSourceQuery(chatSource), chatId }
+    : { ...buildChatSourceQuery(chatSource), chatId, deleteTime: null };
+
+  const { histories, total, hasMorePrev, hasMoreNext } = await (async () => {
+    // Mode 1: offset pagination (original logic)
+    if (offset !== undefined) {
+      const [foundHistories, count] = await Promise.all([
+        MongoChatItem.find(baseCondition, field).sort({ _id: -1 }).skip(offset).limit(limit).lean(),
+        MongoChatItem.countDocuments(baseCondition)
+      ]);
+      return {
+        histories: foundHistories.reverse(),
+        total: count,
+        hasMorePrev: count > limit,
+        hasMoreNext: offset > 0
+      };
+    }
+    // Mode 2: prevId - get records before the target
+    else if (prevId) {
+      const prevItem = await MongoChatItem.findOne(
+        {
+          ...baseCondition,
+          dataId: prevId
+        },
+        { _id: 1 }
+      ).lean();
+      if (!prevItem) return Promise.reject(new UserError('Prev item not found'));
+
+      const [items, count] = await Promise.all([
+        MongoChatItem.find({ ...baseCondition, _id: { $lt: prevItem._id } }, field)
+          .sort({ _id: -1 })
+          .limit(limit + 1)
+          .lean(),
+        MongoChatItem.countDocuments({ ...baseCondition })
+      ]);
+
+      return {
+        histories: items.slice(0, limit).reverse(),
+        total: count,
+        hasMorePrev: items.length > limit,
+        hasMoreNext: true
+      };
+    }
+    // Mode 3: nextId - get records after the target
+    else if (nextId) {
+      const nextItem = await MongoChatItem.findOne(
+        {
+          ...baseCondition,
+          dataId: nextId
+        },
+        { _id: 1 }
+      ).lean();
+      if (!nextItem) return Promise.reject(new UserError('Next item not found'));
+
+      const [items, total] = await Promise.all([
+        MongoChatItem.find({ ...baseCondition, _id: { $gt: nextItem._id } }, field)
+          .sort({ _id: 1 })
+          .limit(limit + 1)
+          .lean(),
+        MongoChatItem.countDocuments({ ...baseCondition })
+      ]);
+
+      return {
+        histories: items.slice(0, limit),
+        total,
+        hasMorePrev: true,
+        hasMoreNext: items.length > limit
+      };
+    }
+    // Mode 2: initialId - get records around the target
+    else {
+      if (!initialId) {
+        const [foundHistories, count] = await Promise.all([
+          MongoChatItem.find(baseCondition, field).sort({ _id: -1 }).skip(0).limit(limit).lean(),
+          MongoChatItem.countDocuments(baseCondition)
+        ]);
+        return {
+          histories: foundHistories.reverse(),
+          total: count,
+          hasMorePrev: count > limit,
+          hasMoreNext: false
+        };
+      }
+
+      const halfLimit = Math.floor(limit / 2);
+      const ceilLimit = Math.ceil(limit / 2);
+
+      const targetItem = await MongoChatItem.findOne(
+        { ...baseCondition, dataId: initialId },
+        field
+      ).lean();
+      if (!targetItem) return Promise.reject(new UserError('Target item not found'));
+
+      const [prevItems, nextItems, count] = await Promise.all([
+        MongoChatItem.find({ ...baseCondition, _id: { $lt: targetItem._id } }, field)
+          .sort({ _id: -1 })
+          .limit(halfLimit + 1)
+          .lean(),
+        MongoChatItem.find({ ...baseCondition, _id: { $gt: targetItem._id } }, field)
+          .sort({ _id: 1 })
+          .limit(ceilLimit + 1)
+          .lean(),
+        MongoChatItem.countDocuments(baseCondition)
+      ]);
+
+      return {
+        histories: [
+          ...prevItems.slice(0, halfLimit).reverse(),
+          targetItem,
+          ...nextItems.slice(0, ceilLimit)
+        ].filter(Boolean),
+        total: count,
+        hasMorePrev: prevItems.length > halfLimit,
+        hasMoreNext: nextItems.length > ceilLimit
+      };
+    }
+  })();
+
+  normalizePersistedAgentData(histories);
+
+  if (shouldReadNodeResponse !== 'none' && histories.length > 0) {
+    const chatItemDataIds = histories
+      .filter((item) => item.obj === ChatRoleEnum.AI)
+      .map((item) => item.dataId);
+
+    if (chatItemDataIds.length > 0) {
+      const isPreview = shouldReadNodeResponse === 'preview';
+      const rows = await MongoChatItemResponse.find(
+        {
+          ...buildChatSourceQuery(chatSource),
+          chatId,
+          chatItemDataId: { $in: chatItemDataIds }
+        },
+        {
+          chatItemDataId: 1,
+          ...(isPreview
+            ? nodeResponsePreviewProjection || defaultNodeResponsePreviewProjection
+            : { data: 1 })
+        }
+      )
+        .sort({ _id: 1 })
+        .lean();
+
+      const chatItemResponsesMap = (() => {
+        const map = new Map<string, typeof rows>();
+        rows.forEach((item) => {
+          const val = map.get(item.chatItemDataId) || [];
+          val.push(item);
+          map.set(item.chatItemDataId, val);
+        });
+        return map;
+      })();
+
+      histories.forEach((item) => {
+        if (item.obj !== ChatRoleEnum.AI) return;
+
+        if (isPreview) {
+          item.responseData = chatItemResponsesMap
+            .get(String(item.dataId))
+            ?.flatMap((row) => (row.data ? [row.data] : []));
+        } else {
+          item.responseData = composeChatItemResponseData({
+            rows: chatItemResponsesMap.get(String(item.dataId)) || []
+          });
+        }
+      });
+    }
+  }
+
+  return { histories, total, hasMorePrev, hasMoreNext };
+}
+
+/**
+ * Update feedback count statistics for a chat in Chat table
+ * This method aggregates feedback data from chatItems and updates the Chat table
+ *
+ * @param sourceType - Chat source type
+ * @param sourceId - Chat source ID
+ * @param chatId - Chat ID
+ * @param session - Optional MongoDB session for transaction support
+ */
+export async function updateChatFeedbackCount({
+  sourceType,
+  sourceId,
   chatId,
-  chatItemId,
-  feedbacks
+  session
 }: {
-  appId: string;
-  chatId?: string;
-  chatItemId?: string;
-  feedbacks: string[];
-}) => {
-  if (!chatId || !chatItemId) return;
-
+  sourceType: ChatSourceTypeEnum;
+  sourceId: string;
+  chatId: string;
+  session?: ClientSession;
+}): Promise<void> {
+  const chatSource = { sourceType, sourceId };
+  const sourceQuery = buildChatSourceQuery(chatSource);
+  const sourceAggregateMatch = buildChatSourceAggregateMatch(chatSource);
   try {
-    await MongoChatItem.findOneAndUpdate(
+    // Aggregate feedback statistics from chatItems
+    const stats = await MongoChatItem.aggregate(
+      [
+        {
+          $match: {
+            ...sourceAggregateMatch,
+            chatId,
+            obj: ChatRoleEnum.AI
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            goodFeedbackCount: {
+              $sum: {
+                $cond: [{ $ifNull: ['$userGoodFeedback', false] }, 1, 0]
+              }
+            },
+            badFeedbackCount: {
+              $sum: {
+                $cond: [{ $ifNull: ['$userBadFeedback', false] }, 1, 0]
+              }
+            },
+            // Calculate unread good feedback count
+            unreadGoodFeedbackCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: [{ $ifNull: ['$isFeedbackRead', false] }, true] },
+                      { $ne: [{ $ifNull: ['$userGoodFeedback', null] }, null] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            // Calculate unread bad feedback count
+            unreadBadFeedbackCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: [{ $ifNull: ['$isFeedbackRead', false] }, true] },
+                      { $ne: [{ $ifNull: ['$userBadFeedback', null] }, null] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ],
+      { session }
+    );
+
+    const feedbackStats = stats[0] || {
+      goodFeedbackCount: 0,
+      badFeedbackCount: 0,
+      unreadGoodFeedbackCount: 0,
+      unreadBadFeedbackCount: 0
+    };
+
+    // Calculate boolean flags
+    const hasGoodFeedback = feedbackStats.goodFeedbackCount > 0;
+    const hasBadFeedback = feedbackStats.badFeedbackCount > 0;
+    const hasUnreadGoodFeedback = feedbackStats.unreadGoodFeedbackCount > 0;
+    const hasUnreadBadFeedback = feedbackStats.unreadBadFeedbackCount > 0;
+
+    // Build update object - only set fields that are true, unset fields that are false
+    const updateObj: Record<string, any> = {};
+    const unsetObj: Record<string, any> = {};
+
+    if (hasGoodFeedback) {
+      updateObj.hasGoodFeedback = true;
+    } else {
+      unsetObj.hasGoodFeedback = '';
+    }
+
+    if (hasBadFeedback) {
+      updateObj.hasBadFeedback = true;
+    } else {
+      unsetObj.hasBadFeedback = '';
+    }
+
+    if (hasUnreadGoodFeedback) {
+      updateObj.hasUnreadGoodFeedback = true;
+    } else {
+      unsetObj.hasUnreadGoodFeedback = '';
+    }
+
+    if (hasUnreadBadFeedback) {
+      updateObj.hasUnreadBadFeedback = true;
+    } else {
+      unsetObj.hasUnreadBadFeedback = '';
+    }
+
+    // Build the final update query
+    const updateQuery: Record<string, any> = {};
+    if (Object.keys(updateObj).length > 0) {
+      updateQuery.$set = updateObj;
+    }
+    if (Object.keys(unsetObj).length > 0) {
+      updateQuery.$unset = unsetObj;
+    }
+
+    // Update Chat table with aggregated statistics and boolean flags
+    await MongoChat.updateOne(
       {
-        appId,
-        chatId,
-        dataId: chatItemId
+        ...sourceQuery,
+        chatId
       },
+      updateQuery,
       {
-        $push: { customFeedbacks: { $each: feedbacks } }
+        session
       }
     );
+
+    logger.debug('Chat feedback count updated', {
+      sourceType: chatSource.sourceType,
+      sourceId: chatSource.sourceId,
+      chatId,
+      stats: feedbackStats,
+      hasGoodFeedback,
+      hasBadFeedback,
+      hasUnreadGoodFeedback,
+      hasUnreadBadFeedback
+    });
   } catch (error) {
-    addLog.error('addCustomFeedbacks error', error);
+    logger.error('Failed to update chat feedback count', {
+      sourceType: chatSource.sourceType,
+      sourceId: chatSource.sourceId,
+      chatId,
+      error
+    });
+    throw error;
   }
-};
+}

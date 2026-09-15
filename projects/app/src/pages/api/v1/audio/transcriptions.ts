@@ -1,82 +1,86 @@
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { jsonRes } from '@fastgpt/service/common/response';
-import { getUploadModel } from '@fastgpt/service/common/file/multer';
-import { removeFilesByPaths } from '@fastgpt/service/common/file/utils';
-import fs from 'fs';
-import { pushWhisperUsage } from '@/service/support/wallet/usage/push';
-import { authChatCert } from '@/service/support/permission/auth/chat';
-import { OutLinkChatAuthProps } from '@fastgpt/global/support/permission/chat';
+import { pushWhisperUsage } from '@fastgpt/service/support/wallet/usage/controller';
+import { authChatTargetCrud } from '@/service/support/permission/auth/chat';
 import { NextAPI } from '@/service/middleware/entry';
 import { aiTranscriptions } from '@fastgpt/service/core/ai/audio/transcriptions';
+import {
+  assertMemberRateLimit,
+  MemberRateLimitPolicy
+} from '@fastgpt/service/common/rateLimit/interface/member';
 
-const upload = getUploadModel({
-  maxSize: 20
-});
+import { multer } from '@fastgpt/service/common/file/multer';
+import { AudioTranscriptionsDataSchema } from '@fastgpt/global/openapi/core/chat/record/api';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { ERROR_ENUM } from '@fastgpt/global/common/error/errorCode';
+import { UsageSourceEnum } from '@fastgpt/global/support/wallet/usage/constants';
 
-async function handler(req: NextApiRequest, res: NextApiResponse<any>) {
-  let filePaths: string[] = [];
+async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const filepaths: string[] = [];
 
   try {
+    const result = await multer.resolveFormData({ request: req });
+    filepaths.push(result.fileMetadata.path);
     const {
-      file,
-      data: { appId, duration, shareId, outLinkUid, teamId: spaceTeamId, teamToken }
-    } = await upload.doUpload<
-      OutLinkChatAuthProps & {
-        appId: string;
-        duration: number;
-      }
-    >(req, res);
+      sourceType,
+      sourceId,
+      chatId,
+      duration: rawDuration,
+      outLinkAuthData
+    } = parseApiInput({
+      req: { body: result.data },
+      bodySchema: AudioTranscriptionsDataSchema
+    }).body;
 
-    req.body.shareId = shareId;
-    req.body.outLinkUid = outLinkUid;
-    req.body.teamId = spaceTeamId;
-    req.body.teamToken = teamToken;
-
-    filePaths = [file.path];
-
-    if (!global.whisperModel) {
-      throw new Error('whisper model not found');
-    }
-
-    if (!file) {
+    if (!result.fileMetadata) {
       throw new Error('file not found');
     }
+    if (rawDuration === undefined) {
+      throw new Error('duration not found');
+    }
+    const duration = rawDuration < 1 ? 1 : rawDuration;
 
-    // auth role
-    const { teamId, tmbId } = await authChatCert({ req, authToken: true });
-
-    // auth app
-    // const app = await MongoApp.findById(appId, 'modules').lean();
-    // if (!app) {
-    //   throw new Error('app not found');
-    // }
-    // if (!whisperConfig?.open) {
-    //   throw new Error('Whisper is not open in the app');
-    // }
-
-    const result = await aiTranscriptions({
-      model: global.whisperModel.model,
-      fileStream: fs.createReadStream(file.path)
+    const { teamId, tmbId } = await authChatTargetCrud({
+      req,
+      authToken: true,
+      sourceType,
+      sourceId,
+      chatId,
+      outLinkAuthData
+    });
+    await assertMemberRateLimit({
+      policy: MemberRateLimitPolicy.Transcriptions,
+      memberId: String(tmbId)
+    });
+    const modelHandle = await getModelHandle();
+    const transcriptionsResult = await aiTranscriptions({
+      model: modelHandle.getDefaultModelData('stt'),
+      fileStream: result.getReadStream(),
+      filename: result.fileMetadata.originalname
     });
 
-    pushWhisperUsage({
+    await pushWhisperUsage({
       teamId,
       tmbId,
-      duration
+      duration: transcriptionsResult?.usage?.total_tokens || duration,
+      source: UsageSourceEnum.fastgpt
     });
 
     jsonRes(res, {
-      data: result.text
+      data: transcriptionsResult.text
     });
   } catch (err) {
-    console.log(err);
+    if (err === ERROR_ENUM.tooManyRequest) {
+      throw err;
+    }
     jsonRes(res, {
       code: 500,
       error: err
     });
+  } finally {
+    multer.clearDiskTempFiles(filepaths);
   }
-
-  removeFilesByPaths(filePaths);
 }
 
 export default NextAPI(handler);

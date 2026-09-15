@@ -1,17 +1,40 @@
 export enum TimerIdEnum {
-  checkInValidDatasetFiles = 'checkInValidDatasetFiles',
+  checkExpiredFiles = 'checkExpiredFiles',
   checkInvalidDatasetData = 'checkInvalidDatasetData',
   checkInvalidVector = 'checkInvalidVector',
   clearExpiredSubPlan = 'clearExpiredSubPlan',
   updateStandardPlan = 'updateStandardPlan',
-  scheduleTriggerApp = 'scheduleTriggerApp'
+  scheduleTriggerApp = 'scheduleTriggerApp',
+  notification = 'notification',
+
+  clearExpiredRawTextBuffer = 'clearExpiredRawTextBuffer',
+  clearExpiredDatasetImage = 'clearExpiredDatasetImage',
+  clearExpiredMinioFiles = 'clearExpiredMinioFiles',
+  recordTeamQPM = 'recordTeamQPM',
+  auditLogCleanup = 'auditLogCleanup',
+  chatHistoryCleanup = 'chatHistoryCleanup',
+  datasetSyncSchedulerReconcile = 'datasetSyncSchedulerReconcile',
+  stopInactiveSandboxes = 'stopInactiveSandboxes',
+  archiveInactiveSandboxes = 'archiveInactiveSandboxes',
+  recoverStaleSandboxOperations = 'recoverStaleSandboxOperations',
+  enterpriseAuthTaskCleanup = 'enterpriseAuthTaskCleanup',
+  accountCancellationReminder = 'accountCancellationReminder',
+  accountCancellationFinalize = 'accountCancellationFinalize',
+  /** 纠正长时间卡在 generating 的会话状态 */
+  cleanStaleGeneratingChat = 'cleanStaleGeneratingChat'
 }
 
-export const timerIdMap = {
-  [TimerIdEnum.checkInValidDatasetFiles]: 'checkInValidDatasetFiles',
-  [TimerIdEnum.checkInvalidDatasetData]: 'checkInvalidDatasetData',
-  [TimerIdEnum.checkInvalidVector]: 'checkInvalidVector',
-  [TimerIdEnum.clearExpiredSubPlan]: 'clearExpiredSubPlan',
-  [TimerIdEnum.updateStandardPlan]: 'updateStandardPlan',
-  [TimerIdEnum.scheduleTriggerApp]: 'scheduleTriggerApp'
-};
+export enum LockNotificationEnum {
+  NotificationExpire = 'notification_expire',
+  NotificationFreeClean = 'notification_free_clean',
+  NotificationLackOfPoints = 'notification_lack_of_points'
+}
+
+export type LockType = `${LockNotificationEnum}`;
+
+// add a new type enum example:
+// export enum ExampleLockEnum {
+//    ExampleLockType1 = 'example_lock_type1'
+// }
+//
+// export type LockType = `${NotificationLockEnum}` | `${ExampleLockEnum}`

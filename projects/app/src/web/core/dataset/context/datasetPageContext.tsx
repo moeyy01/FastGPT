@@ -1,45 +1,35 @@
 import { useQuery } from '@tanstack/react-query';
-import { ReactNode, useMemo, useState } from 'react';
-import { useTranslation } from 'next-i18next';
+import { type ReactNode, useState } from 'react';
 import { createContext } from 'use-context-selector';
-import {
-  getDatasetById,
-  getDatasetTrainingQueue,
-  getTrainingQueueLen,
-  putDatasetById
-} from '../api';
+import { getDatasetById, getDatasetPaths, putDatasetById } from '../api';
+import { getAllTags } from '../api/collection';
+import { getDatasetTrainingQueue } from '../api/training';
 import { defaultDatasetDetail } from '../constants';
-import { DatasetUpdateBody } from '@fastgpt/global/core/dataset/api';
-import { DatasetItemType } from '@fastgpt/global/core/dataset/type';
+import { type UpdateDatasetBody } from '@fastgpt/global/openapi/core/dataset/api';
+import { type DatasetItemType, type DatasetTagType } from '@fastgpt/global/core/dataset/type';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { type ParentTreePathItemType } from '@fastgpt/global/common/parentFolder/type';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { filterApiDatasetServerPublicData } from '@fastgpt/global/core/dataset/apiDataset/utils';
 
 type DatasetPageContextType = {
   datasetId: string;
   datasetDetail: DatasetItemType;
   loadDatasetDetail: (id: string) => Promise<DatasetItemType>;
-  updateDataset: (data: DatasetUpdateBody) => Promise<void>;
+  updateDataset: (data: UpdateDatasetBody) => Promise<void>;
 
-  vectorTrainingMap: {
-    colorSchema: string;
-    tip: string;
-  };
-  agentTrainingMap: {
-    colorSchema: string;
-    tip: string;
-  };
+  allDatasetTags: DatasetTagType[];
+  isLoadingAllDatasetTags: boolean;
+  loadAllDatasetTags: () => Promise<DatasetTagType[]>;
+  paths: ParentTreePathItemType[];
+  refetchPaths: () => void;
+
   rebuildingCount: number;
   trainingCount: number;
   refetchDatasetTraining: () => void;
 };
 
 export const DatasetPageContext = createContext<DatasetPageContextType>({
-  vectorTrainingMap: {
-    colorSchema: '',
-    tip: ''
-  },
-  agentTrainingMap: {
-    colorSchema: '',
-    tip: ''
-  },
   rebuildingCount: 0,
   trainingCount: 0,
   refetchDatasetTraining: function (): void {
@@ -47,12 +37,19 @@ export const DatasetPageContext = createContext<DatasetPageContextType>({
   },
   datasetId: '',
   datasetDetail: defaultDatasetDetail,
-  loadDatasetDetail: function (id: string): Promise<DatasetItemType> {
+  loadDatasetDetail: function (_id: string): Promise<DatasetItemType> {
     throw new Error('Function not implemented.');
   },
-  updateDataset: function (data: DatasetUpdateBody): Promise<void> {
+  updateDataset: function (_data: UpdateDatasetBody): Promise<void> {
     throw new Error('Function not implemented.');
-  }
+  },
+  allDatasetTags: [],
+  isLoadingAllDatasetTags: false,
+  loadAllDatasetTags: function (): Promise<DatasetTagType[]> {
+    throw new Error('Function not implemented.');
+  },
+  paths: [],
+  refetchPaths: () => {}
 });
 
 export const DatasetPageContextProvider = ({
@@ -62,79 +59,44 @@ export const DatasetPageContextProvider = ({
   children: ReactNode;
   datasetId: string;
 }) => {
-  const { t } = useTranslation();
+  const { feConfigs } = useSystemStore();
 
   // dataset detail
   const [datasetDetail, setDatasetDetail] = useState(defaultDatasetDetail);
-
   const loadDatasetDetail = async (id: string) => {
     const data = await getDatasetById(id);
-
     setDatasetDetail(data);
-
     return data;
   };
-  const updateDataset = async (data: DatasetUpdateBody) => {
+  const updateDataset = async (data: UpdateDatasetBody) => {
     await putDatasetById(data);
 
     if (datasetId === data.id) {
-      setDatasetDetail((state) => ({
-        ...state,
-        ...data
-      }));
+      const detail = await getDatasetById(datasetId);
+      setDatasetDetail({
+        ...detail,
+        apiDatasetServer: filterApiDatasetServerPublicData(detail.apiDatasetServer)
+      });
     }
   };
 
-  // global queue
-  const { data: { vectorTrainingCount = 0, agentTrainingCount = 0 } = {} } = useQuery(
-    ['getTrainingQueueLen'],
-    () =>
-      getTrainingQueueLen({
-        vectorModel: datasetDetail.vectorModel.model,
-        agentModel: datasetDetail.agentModel.model
-      }),
+  // dataset tags
+  const {
+    runAsync: loadAllDatasetTags,
+    data: allDatasetTags = [],
+    loading: isLoadingAllDatasetTags
+  } = useRequest(
+    async () => {
+      if (!feConfigs?.isPlus || !datasetDetail._id) return [];
+
+      const { list } = await getAllTags(datasetDetail._id);
+      return list;
+    },
     {
-      refetchInterval: 10000
+      manual: false,
+      refreshDeps: [datasetDetail._id]
     }
   );
-  const { vectorTrainingMap, agentTrainingMap } = useMemo(() => {
-    const vectorTrainingMap = (() => {
-      if (vectorTrainingCount < 1000)
-        return {
-          colorSchema: 'green',
-          tip: t('common:core.dataset.training.Leisure')
-        };
-      if (vectorTrainingCount < 10000)
-        return {
-          colorSchema: 'yellow',
-          tip: t('common:core.dataset.training.Waiting')
-        };
-      return {
-        colorSchema: 'red',
-        tip: t('common:core.dataset.training.Full')
-      };
-    })();
-    const agentTrainingMap = (() => {
-      if (agentTrainingCount < 100)
-        return {
-          colorSchema: 'green',
-          tip: t('common:core.dataset.training.Leisure')
-        };
-      if (agentTrainingCount < 1000)
-        return {
-          colorSchema: 'yellow',
-          tip: t('common:core.dataset.training.Waiting')
-        };
-      return {
-        colorSchema: 'red',
-        tip: t('common:core.dataset.training.Full')
-      };
-    })();
-    return {
-      vectorTrainingMap,
-      agentTrainingMap
-    };
-  }, [agentTrainingCount, t, vectorTrainingCount]);
 
   // training and rebuild queue
   const { data: { rebuildingCount = 0, trainingCount = 0 } = {}, refetch: refetchDatasetTraining } =
@@ -142,17 +104,39 @@ export const DatasetPageContextProvider = ({
       refetchInterval: 10000
     });
 
+  const { data: paths = [], runAsync: refetchPaths } = useRequest(
+    () =>
+      getDatasetPaths({
+        sourceId: datasetDetail?._id,
+        type: 'parent'
+      }).then((res) => {
+        res.push({
+          parentId: '',
+          parentName: datasetDetail.name
+        });
+        return res;
+      }),
+    {
+      manual: false,
+      refreshDeps: [datasetDetail.parentId]
+    }
+  );
+
   const contextValue: DatasetPageContextType = {
     datasetId,
     datasetDetail,
     loadDatasetDetail,
     updateDataset,
+    paths,
+    refetchPaths,
 
-    vectorTrainingMap,
-    agentTrainingMap,
     rebuildingCount,
     trainingCount,
-    refetchDatasetTraining
+    refetchDatasetTraining,
+
+    allDatasetTags,
+    isLoadingAllDatasetTags,
+    loadAllDatasetTags
   };
 
   return <DatasetPageContext.Provider value={contextValue}>{children}</DatasetPageContext.Provider>;

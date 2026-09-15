@@ -2,6 +2,7 @@
 import { PRICE_SCALE } from '../constants';
 import { UsageSourceEnum } from './constants';
 import { AuthUserTypeEnum } from '../../permission/constant';
+import { PublishChannelEnum } from '../../outLink/constant';
 
 /**
  * dataset price / PRICE_SCALE = real price
@@ -20,4 +21,27 @@ export const getUsageSourceByAuthType = ({
   if (shareId) return UsageSourceEnum.shareLink;
   if (authType === AuthUserTypeEnum.apikey) return UsageSourceEnum.api;
   return UsageSourceEnum.fastgpt;
+};
+
+export const getUsageSourceByPublishChannel = (publishchannel: PublishChannelEnum) => {
+  switch (publishchannel) {
+    case PublishChannelEnum.share:
+      return UsageSourceEnum.share;
+    case PublishChannelEnum.iframe:
+      return UsageSourceEnum.shareLink;
+    case PublishChannelEnum.apikey:
+      return UsageSourceEnum.api;
+    case PublishChannelEnum.feishu:
+      return UsageSourceEnum.feishu;
+    case PublishChannelEnum.wecom:
+      return UsageSourceEnum.wecom;
+    case PublishChannelEnum.wechat:
+      return UsageSourceEnum.wechat;
+    case PublishChannelEnum.officialAccount:
+      return UsageSourceEnum.official_account;
+    case PublishChannelEnum.dingtalk:
+      return UsageSourceEnum.dingtalk;
+    default:
+      return UsageSourceEnum.fastgpt;
+  }
 };

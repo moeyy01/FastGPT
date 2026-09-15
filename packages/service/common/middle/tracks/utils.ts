@@ -1,0 +1,350 @@
+import { type PushTrackCommonType } from '@fastgpt/global/common/middle/tracks/type';
+import { TrackModel } from './schema';
+import { TrackEnum } from '@fastgpt/global/common/middle/tracks/constants';
+import type { OAuthEnum } from '@fastgpt/global/support/user/constant';
+import type { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import type { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
+import { getAppLatestVersion } from '../../../core/app/version/controller';
+import { type ShortUrlParams } from '@fastgpt/global/support/marketing/type';
+import { differenceInDays } from 'date-fns';
+import { getLogger, LogCategories } from '../../logger';
+import { DailyActiveDedupeCache } from '@fastgpt/dal/redis/caches';
+import type {
+  TeamEnterpriseAuthStatusEnum,
+  TeamEnterpriseAuthTaskStatusEnum
+} from '@fastgpt/global/support/user/team/enterpriseAuth/constant';
+import type { StandardSubLevelEnum } from '@fastgpt/global/support/wallet/sub/constants';
+
+const logger = getLogger(LogCategories.EVENT.TRACK);
+const dailyActiveDedupeCache = new DailyActiveDedupeCache({ logger });
+
+type AccountCancellationTrackData = {
+  uid?: string;
+  teamId?: string;
+  tmbId?: string;
+  userId: string;
+  operatorUserId: string;
+  operatorType: 'self' | 'system' | 'admin';
+  requestSource: 'self' | 'admin';
+  requestedAt: Date;
+  scheduledCancelAt: Date;
+  finalizedAt?: Date;
+  verificationMethod?: string;
+  verificationProvider?: string;
+  affectedTeamIds?: string[];
+  requestId?: string;
+  cronExecutionId?: string;
+};
+
+const createTrack = ({ event, data }: { event: TrackEnum; data: Record<string, any> }) => {
+  if (!global.feConfigs?.isPlus) return;
+  logger.debug('Enqueue track event', {
+    event,
+    ...data
+  });
+
+  const { uid, teamId, tmbId, ...props } = data;
+
+  return TrackModel.create({
+    event,
+    uid,
+    teamId,
+    tmbId,
+    data: props
+  });
+};
+
+// Run times
+const pushCountTrack = ({
+  event,
+  key,
+  data
+}: {
+  event: TrackEnum;
+  key: string;
+  data: Record<string, any>;
+}) => {
+  if (!global.feConfigs?.isPlus) return;
+  logger.debug('Enqueue track counter event', {
+    event,
+    key
+  });
+
+  if (!global.countTrackQueue) {
+    global.countTrackQueue = new Map();
+  }
+
+  const value = global.countTrackQueue.get(key);
+  if (value) {
+    global.countTrackQueue.set(key, {
+      ...value,
+      count: value.count + 1
+    });
+  } else {
+    global.countTrackQueue.set(key, {
+      event,
+      data,
+      count: 1
+    });
+  }
+};
+
+export const pushTrack = {
+  login: (data: PushTrackCommonType & { type: `${OAuthEnum}` | 'password' }) => {
+    return createTrack({
+      event: TrackEnum.login,
+      data
+    })?.then(() => {
+      pushTrack.dailyUserActive({
+        uid: data.uid,
+        teamId: data.teamId,
+        tmbId: data.tmbId
+      });
+    });
+  },
+  dailyUserActive: async (data: PushTrackCommonType) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const shouldRecord = await dailyActiveDedupeCache.shouldRecord({
+        uid: data.uid,
+        date: today
+      });
+      if (!shouldRecord) return;
+
+      return createTrack({
+        event: TrackEnum.dailyUserActive,
+        data
+      });
+    } catch (error) {
+      logger.error('Failed to record daily active user', { error });
+    }
+  },
+  createApp: (
+    data: PushTrackCommonType &
+      ShortUrlParams & {
+        type: AppTypeEnum;
+        appId: string;
+      }
+  ) => {
+    return createTrack({
+      event: TrackEnum.createApp,
+      data
+    });
+  },
+  createDataset: (data: PushTrackCommonType & { type: DatasetTypeEnum }) => {
+    return createTrack({
+      event: TrackEnum.createDataset,
+      data
+    });
+  },
+  countAppNodes: async (data: PushTrackCommonType & { appId: string }) => {
+    try {
+      const { nodes } = await getAppLatestVersion(data.appId);
+      const nodeTypeList = nodes.map((node) => ({
+        type: node.flowNodeType,
+        pluginId: node.pluginId
+      }));
+      return createTrack({
+        event: TrackEnum.appNodes,
+        data: {
+          ...data,
+          nodeTypeList
+        }
+      });
+    } catch {}
+  },
+  runSystemTool: (
+    data: PushTrackCommonType & { toolId: string; result: 1 | 0; usagePoint?: number; msg?: string }
+  ) => {
+    return createTrack({
+      event: TrackEnum.runSystemTool,
+      data
+    });
+  },
+  datasetSearch: (data: { teamId: string; datasetIds: string[] }) => {
+    if (!data.teamId) return;
+    data.datasetIds.forEach((datasetId) => {
+      pushCountTrack({
+        event: TrackEnum.datasetSearch,
+        key: `${TrackEnum.datasetSearch}_${datasetId}`,
+        data: {
+          teamId: data.teamId,
+          datasetId
+        }
+      });
+    });
+  },
+  teamChatQPM: (data: { teamId: string }) => {
+    if (!data.teamId) return;
+    pushCountTrack({
+      event: TrackEnum.teamChatQPM,
+      key: `${TrackEnum.teamChatQPM}_${data.teamId}`,
+      data: {
+        teamId: data.teamId
+      }
+    });
+  },
+  enterpriseAuthStart: (
+    data: PushTrackCommonType & {
+      result: 'success' | 'failed';
+      status?: `${TeamEnterpriseAuthStatusEnum}`;
+      taskStatus?: `${TeamEnterpriseAuthTaskStatusEnum}`;
+      errorCode?: string;
+      hasCurrentTask?: boolean;
+    }
+  ) => {
+    return createTrack({
+      event: TrackEnum.enterpriseAuthStart,
+      data
+    });
+  },
+  enterpriseAuthBenefitGrant: (
+    data: PushTrackCommonType & {
+      status?: `${TeamEnterpriseAuthStatusEnum}`;
+      taskId?: string;
+      billId?: string;
+      standSubLevel: `${StandardSubLevelEnum}`;
+      durationDay: number;
+      totalPoints: number;
+      grantedPlanCount: number;
+    }
+  ) => {
+    return createTrack({
+      event: TrackEnum.enterpriseAuthBenefitGrant,
+      data
+    });
+  },
+  accountCancellationSubmitSuccess: (
+    data: AccountCancellationTrackData & {
+      operatorType: 'self';
+      requestSource: 'self';
+      verificationMethod: string;
+      affectedTeamIds: string[];
+    }
+  ) => {
+    return createTrack({
+      event: TrackEnum.accountCancellationSubmitSuccess,
+      data
+    });
+  },
+  accountCancellationCancelSuccess: (
+    data: AccountCancellationTrackData & {
+      operatorType: 'self';
+      requestSource: 'self';
+    }
+  ) => {
+    return createTrack({
+      event: TrackEnum.accountCancellationCancelSuccess,
+      data
+    });
+  },
+  accountCancellationFinalizeSuccess: (
+    data: AccountCancellationTrackData & {
+      finalizedAt: Date;
+    }
+  ) => {
+    return createTrack({
+      event: TrackEnum.accountCancellationFinalizeSuccess,
+      data
+    });
+  },
+
+  // Admin cron job tracks
+  subscriptionDeleted: (data: {
+    teamId: string;
+    subscriptionType: string;
+    totalPoints: number;
+    usedPoints: number;
+    startTime: Date;
+    expiredTime: Date;
+  }) => {
+    return createTrack({
+      event: TrackEnum.subscriptionDeleted,
+      data: {
+        teamId: data.teamId,
+        subscriptionType: data.subscriptionType,
+        totalPoints: data.totalPoints,
+        usedPoints: data.usedPoints,
+        activeDays: differenceInDays(data.expiredTime, data.startTime)
+      }
+    });
+  },
+  freeAccountCleanup: (data: { teamId: string; expiredTime: Date }) => {
+    return createTrack({
+      event: TrackEnum.freeAccountCleanup,
+      data: {
+        teamId: data.teamId,
+        expiredTime: data.expiredTime
+      }
+    });
+  },
+  auditLogCleanup: (data: { teamId: string; retentionDays: number }) => {
+    return createTrack({
+      event: TrackEnum.auditLogCleanup,
+      data: {
+        teamId: data.teamId,
+        retentionDays: data.retentionDays
+      }
+    });
+  },
+  chatHistoryCleanup: (data: { teamId: string; retentionDays: number }) => {
+    return createTrack({
+      event: TrackEnum.chatHistoryCleanup,
+      data: {
+        teamId: data.teamId,
+        retentionDays: data.retentionDays
+      }
+    });
+  },
+  /** @deprecated Legacy Sandbox archive event. Use userSandboxMigration instead. */
+  sandboxArchive: (data: {
+    provider: string;
+    sandboxId: string;
+    reason: string;
+    source?: string;
+  }) => {
+    return createTrack({
+      event: TrackEnum.sandboxArchive,
+      data
+    });
+  },
+  userSandboxMigration: (
+    data: {
+      runId: string;
+      dryRun: boolean;
+    } & (
+      | { phase: 'started' }
+      | {
+          phase: 'failure';
+          sandboxId: string;
+          step:
+            | 'prepare_app_target'
+            | 'archive_legacy'
+            | 'archive_workspace'
+            | 'mark_archive_deleting'
+            | 'migrate_skill'
+            | 'migrate_app'
+            | 'delete_sandbox'
+            | 'delete_volume'
+            | 'verify_archive'
+            | 'complete_legacy_record'
+            | 'complete_legacy_archive'
+            | 'delete_archive'
+            | 'delete_legacy_record'
+            | 'stop_failed_legacy';
+          error: string;
+        }
+      | {
+          phase: 'completed';
+          successCount: number;
+          failureCount: number;
+          durationMs: number;
+        }
+    )
+  ) => {
+    return createTrack({
+      event: TrackEnum.userSandboxMigration,
+      data
+    });
+  }
+};

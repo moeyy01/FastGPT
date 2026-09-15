@@ -1,0 +1,14 @@
+{
+  "title": "应用构建",
+  "root": false,
+  "pages": [
+    "general",
+    "agentv2",
+    "workflow",
+    "tools",
+    "skill",
+    "publish",
+    "evaluation",
+    "faq"
+  ]
+}

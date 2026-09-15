@@ -1,0 +1,617 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { getHTTPToolList, runHTTPTool } from '@fastgpt/service/core/app/http';
+import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
+import { PRIVATE_URL_TEXT } from '@fastgpt/service/common/system/utils';
+import { serviceEnv } from '@fastgpt/service/env';
+import { ContentTypes } from '@fastgpt/global/core/workflow/constants';
+
+const { axiosMock } = vi.hoisted(() => ({ axiosMock: vi.fn() }));
+vi.mock('@fastgpt/service/common/api/axios', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@fastgpt/service/common/api/axios')>()),
+  axios: axiosMock
+}));
+
+describe('runHTTPTool request routing', () => {
+  const originalCheckInternalIp = serviceEnv.CHECK_INTERNAL_IP;
+  beforeEach(() => {
+    serviceEnv.CHECK_INTERNAL_IP = false;
+    axiosMock.mockReset();
+    axiosMock.mockImplementation(async (request) => ({
+      data: { json: request.data, query: request.params }
+    }));
+  });
+  afterEach(() => {
+    serviceEnv.CHECK_INTERNAL_IP = originalCheckInternalIp;
+  });
+
+  it.each(['POST', 'PUT', 'PATCH'])(
+    'sends imported %s JSON rather than an empty object',
+    async (method) => {
+      const params = {
+        marker: 'verification',
+        profile: { name: '张三', count: 7 },
+        tags: ['alpha', 'beta'],
+        enabled: false,
+        empty: null
+      };
+      const apiSchemaStr = JSON.stringify({
+        openapi: '3.0.0',
+        info: { title: 'Echo', version: '1' },
+        paths: {
+          '/echo': {
+            [method.toLowerCase()]: {
+              requestBody: {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        marker: { type: 'string' },
+                        profile: { type: 'object' },
+                        tags: { type: 'array', items: { type: 'string' } },
+                        enabled: { type: 'boolean' },
+                        empty: {}
+                      }
+                    }
+                  }
+                }
+              },
+              responses: { '200': { description: 'OK' } }
+            }
+          }
+        }
+      });
+      expect(
+        await runHTTPTool({
+          baseUrl: 'https://example.com',
+          toolPath: '/echo',
+          method,
+          params,
+          apiSchemaStr,
+          customHeaders: { Authorization: 'Bearer synthetic-test' }
+        })
+      ).toEqual({ data: { json: params, query: undefined } });
+      expect(axiosMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: params,
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer synthetic-test'
+          })
+        })
+      );
+    }
+  );
+
+  it.each([undefined, { type: ContentTypes.none }])(
+    'preserves manual no-body behavior (%s)',
+    async (staticBody) => {
+      await runHTTPTool({
+        baseUrl: 'https://example.com',
+        toolPath: '/echo',
+        method: 'POST',
+        params: { privateValue: 'not-for-body' },
+        staticBody
+      });
+      expect(axiosMock).toHaveBeenCalledWith(
+        expect.objectContaining({ data: {}, params: undefined })
+      );
+    }
+  );
+
+  it('preserves manual JSON templates and GET query inputs', async () => {
+    await runHTTPTool({
+      baseUrl: 'https://example.com',
+      toolPath: '/echo',
+      method: 'POST',
+      params: { value: 'test', ignored: 'not-for-body' },
+      staticBody: { type: ContentTypes.json, content: '{"value":"{{value}}"}' }
+    });
+    expect(axiosMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: { value: 'test' } })
+    );
+    await runHTTPTool({
+      baseUrl: 'https://example.com',
+      toolPath: '/echo',
+      method: 'GET',
+      params: { value: 'test' }
+    });
+    expect(axiosMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: undefined, params: { value: 'test' } })
+    );
+  });
+
+  it('does not send a request when OpenAPI resolution fails', async () => {
+    const result = await runHTTPTool({
+      baseUrl: 'https://example.com',
+      toolPath: '/missing',
+      method: 'POST',
+      params: {},
+      apiSchemaStr: '{"openapi":"3.0.0","info":{"title":"Test","version":"1"},"paths":{}}'
+    });
+    expect(result.errorMsg).toContain('OpenAPI operation not found');
+    expect(axiosMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('SSRF Vulnerability Fix Tests', () => {
+  const originalCheckInternalIp = serviceEnv.CHECK_INTERNAL_IP;
+
+  beforeEach(() => {
+    // 确保测试环境启用内部 IP 检查
+    serviceEnv.CHECK_INTERNAL_IP = true;
+  });
+
+  afterEach(() => {
+    serviceEnv.CHECK_INTERNAL_IP = originalCheckInternalIp;
+  });
+
+  describe('getHTTPToolList', () => {
+    it('preserves stored schemas when legacy OpenAPI text cannot be parsed', async () => {
+      const requestSchema = { type: 'object', properties: { q: { type: 'string' } } };
+      const [tool] = await getHTTPToolList({
+        _id: 'http-toolset',
+        type: AppTypeEnum.httpToolSet,
+        modules: [
+          {
+            toolConfig: {
+              httpToolSet: {
+                apiSchemaStr: '{"openapi":"3.1.0"}',
+                toolList: [
+                  {
+                    name: 'search',
+                    description: 'Search',
+                    path: '/search',
+                    method: 'GET',
+                    requestSchema
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      } as any);
+      expect(tool.requestSchema).toEqual(requestSchema);
+      expect(tool.requestSchema).not.toHaveProperty('required');
+    });
+    it('repairs historical Body-only schemas from OpenAPI rather than editor-only fields', async () => {
+      const requestSchema = {
+        type: 'object',
+        additionalProperties: false,
+        properties: { body: { type: 'object' } },
+        required: ['body']
+      };
+      const inputSchema = {
+        type: 'object',
+        properties: { editorOnly: { type: 'string' } },
+        required: ['editorOnly']
+      };
+      const apiSchemaStr = JSON.stringify({
+        openapi: '3.0.0',
+        info: { title: 'Mixed', version: '1' },
+        paths: {
+          '/echo/{id}': {
+            post: {
+              parameters: [
+                { in: 'query', name: 'q', schema: { type: 'string' } },
+                { in: 'path', name: 'id', required: true, schema: { type: 'string' } }
+              ],
+              requestBody: { content: { 'application/json': { schema: requestSchema } } },
+              responses: { '200': { description: 'OK' } }
+            }
+          }
+        }
+      });
+      const app = {
+        _id: 'http-toolset',
+        type: AppTypeEnum.httpToolSet,
+        modules: [
+          {
+            toolConfig: {
+              httpToolSet: {
+                apiSchemaStr,
+                toolList: [
+                  {
+                    name: 'echo',
+                    description: 'Echo',
+                    path: '/echo/{id}',
+                    method: 'POST',
+                    inputSchema,
+                    requestSchema
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      };
+      const [tool] = await getHTTPToolList(app as any);
+      expect(tool.requestSchema).toEqual({
+        ...requestSchema,
+        properties: { q: { type: 'string' }, id: { type: 'string' }, ...requestSchema.properties },
+        required: ['body', 'id']
+      });
+      expect(tool.inputSchema).toEqual(inputSchema);
+      expect(app.modules[0].toolConfig.httpToolSet.toolList[0].requestSchema).toEqual(
+        requestSchema
+      );
+      expect(
+        (
+          await getHTTPToolList({
+            ...app,
+            modules: [
+              {
+                toolConfig: {
+                  httpToolSet: { ...app.modules[0].toolConfig.httpToolSet, apiSchemaStr: undefined }
+                }
+              }
+            ]
+          } as any)
+        )[0].requestSchema
+      ).toEqual(requestSchema);
+    });
+
+    it('should read tools when legacy customHeaders has a non-string value', async () => {
+      const result = await getHTTPToolList({
+        _id: 'http-toolset',
+        type: AppTypeEnum.httpToolSet,
+        modules: [
+          {
+            toolConfig: {
+              httpToolSet: {
+                customHeaders: false,
+                toolList: [
+                  {
+                    name: 'search',
+                    description: 'Search',
+                    path: '/search',
+                    method: 'GET'
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      } as any);
+
+      expect(result).toMatchObject([
+        {
+          name: 'search',
+          id: 'http-http-toolset/search'
+        }
+      ]);
+    });
+  });
+
+  describe('AWS Metadata Endpoint Protection', () => {
+    it('should block AWS metadata endpoint (169.254.169.254)', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://169.254.169.254',
+        toolPath: '/latest/meta-data/iam/security-credentials/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block AWS metadata endpoint with IPv6', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://[fd00:ec2::254]',
+        toolPath: '/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Kubernetes Service Protection', () => {
+    it('should block Kubernetes default service', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://kubernetes.default.svc',
+        toolPath: '/api/v1/namespaces/default/secrets/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block Kubernetes HTTPS endpoint', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'https://kubernetes.default.svc',
+        toolPath: '/api/v1/pods',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Private IP Range Protection', () => {
+    it('should block 10.0.0.0/8 private network', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://10.0.0.1',
+        toolPath: '/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block 172.16.0.0/12 private network', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://172.16.0.1',
+        toolPath: '/internal',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block 192.168.0.0/16 private network', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://192.168.1.1',
+        toolPath: '/router',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Localhost Protection', () => {
+    it('should block localhost', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost',
+        toolPath: '/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block 127.0.0.1', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://127.0.0.1',
+        toolPath: '/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block IPv6 localhost (::1)', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://[::1]',
+        toolPath: '/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Cloud Provider Metadata Endpoints', () => {
+    it('should block GCP metadata endpoint', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://metadata.google.internal',
+        toolPath: '/computeMetadata/v1/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block Alibaba Cloud metadata endpoint', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://100.100.100.200',
+        toolPath: '/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block Tencent Cloud metadata endpoint', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://metadata.tencentyun.com',
+        toolPath: '/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Link-Local Address Protection', () => {
+    it('should block 169.254.0.0/16 link-local addresses', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://169.254.1.1',
+        toolPath: '/metadata',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block IPv6 link-local addresses (fe80::)', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://[fe80::1]',
+        toolPath: '/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('URL Construction Edge Cases', () => {
+    it('should handle baseUrl without protocol', async () => {
+      const result = await runHTTPTool({
+        baseUrl: '169.254.169.254',
+        toolPath: '/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should handle relative toolPath', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost:8080',
+        toolPath: 'api/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should handle absolute toolPath', async () => {
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost',
+        toolPath: '/api/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Environment Variable Control', () => {
+    it('should always block cloud metadata endpoints even when CHECK_INTERNAL_IP=false', async () => {
+      serviceEnv.CHECK_INTERNAL_IP = false;
+
+      // 云服务商元数据端点应该始终被阻止，这是安全的关键
+      const result = await runHTTPTool({
+        baseUrl: 'http://169.254.169.254',
+        toolPath: '/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+    });
+
+    it('should always block localhost even when CHECK_INTERNAL_IP=false', async () => {
+      serviceEnv.CHECK_INTERNAL_IP = false;
+
+      // localhost 应该始终被阻止
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost',
+        toolPath: '/test',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+    });
+
+    it('should block internal addresses by default (no env var)', async () => {
+      serviceEnv.CHECK_INTERNAL_IP = false;
+
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost',
+        toolPath: '/test',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+    });
+
+    it('should block internal addresses when CHECK_INTERNAL_IP=true', async () => {
+      serviceEnv.CHECK_INTERNAL_IP = true;
+
+      const result = await runHTTPTool({
+        baseUrl: 'http://localhost',
+        toolPath: '/test',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+    });
+  });
+
+  describe('Empty BaseUrl with Complete URL in toolPath', () => {
+    it('should block internal address when baseUrl is empty and toolPath is complete URL', async () => {
+      const result = await runHTTPTool({
+        baseUrl: '',
+        toolPath: 'http://localhost:8080/api/test',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block AWS metadata when baseUrl is empty', async () => {
+      const result = await runHTTPTool({
+        baseUrl: '',
+        toolPath: 'http://169.254.169.254/latest/meta-data/',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('should block private IP when baseUrl is empty', async () => {
+      const result = await runHTTPTool({
+        baseUrl: '',
+        toolPath: 'http://192.168.1.1/admin',
+        method: 'GET',
+        params: {}
+      });
+
+      expect(result.errorMsg).toBe(PRIVATE_URL_TEXT);
+      expect(result.data).toBeUndefined();
+    });
+  });
+
+  describe('Legitimate External URLs', () => {
+    // 注意：这些测试会实际发起网络请求，可能需要 mock
+    it('should allow legitimate external URLs (example.com)', async () => {
+      // 这个测试需要 mock axios 或者跳过
+      // 因为我们不想在测试中实际发起外部请求
+    });
+  });
+});

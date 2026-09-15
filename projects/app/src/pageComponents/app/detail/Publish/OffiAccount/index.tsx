@@ -1,0 +1,259 @@
+import { FixedTableContainer } from '@fastgpt/web/components/common/FixedTable';
+import React, { useMemo, useState } from 'react';
+import {
+  Flex,
+  Box,
+  Button,
+  IconButton,
+  Table,
+  Thead,
+  Tr,
+  Th,
+  Td,
+  Tbody,
+  useDisclosure,
+  Link,
+  HStack
+} from '@chakra-ui/react';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import { useLoading } from '@fastgpt/web/hooks/useLoading';
+import { getShareChatList, delShareChatById } from '@/web/support/outLink/api';
+import { formatTimeToChatTime } from '@fastgpt/global/common/string/time';
+import { defaultOutLinkForm } from '@/web/core/app/constants';
+import type { OutLinkEditType, OffiAccountAppType } from '@fastgpt/global/support/outLink/type';
+import { PublishChannelEnum } from '@fastgpt/global/support/outLink/constant';
+import { useSafeTranslation } from '@fastgpt/web/hooks/useSafeTranslation';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import dayjs from 'dayjs';
+import dynamic from 'next/dynamic';
+import MyMenu from '@fastgpt/web/components/common/MyMenu';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { getDocPath } from '@/web/common/system/doc';
+
+const OffiAccountEditModal = dynamic(() => import('./OffiAccountEditModal'));
+const ShowShareLinkModal = dynamic(() => import('../components/showShareLinkModal'));
+
+const OffiAccount = ({
+  appId,
+  onRefreshOutLinkCounts
+}: {
+  appId: string;
+  onRefreshOutLinkCounts: () => Promise<unknown>;
+}) => {
+  const { t } = useSafeTranslation();
+  const { Loading, setIsLoading } = useLoading();
+  const { feConfigs } = useSystemStore();
+  const [editOffiAccountData, setEditOffiAccountData] =
+    useState<OutLinkEditType<OffiAccountAppType>>();
+  const [isEdit, setIsEdit] = useState<boolean>(false);
+
+  const baseUrl = useMemo(
+    () => feConfigs?.customApiDomain || `${location.origin}/api`,
+    [feConfigs?.customApiDomain]
+  );
+
+  const {
+    data: shareChatList = [],
+    loading: isFetching,
+    runAsync: refetchShareChatList
+  } = useRequest(
+    () => getShareChatList<OffiAccountAppType>({ appId, type: PublishChannelEnum.officialAccount }),
+    {
+      manual: false
+    }
+  );
+
+  const {
+    onOpen: openShowShareLinkModal,
+    isOpen: showShareLinkModalOpen,
+    onClose: closeShowShareLinkModal
+  } = useDisclosure();
+
+  const [showShareLink, setShowShareLink] = useState<string | null>(null);
+
+  return (
+    <Box
+      h={'100%'}
+      minH={0}
+      minW={0}
+      display={'flex'}
+      flexDirection={'column'}
+      overflow={'hidden'}
+      position={'relative'}
+      p={6}
+    >
+      <Flex flexShrink={0} justifyContent={'space-between'} flexDirection="row">
+        <HStack>
+          <Box color={'myGray.900'} fontWeight={'medium'} fontSize={'lg'}>
+            {t('publish:official_account.title')}
+          </Box>
+
+          {feConfigs?.docUrl && (
+            <Link
+              href={getDocPath('/guide/build/publish/official_account')}
+              target={'_blank'}
+              ml={2}
+              color={'primary.500'}
+              fontSize={'sm'}
+            >
+              <Flex alignItems={'center'}>
+                <MyIcon name="book" mr="1" w={'1rem'} />
+                {t('common:read_doc')}
+              </Flex>
+            </Link>
+          )}
+        </HStack>
+        <Button
+          variant={'primary'}
+          colorScheme={'blue'}
+          size={['sm', 'md']}
+          leftIcon={<MyIcon name={'common/addLight'} w="1.25rem" color="white" />}
+          ml={3}
+          {...(shareChatList.length >= 10
+            ? {
+                isDisabled: true,
+                title: t('common:core.app.share.Amount limit tip')
+              }
+            : {})}
+          onClick={() => {
+            setEditOffiAccountData(defaultOutLinkForm as any); // HACK
+            setIsEdit(false);
+          }}
+        >
+          {t('common:add_new')}
+        </Button>
+      </Flex>
+      <FixedTableContainer mt={3} flex={'1 1 0'} h={0} maxH="none">
+        <Table variant={'simple'} w={'100%'} overflowX={'auto'} fontSize={'sm'}>
+          <Thead>
+            <Tr>
+              <Th>{t('common:Name')} </Th>
+              <Th> {t('common:support.outlink.Usage points')} </Th>
+              {feConfigs?.isPlus && <Th>{t('common:expired_time')} </Th>}
+              <Th>{t('common:last_use_time')} </Th>
+              <Th>{t('common:Action')} </Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {shareChatList.map((item) => (
+              <Tr key={item._id}>
+                <Td>{item.name} </Td>
+                <Td>
+                  {Math.round(item.usagePoints)}
+                  {feConfigs?.isPlus
+                    ? `${
+                        item.limit?.maxUsagePoints && item.limit.maxUsagePoints > -1
+                          ? ` / ${item.limit.maxUsagePoints}`
+                          : ` / ${t('common:Unlimited')}`
+                      }`
+                    : ''}
+                </Td>
+                {feConfigs?.isPlus && (
+                  <Td>
+                    {item.limit?.expiredTime
+                      ? dayjs(item.limit.expiredTime).format('YYYY/MM/DD\nHH:mm')
+                      : '-'}
+                  </Td>
+                )}
+                <Td>
+                  {item.lastTime ? t(formatTimeToChatTime(item.lastTime)) : t('common:un_used')}
+                </Td>
+                <Td display={'flex'} alignItems={'center'}>
+                  <Button
+                    onClick={() => {
+                      setShowShareLink(`${baseUrl}/support/outLink/offiaccount/${item.shareId}`);
+                      openShowShareLinkModal();
+                    }}
+                    size={'sm'}
+                    mr={3}
+                    variant={'whitePrimary'}
+                  >
+                    {t('publish:request_address')}
+                  </Button>
+                  <MyMenu
+                    strategy="fixed"
+                    Button={
+                      <IconButton
+                        icon={<MyIcon name={'more'} w={'14px'} />}
+                        name={'more'}
+                        variant={'whitePrimary'}
+                        size={'sm'}
+                        aria-label={'more'}
+                      />
+                    }
+                    menuList={[
+                      {
+                        children: [
+                          {
+                            label: t('common:Edit'),
+                            icon: 'edit',
+                            onClick: () => {
+                              setEditOffiAccountData({
+                                _id: item._id,
+                                name: item.name,
+                                limit: item.limit,
+                                app: item.app,
+                                showCite: item.showCite,
+                                defaultResponse: item.defaultResponse,
+                                immediateResponse: item.immediateResponse
+                              });
+                              setIsEdit(true);
+                            }
+                          },
+                          {
+                            label: t('common:Delete'),
+                            icon: 'delete',
+                            onClick: async () => {
+                              setIsLoading(true);
+                              try {
+                                await delShareChatById(item._id);
+                                void Promise.all([
+                                  refetchShareChatList(),
+                                  onRefreshOutLinkCounts()
+                                ]);
+                              } catch (error) {
+                                console.log(error);
+                              }
+                              setIsLoading(false);
+                            }
+                          }
+                        ]
+                      }
+                    ]}
+                  />
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+        {shareChatList.length === 0 && !isFetching && (
+          <EmptyTip text={t('common:core.app.share.Not share link')}> </EmptyTip>
+        )}
+      </FixedTableContainer>
+      {editOffiAccountData && (
+        <OffiAccountEditModal
+          appId={appId}
+          defaultData={editOffiAccountData}
+          onCreate={() => {
+            void Promise.all([refetchShareChatList(), onRefreshOutLinkCounts()]);
+            setEditOffiAccountData(undefined);
+          }}
+          onEdit={() => Promise.all([refetchShareChatList(), setEditOffiAccountData(undefined)])}
+          onClose={() => setEditOffiAccountData(undefined)}
+          isEdit={isEdit}
+        />
+      )}
+      <Loading loading={isFetching} fixed={false} />
+      {showShareLinkModalOpen && (
+        <ShowShareLinkModal
+          shareLink={showShareLink ?? ''}
+          onClose={closeShowShareLinkModal}
+          img="/imgs/outlink/offiaccount-copylink-instruction.jpg"
+        />
+      )}
+    </Box>
+  );
+};
+
+export default React.memo(OffiAccount);

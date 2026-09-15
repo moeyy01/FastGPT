@@ -1,0 +1,270 @@
+'use client';
+import {
+  getDatasetPaths,
+  putDatasetById,
+  getDatasetsV2,
+  getDatasetById,
+  delDatasetById
+} from '@/web/core/dataset/api';
+import {
+  type ParentIdType,
+  type ParentTreePathItemType
+} from '@fastgpt/global/common/parentFolder/type';
+import type { SelectOneResourceServer } from '@/components/common/folder/SelectOneResource';
+import { normalizeParentId } from '@fastgpt/global/common/parentFolder/depth';
+import { useRouter } from 'next/router';
+import React, { useCallback, useState } from 'react';
+import { createContext } from 'use-context-selector';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { useScrollPagination, type ScrollListType } from '@fastgpt/web/hooks/useScrollPagination';
+import { type UpdateDatasetBody } from '@fastgpt/global/openapi/core/dataset/api';
+import dynamic from 'next/dynamic';
+import { DatasetTypeEnum } from '@fastgpt/global/core/dataset/constants';
+import { FolderImgUrl } from '@fastgpt/global/common/file/image/constants';
+import { type DatasetItemType, type DatasetListItemType } from '@fastgpt/global/core/dataset/type';
+import { type EditResourceInfoFormType } from '@/components/common/Modal/EditResourceModal';
+import { useTranslation } from 'next-i18next';
+import { usePersistedFilters } from '@fastgpt/web/hooks/usePersistedFilters';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import { buildFilterStorageKey } from '@/web/common/filter/storageKey';
+import {
+  AppListFiltersStoreSchema,
+  defaultAppListFiltersStore,
+  toListTmbIds,
+  type DatasetListFilterType
+} from '@/pageComponents/dashboard/agent/filters/utils';
+import { useResponsiveGridPageSize } from '@fastgpt/web/hooks/useResponsiveGridPageSize';
+
+const MoveModal = dynamic(() => import('@/components/common/folder/MoveModal'));
+
+export type DatasetContextType = {
+  myDatasets: DatasetListItemType[];
+  loadMyDatasets: () => Promise<void>;
+  refetchPaths: () => void;
+  refetchFolderDetail: () => Promise<DatasetItemType | undefined>;
+  isFetchingDatasets: boolean;
+  isEmpty: boolean;
+  ScrollData: ScrollListType;
+  setMoveDatasetId: (id: string) => void;
+  paths: ParentTreePathItemType[];
+  folderDetail?: DatasetItemType;
+  editedDataset?: EditResourceInfoFormType;
+  setEditedDataset: (data?: EditResourceInfoFormType) => void;
+  onDelDataset: (id: string) => Promise<void>;
+  onUpdateDataset: (data: UpdateDatasetBody) => Promise<void>;
+  searchKey: string;
+  setSearchKey: React.Dispatch<React.SetStateAction<string>>;
+  listFilters: DatasetListFilterType;
+  setListFilters: (next: DatasetListFilterType) => void;
+  columnCount: number;
+  pageSize: number;
+};
+
+export const DatasetsContext = createContext<DatasetContextType>({
+  isFetchingDatasets: false,
+  isEmpty: false,
+  ScrollData: () => <></>,
+  setMoveDatasetId: () => {},
+  refetchPaths: () => {},
+  paths: [],
+  folderDetail: {} as any,
+  editedDataset: {} as any,
+  setEditedDataset: () => {},
+  onDelDataset: () => Promise.resolve(),
+  loadMyDatasets: function (): Promise<void> {
+    throw new Error('Function not implemented.');
+  },
+  refetchFolderDetail: function (): Promise<DatasetItemType | undefined> {
+    throw new Error('Function not implemented.');
+  },
+  onUpdateDataset: function (_data: UpdateDatasetBody): Promise<void> {
+    throw new Error('Function not implemented.');
+  },
+  myDatasets: [],
+  searchKey: '',
+  setSearchKey: function (_value: React.SetStateAction<string>): void {
+    throw new Error('Function not implemented.');
+  },
+  listFilters: defaultAppListFiltersStore.dataset,
+  setListFilters: () => {
+    throw new Error('Function not implemented.');
+  },
+  columnCount: 1,
+  pageSize: 50
+});
+
+function DatasetContextProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { t } = useTranslation();
+  const [moveDatasetId, setMoveDatasetId] = useState<string>();
+  const [searchKey, setSearchKey] = useState('');
+  const parentId = normalizeParentId(router.query.parentId);
+  const { userInfo } = useUserStore();
+  const { feConfigs } = useSystemStore();
+  const { isPc } = useSystem();
+  const filterKey = userInfo?.team.teamId
+    ? buildFilterStorageKey({ teamId: userInfo.team.teamId })
+    : '';
+  const [filterStore, setFilterStore] = usePersistedFilters({
+    key: filterKey,
+    schema: AppListFiltersStoreSchema,
+    defaultValue: defaultAppListFiltersStore
+  });
+  const listFilters = filterStore.dataset;
+  const setListFilters = useCallback(
+    (next: DatasetListFilterType) => setFilterStore((prev) => ({ ...prev, dataset: next })),
+    [setFilterStore]
+  );
+  const applyToolbarFilters = isPc;
+  const tmbIds =
+    applyToolbarFilters && feConfigs.isPlus ? toListTmbIds(listFilters.creator) : undefined;
+  const listType =
+    applyToolbarFilters && listFilters.type !== 'all'
+      ? [DatasetTypeEnum.folder, listFilters.type]
+      : undefined;
+  const { columnCount, pageSize } = useResponsiveGridPageSize(
+    parentId ? { base: 1, sm: 2, md: 2, lg: 3 } : { base: 1, sm: 2, md: 3, lg: 3, xl: 4 }
+  );
+
+  const {
+    data: myDatasets = [],
+    fetchData,
+    ScrollData,
+    isLoading: isFetchingDatasets,
+    isEmpty
+  } = useScrollPagination(
+    ({ offset = 0, pageSize = 50 }) =>
+      getDatasetsV2({
+        searchKey,
+        parentId,
+        offset,
+        pageSize,
+        ...(listType ? { type: listType } : {}),
+        ...(applyToolbarFilters ? { sort: listFilters.sort } : {}),
+        ...(tmbIds !== undefined ? { tmbIds } : {})
+      }),
+    {
+      refreshDeps: [
+        parentId,
+        searchKey,
+        listType?.join(',') ?? 'all',
+        applyToolbarFilters ? listFilters.sort : '',
+        tmbIds === undefined ? 'none' : tmbIds.join(','),
+        feConfigs.isPlus,
+        isPc
+      ],
+      pageSize,
+      throttleWait: 300,
+      refreshOnWindowFocus: false,
+      showPaginationTip: false
+    }
+  );
+  const loadMyDatasets = useCallback(() => fetchData({ init: true }), [fetchData]);
+
+  const { data: folderDetail, runAsync: refetchFolderDetail } = useRequest(
+    () => (parentId ? getDatasetById(parentId) : Promise.resolve(undefined)),
+    {
+      manual: false,
+      refreshDeps: [parentId]
+    }
+  );
+
+  const { data: paths = [], runAsync: refetchPaths } = useRequest(
+    async () => {
+      if (!parentId) return [];
+      return getDatasetPaths({ sourceId: parentId, type: 'current' });
+    },
+    {
+      manual: false,
+      refreshDeps: [parentId]
+    }
+  );
+
+  const { runAsync: onUpdateDataset } = useRequest(putDatasetById, {
+    onSuccess: () => Promise.all([refetchFolderDetail(), refetchPaths(), loadMyDatasets()])
+  });
+
+  const onMoveDataset = useCallback(
+    async (parentId: ParentIdType) => {
+      if (!moveDatasetId) return;
+      await onUpdateDataset({
+        id: moveDatasetId,
+        parentId
+      });
+    },
+    [moveDatasetId, onUpdateDataset]
+  );
+
+  const getDatasetFolderList = useCallback<SelectOneResourceServer>(
+    ({ parentId, offset, pageSize }, cancelToken) =>
+      getDatasetsV2(
+        {
+          parentId,
+          type: DatasetTypeEnum.folder,
+          offset,
+          pageSize
+        },
+        cancelToken
+      ).then(({ list, total }) => ({
+        total,
+        list: list.map((item) => ({
+          id: item._id,
+          name: item.name,
+          avatar: FolderImgUrl,
+          isFolder: true,
+          disabled: item._id === moveDatasetId || !item.permission.hasManagePer
+        }))
+      })),
+    [moveDatasetId]
+  );
+
+  const [editedDataset, setEditedDataset] = useState<EditResourceInfoFormType>();
+
+  const { runAsync: onDelDataset } = useRequest(delDatasetById, {
+    successToast: t('common:delete_success'),
+    errorToast: t('common:dataset.Delete Dataset Error')
+  });
+
+  const contextValue = {
+    isFetchingDatasets,
+    isEmpty,
+    ScrollData,
+    setMoveDatasetId,
+    paths,
+    refetchPaths,
+    refetchFolderDetail,
+    folderDetail,
+    editedDataset,
+    setEditedDataset,
+    onDelDataset,
+    onUpdateDataset,
+    myDatasets,
+    loadMyDatasets,
+    searchKey,
+    setSearchKey,
+    listFilters,
+    setListFilters,
+    columnCount,
+    pageSize
+  };
+
+  return (
+    <DatasetsContext.Provider value={contextValue}>
+      {children}
+      {!!moveDatasetId && (
+        <MoveModal
+          moveResourceId={moveDatasetId}
+          server={getDatasetFolderList}
+          title={t('common:Move')}
+          onClose={() => setMoveDatasetId(undefined)}
+          onConfirm={(parentId) => onMoveDataset(parentId)}
+          moveHint={t('dataset:move.hint')}
+        />
+      )}
+    </DatasetsContext.Provider>
+  );
+}
+
+export default DatasetContextProvider;

@@ -1,82 +1,92 @@
+import { NextAPI } from '@/service/middleware/entry';
+import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
+import { FolderImgUrl } from '@fastgpt/global/common/file/image/constants';
+import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
 import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
-import { MongoApp } from '@fastgpt/service/core/app/schema';
-import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
 import {
   PerResourceTypeEnum,
   WritePermissionVal
 } from '@fastgpt/global/support/permission/constant';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
-import { FolderImgUrl } from '@fastgpt/global/common/file/image/constants';
-import { NextAPI } from '@/service/middleware/entry';
-import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
-import { parseParentIdInMongo } from '@fastgpt/global/common/parentFolder/utils';
-import { authApp } from '@fastgpt/service/support/permission/app/auth';
-import { AppDefaultPermissionVal } from '@fastgpt/global/support/permission/app/constant';
+import { TeamAppCreatePermissionVal } from '@fastgpt/global/support/permission/user/constant';
 import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
-import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
-import { syncCollaborators } from '@fastgpt/service/support/permission/inheritPermission';
-import { getResourceAllClbs } from '@fastgpt/service/support/permission/controller';
+import { MongoApp } from '@fastgpt/service/core/app/schema';
+import { authApp } from '@fastgpt/service/support/permission/app/auth';
+import { createResourceDefaultCollaborators } from '@fastgpt/service/support/permission/controller';
+import { authUserPer } from '@fastgpt/service/support/permission/user/auth';
+import { type ApiRequestProps } from '@fastgpt/next/type';
+import { addAuditLog } from '@fastgpt/service/support/user/audit/util';
+import { AuditEventEnum } from '@fastgpt/global/support/user/audit/constants';
+import { checkTeamAppTypeLimit } from '@fastgpt/service/support/permission/teamLimit';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { checkCreateFolderDepth } from '@fastgpt/service/common/parentFolder/depth';
+import {
+  CreateAppFolderBodySchema,
+  CreateAppFolderResponseSchema,
+  type CreateAppFolderBodyType,
+  type CreateAppFolderResponseType
+} from '@fastgpt/global/openapi/core/app/folder/api';
 
-export type CreateAppFolderBody = {
-  parentId?: ParentIdType;
-  name: string;
-  intro?: string;
-};
+async function handler(
+  req: ApiRequestProps<CreateAppFolderBodyType>
+): Promise<CreateAppFolderResponseType> {
+  const { name, intro, parentId, type } = parseApiInput({
+    req,
+    bodySchema: CreateAppFolderBodySchema
+  }).body;
 
-async function handler(req: ApiRequestProps<CreateAppFolderBody>) {
-  const { name, intro, parentId } = req.body;
+  if (!name || !type) {
+    return Promise.reject(CommonErrEnum.missingParams);
+  }
 
-  if (!name) {
-    Promise.reject(CommonErrEnum.missingParams);
+  if (type !== AppTypeEnum.folder && type !== AppTypeEnum.toolFolder) {
+    return Promise.reject(CommonErrEnum.invalidParams);
   }
 
   // 凭证校验
-  const { teamId, tmbId } = await authUserPer({ req, authToken: true, per: WritePermissionVal });
-  const parentApp = await (async () => {
-    if (parentId) {
-      // if it is not a root folder
-      return (
-        await authApp({
-          req,
-          appId: parentId,
-          per: WritePermissionVal,
-          authToken: true
-        })
-      ).app; // check the parent folder permission
-    }
-  })();
+  const { teamId, tmbId } = parentId
+    ? await authApp({ req, appId: parentId, per: WritePermissionVal, authToken: true })
+    : await authUserPer({ req, authToken: true, per: TeamAppCreatePermissionVal });
+
+  await checkTeamAppTypeLimit({ teamId, appCheckType: 'folder' });
+
+  await checkCreateFolderDepth({ parentId, teamId, model: MongoApp });
 
   // Create app
   await mongoSessionRun(async (session) => {
-    const app = await MongoApp.create({
-      ...parseParentIdInMongo(parentId),
-      avatar: FolderImgUrl,
-      name,
-      intro,
-      teamId,
+    const [app] = await MongoApp.create(
+      [
+        {
+          ...parseParentIdInMongo(parentId),
+          avatar: FolderImgUrl,
+          name,
+          intro,
+          teamId,
+          tmbId,
+          type
+        }
+      ],
+      { session }
+    );
+
+    await createResourceDefaultCollaborators({
       tmbId,
-      type: AppTypeEnum.folder,
-      // inheritPermission: !!parentApp ? true : false,
-      defaultPermission: !!parentApp ? parentApp.defaultPermission : AppDefaultPermissionVal
+      session,
+      resource: app,
+      resourceType: PerResourceTypeEnum.app
     });
-
-    if (parentId) {
-      const parentClbs = await getResourceAllClbs({
-        teamId,
-        resourceId: parentId,
-        resourceType: PerResourceTypeEnum.app,
-        session
-      });
-
-      await syncCollaborators({
-        resourceType: PerResourceTypeEnum.app,
-        teamId,
-        resourceId: app._id,
-        collaborators: parentClbs,
-        session
-      });
-    }
   });
+  (async () => {
+    addAuditLog({
+      tmbId,
+      teamId,
+      event: AuditEventEnum.CREATE_APP_FOLDER,
+      params: {
+        folderName: name
+      }
+    });
+  })();
+
+  return CreateAppFolderResponseSchema.parse(undefined);
 }
 
 export default NextAPI(handler);

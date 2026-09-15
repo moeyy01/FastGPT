@@ -1,18 +1,166 @@
-import type { NextApiResponse } from 'next';
+import type { NodeApiResponse, NodeHttpResponse } from '../../types/http';
 import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import { proxyError, ERROR_RESPONSE, ERROR_ENUM } from '@fastgpt/global/common/error/errorCode';
-import { addLog } from '../system/log';
-import { clearCookie } from '../../support/permission/controller';
 import { replaceSensitiveText } from '@fastgpt/global/common/string/tools';
+import { UserError } from '@fastgpt/global/common/error/utils';
+import { clearCookie } from '../../support/permission/auth/common';
+import { ZodError } from 'zod';
+import type Stream from 'node:stream';
+import { getLogger, LogCategories } from '../logger';
+import { ApiRequestInputParseError, getZodError } from '../zod/requestParseError';
+
+const logger = getLogger(LogCategories.HTTP.ERROR);
 
 export interface ResponseType<T = any> {
   code: number;
   message: string;
   data: T;
+  errorType?: string;
+}
+
+export interface ProcessedError {
+  code: number;
+  statusText: string;
+  message: string;
+  shouldClearCookie: boolean;
+  httpStatus: number;
+  data?: any;
+  zodError?: any;
+}
+
+/**
+ * 业务 JSON `code` 与 HTTP 状态码解耦：多数业务码为 5xxxxx，不能当作 HTTP status。
+ * 仅对明确语义映射到 4xx/5xx，其余默认 500。
+ */
+function resolveHttpStatusForApiError(
+  processedError: ProcessedError,
+  props: { code?: number; error: any }
+): number {
+  const { code: propsCode = 200, error } = props;
+  const bc = processedError.code;
+
+  if (typeof bc === 'number' && bc >= 400 && bc <= 499) {
+    return bc;
+  }
+
+  if (
+    typeof processedError.httpStatus === 'number' &&
+    processedError.httpStatus >= 400 &&
+    processedError.httpStatus <= 599
+  ) {
+    return processedError.httpStatus;
+  }
+
+  // packages/global/common/error/code/s3.ts：510000 段为上传校验类客户端错误
+  if (typeof bc === 'number' && bc >= 510000 && bc < 511000) {
+    return 400;
+  }
+
+  const raw = typeof error === 'string' ? error : error?.message;
+  if (raw === 'EntityTooLarge') {
+    return 413;
+  }
+
+  if (typeof propsCode === 'number' && propsCode >= 400 && propsCode <= 499) {
+    return propsCode;
+  }
+
+  return 500;
+}
+
+function parseZodErrorMessage(error: ZodError | ApiRequestInputParseError) {
+  const zodSourceError = getZodError(error);
+
+  try {
+    return JSON.parse(zodSourceError?.message || error.message);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 通用错误处理函数，提取错误信息并分类记录日志
+ * @param params - 包含错误对象、URL和默认状态码的参数
+ * @returns 处理后的错误对象
+ */
+export function processError(params: {
+  error: any;
+  url?: string;
+  defaultCode?: number;
+}): ProcessedError {
+  const { error, url, defaultCode = 500 } = params;
+  let zodError;
+
+  const errResponseKey = typeof error === 'string' ? error : error?.message;
+
+  // 1. 处理特定的业务错误（ERROR_RESPONSE）
+  if (ERROR_RESPONSE[errResponseKey]) {
+    const shouldClearCookie = errResponseKey === ERROR_ENUM.unAuthorization;
+    const message =
+      error instanceof UserError && error.displayMessage
+        ? replaceSensitiveText(error.displayMessage)
+        : ERROR_RESPONSE[errResponseKey].message;
+
+    // 记录业务侧错误日志
+    logger.info('API response error', {
+      url,
+      code: ERROR_RESPONSE[errResponseKey].code,
+      message,
+      statusText: ERROR_RESPONSE[errResponseKey].statusText,
+      data: ERROR_RESPONSE[errResponseKey].data
+    });
+
+    return {
+      code: ERROR_RESPONSE[errResponseKey].code || defaultCode,
+      statusText: ERROR_RESPONSE[errResponseKey].statusText || 'error',
+      message,
+      data: ERROR_RESPONSE[errResponseKey].data,
+      httpStatus: ERROR_RESPONSE[errResponseKey].httpStatus ?? 500,
+      shouldClearCookie
+    };
+  }
+
+  // 2. 提取通用错误消息
+  let msg = error?.response?.statusText || error?.message || '请求错误';
+  if (typeof error === 'string') {
+    msg = error;
+  } else if (proxyError[error?.code]) {
+    msg = '网络连接异常';
+  } else if (error?.response?.data?.error?.message) {
+    msg = error?.response?.data?.error?.message;
+  } else if (error?.error?.message) {
+    msg = error?.error?.message;
+  }
+
+  // 3. 根据错误类型记录不同级别的日志
+  if (error instanceof UserError) {
+    msg = error.displayMessage || msg;
+    logger.info('Request error', { url, message: msg });
+  } else if (error instanceof ZodError || error instanceof ApiRequestInputParseError) {
+    zodError = parseZodErrorMessage(error);
+
+    if (!(error instanceof ApiRequestInputParseError)) {
+      logger.error('Zod validation error', { url, data: zodError, error });
+    }
+
+    msg = error.message;
+  } else {
+    logger.error('System unexpected error', { url, message: msg, error });
+  }
+
+  // 4. 返回处理后的错误信息
+  return {
+    code: defaultCode,
+    statusText: 'error',
+    message: replaceSensitiveText(msg),
+    shouldClearCookie: false,
+    httpStatus: defaultCode,
+    zodError
+  };
 }
 
 export const jsonRes = <T = any>(
-  res: NextApiResponse,
+  res: NodeApiResponse,
   props?: {
     code?: number;
     message?: string;
@@ -23,85 +171,81 @@ export const jsonRes = <T = any>(
 ) => {
   const { code = 200, message = '', data = null, error, url } = props || {};
 
-  const errResponseKey = typeof error === 'string' ? error : error?.message;
-  // Specified error
-  if (ERROR_RESPONSE[errResponseKey]) {
-    // login is expired
-    if (errResponseKey === ERROR_ENUM.unAuthorization) {
+  // 如果有错误，使用统一的错误处理逻辑
+  if (error) {
+    const processedError = processError({ error, url, defaultCode: code });
+
+    // 如果需要清除 cookie
+    if (processedError.shouldClearCookie) {
       clearCookie(res);
     }
 
-    return res.json(ERROR_RESPONSE[errResponseKey]);
+    const httpStatus = resolveHttpStatusForApiError(processedError, { code, error });
+
+    res.status(httpStatus).json({
+      code: processedError.code,
+      statusText: processedError.statusText,
+      message: message || processedError.message,
+      data: processedError.data !== undefined ? processedError.data : null,
+      zodError: processedError.zodError,
+      errorType: error instanceof UserError ? 'UserError' : undefined
+    });
+
+    return;
   }
 
-  // another error
-  let msg = '';
-  if ((code < 200 || code >= 400) && !message) {
-    msg = error?.response?.statusText || error?.message || '请求错误';
-    if (typeof error === 'string') {
-      msg = error;
-    } else if (proxyError[error?.code]) {
-      msg = '网络连接异常';
-    } else if (error?.response?.data?.error?.message) {
-      msg = error?.response?.data?.error?.message;
-    } else if (error?.error?.message) {
-      msg = error?.error?.message;
-    }
-
-    addLog.error(`Api response error: ${url}, ${msg}`, error);
-  }
-
+  // 成功响应
   res.status(code).json({
     code,
     statusText: '',
-    message: replaceSensitiveText(message || msg),
+    message: replaceSensitiveText(message),
     data: data !== undefined ? data : null
   });
 };
 
-export const sseErrRes = (res: NextApiResponse, error: any) => {
-  const errResponseKey = typeof error === 'string' ? error : error?.message;
-
-  // Specified error
-  if (ERROR_RESPONSE[errResponseKey]) {
-    // login is expired
-    if (errResponseKey === ERROR_ENUM.unAuthorization) {
-      clearCookie(res);
-    }
-
-    return responseWrite({
-      res,
-      event: SseResponseEventEnum.error,
-      data: JSON.stringify(ERROR_RESPONSE[errResponseKey])
-    });
+export const sseErrRes = (res: NodeHttpResponse, error: any) => {
+  const { event, data, shouldClearCookie } = getSseErrorResponse(error);
+  if (shouldClearCookie) {
+    clearCookie(res);
   }
-
-  let msg = error?.response?.statusText || error?.message || '请求错误';
-  if (typeof error === 'string') {
-    msg = error;
-  } else if (proxyError[error?.code]) {
-    msg = '网络连接异常';
-  } else if (error?.response?.data?.error?.message) {
-    msg = error?.response?.data?.error?.message;
-  } else if (error?.error?.message) {
-    msg = `${error?.error?.code} ${error?.error?.message}`;
-  }
-
-  addLog.error(`sse error: ${msg}`, error);
-
   responseWrite({
     res,
-    event: SseResponseEventEnum.error,
-    data: JSON.stringify({ message: replaceSensitiveText(msg) })
+    event,
+    data
   });
+};
+
+export const getSseErrorResponse = (
+  error: any
+): {
+  event: SseResponseEventEnum.error;
+  data: string;
+  shouldClearCookie: boolean;
+} => {
+  const errResponseKey = typeof error === 'string' ? error : error?.message;
+  const processedError = processError({ error });
+
+  if (ERROR_RESPONSE[errResponseKey]) {
+    return {
+      event: SseResponseEventEnum.error,
+      data: JSON.stringify({ ...ERROR_RESPONSE[errResponseKey], message: processedError.message }),
+      shouldClearCookie: processedError.shouldClearCookie
+    };
+  }
+
+  return {
+    event: SseResponseEventEnum.error,
+    data: JSON.stringify({ message: processedError.message }),
+    shouldClearCookie: processedError.shouldClearCookie
+  };
 };
 
 export function responseWriteController({
   res,
   readStream
 }: {
-  res: NextApiResponse;
-  readStream: any;
+  res: NodeHttpResponse;
+  readStream: Stream.Readable;
 }) {
   res.on('drain', () => {
     readStream?.resume?.();
@@ -117,20 +261,20 @@ export function responseWriteController({
 
 export function responseWrite({
   res,
-  write,
   event,
   data
 }: {
-  res?: NextApiResponse;
-  write?: (text: string) => void;
+  res?: NodeHttpResponse;
   event?: string;
   data: string;
 }) {
-  const Write = write || res?.write;
+  const Write = res?.write;
 
   if (!Write) return;
 
-  event && Write(`event: ${event}\n`);
+  if (event) {
+    Write(`event: ${event}\n`);
+  }
   Write(`data: ${data}\n\n`);
 }
 
@@ -139,7 +283,7 @@ export const responseWriteNodeStatus = ({
   status = 'running',
   name
 }: {
-  res?: NextApiResponse;
+  res?: NodeHttpResponse;
   status?: 'running';
   name: string;
 }) => {

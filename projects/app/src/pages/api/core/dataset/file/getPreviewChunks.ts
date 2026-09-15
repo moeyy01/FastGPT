@@ -1,65 +1,131 @@
+import { getModelHandle } from '@fastgpt/service/core/ai/model';
+import { getDatasetModelReference } from '@fastgpt/service/core/dataset/model';
 import { DatasetSourceReadTypeEnum } from '@fastgpt/global/core/dataset/constants';
+import { getDatasetIultmzhFileParseConfig } from '@fastgpt/service/thirdProvider/sangfor/parseConfig';
 import { rawText2Chunks, readDatasetSourceRawText } from '@fastgpt/service/core/dataset/read';
-import { authCert } from '@fastgpt/service/support/permission/auth/common';
 import { NextAPI } from '@/service/middleware/entry';
-import { ApiRequestProps } from '@fastgpt/service/type/next';
-import { OwnerPermissionVal, ReadPermissionVal } from '@fastgpt/global/support/permission/constant';
-import { authFile } from '@fastgpt/service/support/permission/auth/file';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
+import { authDatasetFileKey } from '@fastgpt/service/support/permission/auth/file';
+import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
+import { isAuthorizedDatasetFileS3Key } from '@fastgpt/service/common/s3/sources/dataset/key';
+import {
+  computedCollectionChunkSettings,
+  getLLMMaxChunkSize,
+  maxPreviewChunkCount
+} from '@fastgpt/global/core/dataset/training/utils';
+import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
 
-export type PostPreviewFilesChunksProps = {
-  type: DatasetSourceReadTypeEnum;
-  sourceId: string;
-  chunkSize: number;
-  overlapRatio: number;
-  customSplitChar?: string;
-  selector?: string;
-  isQAImport?: boolean;
-};
-export type PreviewChunksResponse = {
-  q: string;
-  a: string;
-}[];
+import { replaceS3KeysToPreviewUrls } from '@fastgpt/service/common/s3/utils/preview';
+import { addDays } from 'date-fns';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  GetPreviewChunksBodySchema,
+  GetPreviewChunksResponseSchema,
+  type GetPreviewChunksBody,
+  type GetPreviewChunksResponse
+} from '@fastgpt/global/openapi/core/dataset/file/api';
 
 async function handler(
-  req: ApiRequestProps<PostPreviewFilesChunksProps>
-): Promise<PreviewChunksResponse> {
-  const { type, sourceId, chunkSize, customSplitChar, overlapRatio, selector, isQAImport } =
-    req.body;
+  req: ApiRequestProps<GetPreviewChunksBody>
+): Promise<GetPreviewChunksResponse> {
+  const {
+    type,
+    sourceId,
+    customPdfParse = false,
+    overlapRatio,
+    selector,
+    datasetId,
+    externalFileId,
+    ...chunkSettings
+  } = parseApiInput({ req, bodySchema: GetPreviewChunksBodySchema }).body;
 
   if (!sourceId) {
     throw new Error('sourceId is empty');
   }
-  if (chunkSize > 30000) {
-    throw new Error('chunkSize is too large, should be less than 30000');
+
+  if (
+    type === DatasetSourceReadTypeEnum.fileLocal &&
+    !isAuthorizedDatasetFileS3Key({ key: sourceId, datasetId })
+  ) {
+    return Promise.reject(CommonErrEnum.unAuthFile);
   }
 
-  const { teamId } = await (async () => {
-    if (type === DatasetSourceReadTypeEnum.fileLocal) {
-      return authFile({
-        req,
-        authToken: true,
-        authApiKey: true,
-        fileId: sourceId,
-        per: OwnerPermissionVal
-      });
-    }
-    return authCert({ req, authApiKey: true, authToken: true });
-  })();
+  const fileAuthRes =
+    type === DatasetSourceReadTypeEnum.fileLocal
+      ? await authDatasetFileKey({
+          req,
+          authToken: true,
+          authApiKey: true,
+          fileId: sourceId,
+          per: WritePermissionVal
+        })
+      : undefined;
 
-  const rawText = await readDatasetSourceRawText({
-    teamId,
-    type,
-    sourceId: sourceId,
-    selector,
-    isQAImport
+  const { dataset, teamId, tmbId } = await authDataset({
+    req,
+    authApiKey: true,
+    authToken: true,
+    datasetId,
+    per: WritePermissionVal
   });
 
-  return rawText2Chunks({
+  if (fileAuthRes && String(fileAuthRes.tmbId) !== String(tmbId) && !fileAuthRes.isRoot) {
+    return Promise.reject(CommonErrEnum.unAuthFile);
+  }
+  const modelHandle = await getModelHandle();
+  const formatChunkSettings = computedCollectionChunkSettings({
+    ...chunkSettings,
+    llmModel: modelHandle.getLLMModelData(getDatasetModelReference(dataset, 'agent')),
+    vectorModel: modelHandle.getEmbeddingModelData(getDatasetModelReference(dataset, 'embedding'))
+  });
+
+  const { rawText } = await readDatasetSourceRawText({
+    teamId,
+    tmbId,
+    type,
+    sourceId,
+    selector,
+    externalFileId,
+    customPdfParse,
+    // 解析开关仅对外部解析路径生效;非 customPdfParse 时传 undefined,rawText 缓存沿用旧 key
+    sangforFileParseConfig: customPdfParse ? getDatasetIultmzhFileParseConfig(dataset) : undefined,
+    apiDatasetServer: dataset.apiDatasetServer,
+    datasetId
+  });
+
+  const chunks = await rawText2Chunks({
     rawText,
-    chunkLen: chunkSize,
+    chunkTriggerType: formatChunkSettings.chunkTriggerType,
+    chunkTriggerMinSize: formatChunkSettings.chunkTriggerMinSize,
+    chunkSize: formatChunkSettings.chunkSize,
+    paragraphChunkDeep: formatChunkSettings.paragraphChunkDeep,
+    paragraphChunkMinSize: formatChunkSettings.paragraphChunkMinSize,
+    maxSize: getLLMMaxChunkSize(
+      modelHandle.getLLMModelData(getDatasetModelReference(dataset, 'agent'))
+    ),
     overlapRatio,
-    customReg: customSplitChar ? [customSplitChar] : [],
-    isQAImport: isQAImport
-  }).slice(0, 5);
+    customReg: formatChunkSettings.chunkSplitter ? [formatChunkSettings.chunkSplitter] : [],
+    chunkSettingMode: formatChunkSettings.chunkSettingMode,
+    trainingType: formatChunkSettings.trainingType,
+    maxChunks: maxPreviewChunkCount
+  });
+
+  const previewChunks = chunks.slice(0, 10);
+  const previewTexts = previewChunks.flatMap(({ q, a }) => [q, a]);
+  const previewTextsWithUrls = await replaceS3KeysToPreviewUrls(
+    previewTexts,
+    addDays(new Date(), 1)
+  );
+  const chunksWithJWT = previewChunks.map((chunk, index) => ({
+    q: previewTextsWithUrls[index * 2] ?? chunk.q,
+    a: previewTextsWithUrls[index * 2 + 1] ?? chunk.a
+  }));
+
+  return GetPreviewChunksResponseSchema.parse({
+    chunks: chunksWithJWT,
+    total: chunks.length
+  });
 }
+
 export default NextAPI(handler);

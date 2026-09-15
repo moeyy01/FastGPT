@@ -1,22 +1,38 @@
 import { chatValue2RuntimePrompt } from '@fastgpt/global/core/chat/adapt';
-import { UserChatItemValueItemType } from '@fastgpt/global/core/chat/type';
-import { NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
-import type { ModuleDispatchProps } from '@fastgpt/global/core/workflow/runtime/type';
+import { NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
+import type { DispatchNodeResultType, ModuleDispatchProps } from '../../types/runtime';
+
 export type UserChatInputProps = ModuleDispatchProps<{
   [NodeInputKeyEnum.userChatInput]: string;
-  [NodeInputKeyEnum.inputFiles]: UserChatItemValueItemType['file'][];
+}>;
+type Response = DispatchNodeResultType<{
+  [NodeOutputKeyEnum.userChatInput]: string;
+  [NodeOutputKeyEnum.userFiles]: string[];
 }>;
 
-export const dispatchWorkflowStart = (props: Record<string, any>) => {
+export const dispatchWorkflowStart = async (props: Record<string, any>): Promise<Response> => {
   const {
     query,
+    variableState,
     params: { userChatInput }
   } = props as UserChatInputProps;
 
   const { text, files } = chatValue2RuntimePrompt(query);
 
+  const queryFiles = files
+    .map((item) => {
+      return item?.url ?? '';
+    })
+    .filter(Boolean);
+  const fileUrlList = variableState.get('fileUrlList');
+  const variablesFiles: string[] = Array.isArray(fileUrlList) ? fileUrlList : [];
+
   return {
-    [NodeInputKeyEnum.userChatInput]: text || userChatInput,
-    [NodeInputKeyEnum.inputFiles]: files
+    [DispatchNodeResponseKeyEnum.nodeResponse]: {},
+    data: {
+      [NodeInputKeyEnum.userChatInput]: text || userChatInput,
+      [NodeOutputKeyEnum.userFiles]: [...queryFiles, ...variablesFiles]
+    }
   };
 };

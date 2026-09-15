@@ -1,0 +1,682 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Button, Flex, Input } from '@chakra-ui/react';
+import MyModal from '@fastgpt/web/components/v2/common/MyModal';
+import { useTranslation } from 'next-i18next';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import MySelect from '@fastgpt/web/components/common/MySelect';
+import { useContextSelector } from 'use-context-selector';
+import { DatasetPageContext } from '@/web/core/dataset/context/datasetPageContext';
+import {
+  delDatasetCollectionTag,
+  postCreateDatasetCollectionTag,
+  updateDatasetCollectionTag
+} from '@/web/core/dataset/api/collection';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { DatasetCollectionTagTypeEnum } from '@fastgpt/global/core/dataset/constants';
+import { type DatasetTagType } from '@fastgpt/global/core/dataset/type';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import { useConfirm } from '@fastgpt/web/hooks/useConfirm';
+import MyPopover from '@fastgpt/web/components/common/MyPopover';
+import { getNanoid } from '@fastgpt/global/common/string/tools';
+import { SaveActionIcon, TagActionButton, TagTableContainer, TagTableHeader } from './TagCommon';
+
+const TAG_TABLE_COLUMNS = 'minmax(0, 1fr) 180px 100px';
+const OPTION_ROW_HEIGHT = 32;
+const OPTION_ROW_GAP = 2;
+const OPTION_LIST_MAX_ROWS = 4;
+const OPTION_LIST_PADDING = 4;
+const OPTION_LIST_MAX_H =
+  OPTION_ROW_HEIGHT * OPTION_LIST_MAX_ROWS +
+  OPTION_ROW_GAP * (OPTION_LIST_MAX_ROWS - 1) +
+  OPTION_LIST_PADDING * 2;
+
+type DraftOptionItem = {
+  id: string;
+  original: string;
+  value: string;
+};
+
+const createDraftItem = (value = '', original = ''): DraftOptionItem => ({
+  id: getNanoid(),
+  original,
+  value
+});
+
+const normalizeTagOptions = (nextOptions: string[]) => [
+  ...new Set(nextOptions.map((option) => option.trim()).filter(Boolean))
+];
+
+const isSameTagOptions = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((option, index) => option === right[index]);
+
+/**
+ * 选项类标签的预设管理。
+ * 输入框失焦、回车和关闭弹层时静默保存；Enter 跳到下一行，最后一行 Enter 追加空输入；列表固定 4 行，超出滚动。
+ * 保存成功后不要用 options 内容做 React key，否则弹层会卸载，换行新增会丢。
+ */
+const TagOptionManagePopover = ({
+  options,
+  onSave
+}: {
+  options: string[];
+  onSave: (data: {
+    options: string[];
+    renames?: Array<{ from: string; to: string }>;
+  }) => Promise<void>;
+}) => {
+  const { t } = useTranslation();
+  const [draftList, setDraftList] = useState<DraftOptionItem[]>(() =>
+    options.map((opt) => createDraftItem(opt, opt))
+  );
+  const savedOptionsRef = useRef(options);
+  const draftListRef = useRef(draftList);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    draftListRef.current = draftList;
+  }, [draftList]);
+
+  const resetDraft = (nextOptions: string[]) => {
+    const list = nextOptions.map((opt) => createDraftItem(opt, opt));
+    setDraftList(list);
+    savedOptionsRef.current = nextOptions;
+  };
+
+  const persistOptions = async (currentList: DraftOptionItem[]) => {
+    const currentValues = currentList.map((item) => item.value.trim()).filter(Boolean);
+    const normalizedOptions = normalizeTagOptions(currentValues);
+
+    const renames: Array<{ from: string; to: string }> = [];
+    for (const item of currentList) {
+      const from = item.original.trim();
+      const to = item.value.trim();
+      if (from && to && from !== to) {
+        renames.push({ from, to });
+      }
+    }
+
+    if (isSameTagOptions(normalizedOptions, savedOptionsRef.current) && renames.length === 0) {
+      return;
+    }
+
+    try {
+      await onSave({
+        options: normalizedOptions,
+        renames: renames.length > 0 ? renames : undefined
+      });
+      savedOptionsRef.current = normalizedOptions;
+      // 保存成功后更新 original，后续编辑基于最新值做映射
+      setDraftList((prev) =>
+        prev.map((item) => ({
+          ...item,
+          original: item.value.trim()
+        }))
+      );
+    } catch {
+      resetDraft(savedOptionsRef.current);
+    }
+  };
+
+  const focusOption = (index: number) => {
+    setTimeout(() => {
+      inputRefs.current[index]?.focus();
+    }, 50);
+  };
+
+  const handleAddOption = () => {
+    setDraftList((prev) => {
+      if (prev.length > 0 && !prev[prev.length - 1]?.value.trim()) {
+        focusOption(prev.length - 1);
+        return prev;
+      }
+      const next = [...prev, createDraftItem('', '')];
+      focusOption(next.length - 1);
+      return next;
+    });
+  };
+
+  const handleUpdateOption = (index: number, value: string) => {
+    setDraftList((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], value };
+      return next;
+    });
+  };
+
+  const handleRemoveOption = (index: number) => {
+    const next = draftListRef.current.filter((_, i) => i !== index);
+    setDraftList(next);
+    void persistOptions(next);
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const currentDraft = draftListRef.current;
+    void persistOptions(currentDraft);
+    if (index === currentDraft.length - 1) {
+      handleAddOption();
+      return;
+    }
+    inputRefs.current[index + 1]?.focus();
+  };
+
+  return (
+    <MyPopover
+      placement={'bottom-start'}
+      trigger={'click'}
+      hasArrow={false}
+      offset={[0, 4]}
+      closeOnBlur={true}
+      w={'160px'}
+      p={1.5}
+      borderRadius={'sm'}
+      boxShadow={'md'}
+      bg={'white'}
+      border={'1px solid'}
+      borderColor={'myGray.200'}
+      onOpenFunc={() => resetDraft(options)}
+      onCloseFunc={() => {
+        void persistOptions(draftListRef.current);
+      }}
+      Trigger={
+        <TagActionButton
+          label={t('common:Setting')}
+          icon={<MyIcon name={'common/setting'} w={'16px'} h={'16px'} />}
+          color={'myGray.600'}
+          hoverColor={'primary.700'}
+        />
+      }
+    >
+      {() => (
+        <Flex direction={'column'} w={'full'}>
+          <Flex
+            alignItems={'center'}
+            gap={2}
+            h={'28px'}
+            px={1}
+            py={1.5}
+            borderRadius={'xs'}
+            cursor={'pointer'}
+            _hover={{ bg: 'myGray.100' }}
+            onClick={handleAddOption}
+          >
+            <MyIcon name={'common/addLight'} w={'16px'} h={'16px'} color={'primary.700'} />
+            <Box fontSize={'xs'} fontWeight={'medium'} lineHeight={'16px'} color={'primary.700'}>
+              {t('dataset:tag.add_option')}
+            </Box>
+          </Flex>
+
+          {draftList.length > 0 && (
+            <Flex
+              maxH={`${OPTION_LIST_MAX_H}px`}
+              overflowY={'auto'}
+              direction={'column'}
+              gap={`${OPTION_ROW_GAP}px`}
+              p={1}
+            >
+              {draftList.map((item, index) => (
+                <Flex key={item.id} gap={1} alignItems={'center'} w={'full'}>
+                  <Input
+                    ref={(el) => {
+                      inputRefs.current[index] = el;
+                    }}
+                    value={item.value}
+                    flex={1}
+                    minW={0}
+                    h={`${OPTION_ROW_HEIGHT}px`}
+                    px={3}
+                    fontSize={'xs'}
+                    lineHeight={'16px'}
+                    borderRadius={'sm'}
+                    border={'1px solid'}
+                    borderColor={'myGray.200'}
+                    placeholder={t('dataset:tag.enter_option')}
+                    _focus={{
+                      zIndex: 1,
+                      borderColor: 'primary.600',
+                      boxShadow: 'focus'
+                    }}
+                    onChange={(e) => handleUpdateOption(index, e.target.value)}
+                    onBlur={() => {
+                      void persistOptions(draftListRef.current);
+                    }}
+                    onKeyDown={(e) => handleKeyDown(index, e)}
+                  />
+                  <Flex
+                    as={'button'}
+                    type={'button'}
+                    p={1}
+                    flexShrink={0}
+                    alignItems={'center'}
+                    justifyContent={'center'}
+                    borderRadius={'sm'}
+                    cursor={'pointer'}
+                    _hover={{ bg: 'myGray.05' }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleRemoveOption(index)}
+                  >
+                    <MyIcon name={'close'} w={'16px'} h={'16px'} color={'myGray.500'} />
+                  </Flex>
+                </Flex>
+              ))}
+            </Flex>
+          )}
+        </Flex>
+      )}
+    </MyPopover>
+  );
+};
+
+const TagManageModal = ({ onClose }: { onClose: () => void }) => {
+  const { t } = useTranslation();
+  const { datasetDetail, allDatasetTags, loadAllDatasetTags } = useContextSelector(
+    DatasetPageContext,
+    (v) => v
+  );
+
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const [newTag, setNewTag] = useState<string | undefined>(undefined);
+  const [newTagType, setNewTagType] = useState<DatasetCollectionTagTypeEnum | undefined>(undefined);
+  const [currentEditTagContent, setCurrentEditTagContent] = useState<string | undefined>(undefined);
+  const [currentEditTag, setCurrentEditTag] = useState<DatasetTagType | undefined>(undefined);
+
+  useEffect(() => {
+    if (newTag !== undefined) {
+      tagInputRef.current?.focus();
+    }
+  }, [newTag]);
+
+  useEffect(() => {
+    if (currentEditTag !== undefined) {
+      editInputRef.current?.focus();
+    }
+  }, [currentEditTag]);
+
+  const { openConfirm: openDeleteConfirm, ConfirmModal: DeleteConfirmModal } = useConfirm({
+    type: 'delete',
+    title: t('dataset:tag.delete_tag_confirm_title'),
+    content: t('dataset:tag.delete_tag_confirm_content')
+  });
+
+  const { runAsync: onDeleteCollectionTag } = useRequest(
+    (tagId: string) =>
+      delDatasetCollectionTag({
+        datasetId: datasetDetail._id,
+        id: tagId
+      }),
+    {
+      onSuccess() {
+        loadAllDatasetTags();
+      },
+      successToast: t('dataset:tag.delete_success'),
+      errorToast: t('dataset:tag.delete_failed')
+    }
+  );
+
+  const { runAsync: onCreateCollectionTag } = useRequest(
+    ({ tag, tagType }: { tag: string; tagType: DatasetCollectionTagTypeEnum }) =>
+      postCreateDatasetCollectionTag({
+        datasetId: datasetDetail._id,
+        tag,
+        tagType
+      }),
+    {
+      onSuccess() {
+        loadAllDatasetTags();
+      },
+      successToast: t('dataset:tag.create_success'),
+      errorToast: t('dataset:tag.create_failed')
+    }
+  );
+
+  const { runAsync: onUpdateCollectionTag } = useRequest(
+    (tag: DatasetTagType) =>
+      updateDatasetCollectionTag({
+        datasetId: datasetDetail._id,
+        tagId: tag._id,
+        tag: tag.tag
+      }),
+    {
+      onSuccess() {
+        loadAllDatasetTags();
+      },
+      successToast: t('dataset:tag.save_success'),
+      errorToast: t('dataset:tag.save_failed')
+    }
+  );
+
+  const { runAsync: onSaveTagOptions } = useRequest(
+    ({
+      tag,
+      options,
+      renames
+    }: {
+      tag: DatasetTagType;
+      options: string[];
+      renames?: Array<{ from: string; to: string }>;
+    }) =>
+      updateDatasetCollectionTag({
+        datasetId: datasetDetail._id,
+        tagId: tag._id,
+        tag: tag.tag,
+        options,
+        renames
+      }),
+    {
+      onSuccess: loadAllDatasetTags,
+      errorToast: t('dataset:tag.save_failed')
+    }
+  );
+
+  const tagTypeMap = useMemo<Record<DatasetCollectionTagTypeEnum, string>>(
+    () => ({
+      [DatasetCollectionTagTypeEnum.string]: t('dataset:core.dataset.tags.string'),
+      [DatasetCollectionTagTypeEnum.number]: t('dataset:core.dataset.tags.number'),
+      [DatasetCollectionTagTypeEnum.datetime]: t('dataset:core.dataset.tags.date'),
+      [DatasetCollectionTagTypeEnum.array]: t('dataset:core.dataset.tags.array')
+    }),
+    [t]
+  );
+
+  const tagTypeOptions = useMemo(
+    () =>
+      [
+        DatasetCollectionTagTypeEnum.array,
+        DatasetCollectionTagTypeEnum.number,
+        DatasetCollectionTagTypeEnum.datetime
+      ].map((tagType) => ({
+        label: tagTypeMap[tagType],
+        value: tagType
+      })),
+    [tagTypeMap]
+  );
+
+  const submitNewTag = async () => {
+    const tag = newTag?.trim();
+    if (!tag || !newTagType || allDatasetTags.some((item) => item.tag === tag)) return;
+
+    await onCreateCollectionTag({ tag, tagType: newTagType });
+    setNewTag(undefined);
+    setNewTagType(undefined);
+  };
+
+  const submitUpdatedTag = async (tag: DatasetTagType) => {
+    const content = currentEditTagContent?.trim();
+    if (
+      content &&
+      content !== tag.tag &&
+      !allDatasetTags.some((item) => item._id !== tag._id && item.tag === content)
+    ) {
+      await onUpdateCollectionTag({ ...tag, tag: content });
+    }
+    setCurrentEditTag(undefined);
+    setCurrentEditTagContent(undefined);
+  };
+
+  const cancelNewTag = () => {
+    setNewTag(undefined);
+    setNewTagType(undefined);
+  };
+
+  const normalizedNewTag = newTag?.trim() ?? '';
+  const isNewTagNameDuplicate = Boolean(
+    normalizedNewTag && allDatasetTags.some((item) => item.tag === normalizedNewTag)
+  );
+  const canSaveNewTag = Boolean(normalizedNewTag && newTagType && !isNewTagNameDuplicate);
+
+  return (
+    <MyModal
+      isOpen
+      onClose={onClose}
+      size={'xl'}
+      w={'800px'}
+      minH={'400px'}
+      maxH={'80vh'}
+      isCentered
+      title={
+        <Flex alignItems={'center'} gap={1}>
+          <Box>{t('dataset:tag.manage')}</Box>
+          <QuestionTip
+            label={t('dataset:core.dataset.tags.tagType')}
+            w={'20px'}
+            h={'20px'}
+            color={'myGray.600'}
+          />
+        </Flex>
+      }
+      closeOnOverlayClick={false}
+      bodyStyles={{
+        flex: 1,
+        minH: 0,
+        pb: 0,
+        overflow: 'hidden'
+      }}
+      footerStyles={{
+        justifyContent: 'flex-start',
+        px: 8,
+        pt: 2,
+        pb: 8
+      }}
+      footer={
+        <Button
+          h={'36px'}
+          px={'14px'}
+          variant={'primaryOutline'}
+          color={'primary.700'}
+          leftIcon={<MyIcon name={'common/addLight'} w={'18px'} h={'18px'} />}
+          onClick={() => {
+            setCurrentEditTag(undefined);
+            setCurrentEditTagContent(undefined);
+            setNewTag('');
+            setNewTagType(undefined);
+          }}
+        >
+          {t('dataset:tag.add_tag')}
+        </Button>
+      }
+      borderRadius={'10px'}
+      sx={{
+        '.chakra-modal__close-btn': {
+          top: 2,
+          right: 2,
+          w: '36px',
+          h: '36px'
+        }
+      }}
+    >
+      <TagTableContainer>
+        <TagTableHeader columns={TAG_TABLE_COLUMNS}>
+          <Box px={6}>{t('dataset:tag.name')}</Box>
+          <Box px={6}>{t('dataset:tag.attribute')}</Box>
+          <Box px={6}>{t('common:Operation')}</Box>
+        </TagTableHeader>
+
+        <Box
+          flex={'1 1 auto'}
+          minH={0}
+          overflowY={'auto'}
+          display={'flex'}
+          flexDirection={'column'}
+          fontSize={'sm'}
+          lineHeight={'20px'}
+          color={'myGray.600'}
+        >
+          {allDatasetTags.length === 0 && newTag === undefined ? (
+            <EmptyTip text={t('dataset:dataset.no_tags')} />
+          ) : (
+            allDatasetTags.map((tag) => {
+              const isEditing = currentEditTag?._id === tag._id;
+              const tagType = tag.tagType ?? DatasetCollectionTagTypeEnum.string;
+              const editedTagContent = currentEditTagContent?.trim();
+              const isEditedTagNameDuplicate = Boolean(
+                editedTagContent &&
+                editedTagContent !== tag.tag &&
+                allDatasetTags.some((item) => item._id !== tag._id && item.tag === editedTagContent)
+              );
+              const canSaveEditedTag = Boolean(
+                editedTagContent &&
+                editedTagContent !== tag.tag &&
+                !allDatasetTags.some(
+                  (item) => item._id !== tag._id && item.tag === editedTagContent
+                )
+              );
+
+              return (
+                <Box
+                  key={tag._id}
+                  display={'grid'}
+                  gridTemplateColumns={TAG_TABLE_COLUMNS}
+                  alignItems={'center'}
+                  h={'80px'}
+                  flexShrink={0}
+                  borderBottom={'1px solid'}
+                  borderColor={'myGray.150'}
+                >
+                  <Box px={6} minW={0}>
+                    {isEditing ? (
+                      <Input
+                        ref={editInputRef}
+                        value={currentEditTagContent ?? tag.tag}
+                        placeholder={t('dataset:tag.Edit_tag')}
+                        maxLength={20}
+                        size={'sm'}
+                        onChange={(e) => setCurrentEditTagContent(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (canSaveEditedTag) {
+                              void submitUpdatedTag(tag);
+                            }
+                          }
+                        }}
+                      />
+                    ) : (
+                      <Box overflow={'hidden'} textOverflow={'ellipsis'} whiteSpace={'nowrap'}>
+                        {tag.tag}
+                      </Box>
+                    )}
+                  </Box>
+                  <Flex px={6} alignItems={'center'} gap={1}>
+                    <Box>{tagTypeMap[tagType]}</Box>
+                    {tagType === DatasetCollectionTagTypeEnum.array && (
+                      <TagOptionManagePopover
+                        options={tag.options ?? []}
+                        onSave={(data) => onSaveTagOptions({ tag, ...data })}
+                      />
+                    )}
+                  </Flex>
+                  <Flex px={6} gap={1} alignItems={'center'}>
+                    {isEditing ? (
+                      <>
+                        <TagActionButton
+                          label={
+                            isEditedTagNameDuplicate
+                              ? t('dataset:tag.name_duplicate')
+                              : t('common:Save')
+                          }
+                          icon={<SaveActionIcon isEnabled={canSaveEditedTag} />}
+                          isDisabled={!canSaveEditedTag}
+                          hoverIconClassName={canSaveEditedTag ? 'tag-save-icon-hover' : undefined}
+                          onClick={() => void submitUpdatedTag(tag)}
+                        />
+                        <TagActionButton
+                          label={t('common:Close')}
+                          icon={<MyIcon name={'close'} w={'16px'} h={'16px'} />}
+                          hoverColor={'myGray.700'}
+                          onClick={() => {
+                            setCurrentEditTag(undefined);
+                            setCurrentEditTagContent(undefined);
+                          }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <TagActionButton
+                          label={t('common:Edit')}
+                          icon={<MyIcon name={'edit'} w={'16px'} h={'16px'} />}
+                          hoverColor={'primary.700'}
+                          onClick={() => {
+                            setCurrentEditTag(tag);
+                            setCurrentEditTagContent(tag.tag);
+                          }}
+                        />
+                        <TagActionButton
+                          label={t('common:Delete')}
+                          icon={<MyIcon name={'delete'} w={'16px'} h={'16px'} />}
+                          hoverColor={'red.600'}
+                          onClick={() => {
+                            openDeleteConfirm({
+                              onConfirm: () => onDeleteCollectionTag(tag._id)
+                            })();
+                          }}
+                        />
+                      </>
+                    )}
+                  </Flex>
+                </Box>
+              );
+            })
+          )}
+
+          {newTag !== undefined && (
+            <Box
+              display={'grid'}
+              gridTemplateColumns={TAG_TABLE_COLUMNS}
+              alignItems={'center'}
+              h={'80px'}
+              flexShrink={0}
+              borderBottom={'1px solid'}
+              borderColor={'myGray.150'}
+            >
+              <Box px={6}>
+                <Input
+                  ref={tagInputRef}
+                  value={newTag}
+                  placeholder={t('dataset:tag.enter_name')}
+                  maxLength={20}
+                  size={'sm'}
+                  onChange={(e) => setNewTag(e.target.value)}
+                />
+              </Box>
+              <Box px={6}>
+                <MySelect<DatasetCollectionTagTypeEnum>
+                  value={newTagType}
+                  placeholder={t('dataset:tag.select_attribute')}
+                  list={tagTypeOptions}
+                  width={'100%'}
+                  h={'36px'}
+                  fontSize={'sm'}
+                  lineHeight={'20px'}
+                  letterSpacing={'0.25px'}
+                  onChange={(val) => setNewTagType(val)}
+                  menuPlacement={'bottom-start'}
+                />
+              </Box>
+              <Flex px={6} gap={1} alignItems={'center'}>
+                <TagActionButton
+                  label={isNewTagNameDuplicate ? t('dataset:tag.name_duplicate') : t('common:Save')}
+                  icon={<SaveActionIcon isEnabled={canSaveNewTag} />}
+                  isDisabled={!canSaveNewTag}
+                  hoverIconClassName={canSaveNewTag ? 'tag-save-icon-hover' : undefined}
+                  onClick={() => void submitNewTag()}
+                />
+                <TagActionButton
+                  label={t('common:Close')}
+                  icon={<MyIcon name={'close'} w={'16px'} h={'16px'} />}
+                  hoverColor={'myGray.700'}
+                  onClick={cancelNewTag}
+                />
+              </Flex>
+            </Box>
+          )}
+        </Box>
+      </TagTableContainer>
+      <DeleteConfirmModal />
+    </MyModal>
+  );
+};
+
+export default React.memo(TagManageModal);

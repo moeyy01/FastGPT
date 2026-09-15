@@ -9,43 +9,33 @@ const unAuthPage: { [key: string]: boolean } = {
   '/login': true,
   '/login/provider': true,
   '/login/fastlogin': true,
+  '/login/sso': true,
   '/appStore': true,
+  '/chat': true,
   '/chat/share': true,
-  '/chat/team': true,
   '/tools/price': true,
   '/price': true
 };
 
-const Auth = ({ children }: { children: JSX.Element }) => {
+const Auth = ({ children }: { children: JSX.Element | React.ReactNode }) => {
   const { t } = useTranslation();
   const router = useRouter();
   const { toast } = useToast();
   const { userInfo, initUserInfo } = useUserStore();
+  const isUnAuthPage = unAuthPage[router.pathname] === true;
 
-  useQuery(
-    [router.pathname],
-    () => {
-      if (unAuthPage[router.pathname] === true || userInfo) {
-        return null;
-      } else {
-        return initUserInfo();
-      }
-    },
-    {
-      onError(error) {
-        console.log('error->', error);
-        router.replace(
-          `/login?lastRoute=${encodeURIComponent(location.pathname + location.search)}`
-        );
-        toast({
-          status: 'warning',
-          title: t('common:support.user.Need to login')
-        });
-      }
+  useQuery(['initUserInfo'], initUserInfo, {
+    enabled: !isUnAuthPage,
+    refetchInterval: 10 * 60 * 1000,
+    onError() {
+      toast({
+        status: 'warning',
+        title: t('common:support.user.Need to login')
+      });
     }
-  );
+  });
 
-  return !!userInfo || unAuthPage[router.pathname] === true ? children : null;
+  return !!userInfo || isUnAuthPage ? children : null;
 };
 
 export default Auth;

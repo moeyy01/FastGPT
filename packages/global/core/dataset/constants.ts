@@ -1,43 +1,114 @@
+import { i18nT } from '../../common/i18n/utils';
+
 /* ------------ dataset -------------- */
 export enum DatasetTypeEnum {
   folder = 'folder',
   dataset = 'dataset',
   websiteDataset = 'websiteDataset', // depp link
-  externalFile = 'externalFile'
+  externalFile = 'externalFile',
+
+  apiDataset = 'apiDataset',
+  feishu = 'feishu',
+  yuque = 'yuque',
+  dingtalk = 'dingtalk'
 }
-export const DatasetTypeMap = {
+
+// @ts-expect-error ignore incomplete api dataset map
+export const ApiDatasetTypeMap: Record<
+  `${DatasetTypeEnum}`,
+  {
+    icon: string;
+    avatar: string;
+    label: any;
+    collectionLabel: string;
+    courseUrl?: string;
+  }
+> = {
+  [DatasetTypeEnum.apiDataset]: {
+    icon: 'core/dataset/externalDatasetOutline',
+    avatar: 'core/dataset/externalDatasetColor',
+    label: i18nT('dataset:api_file'),
+    collectionLabel: i18nT('common:File'),
+    courseUrl: '/guide/dataset/third-party/api_dataset'
+  },
+  [DatasetTypeEnum.feishu]: {
+    icon: 'core/dataset/feishuDatasetOutline',
+    avatar: 'core/dataset/feishuDatasetColor',
+    label: i18nT('dataset:feishu_dataset'),
+    collectionLabel: i18nT('common:File'),
+    courseUrl: '/guide/dataset/third-party/lark_dataset'
+  },
+  [DatasetTypeEnum.yuque]: {
+    icon: 'core/dataset/yuqueDatasetOutline',
+    avatar: 'core/dataset/yuqueDatasetColor',
+    label: i18nT('dataset:yuque_dataset'),
+    collectionLabel: i18nT('common:File'),
+    courseUrl: '/guide/dataset/third-party/yuque_dataset'
+  },
+  [DatasetTypeEnum.dingtalk]: {
+    icon: 'core/dataset/dingtalkDatasetOutline',
+    avatar: 'core/dataset/dingtalkDatasetColor',
+    label: i18nT('dataset:dingtalk_dataset'),
+    collectionLabel: i18nT('common:File'),
+    courseUrl: '/guide/dataset/third-party/dingtalk_dataset'
+  }
+};
+export const DatasetTypeMap: Record<
+  `${DatasetTypeEnum}`,
+  {
+    icon: string;
+    avatar: string;
+    label: any;
+    collectionLabel: string;
+    courseUrl?: string;
+  }
+> = {
+  ...ApiDatasetTypeMap,
   [DatasetTypeEnum.folder]: {
     icon: 'common/folderFill',
-    label: 'folder_dataset',
-    collectionLabel: 'common.Folder'
+    avatar: 'common/folderFill',
+    label: i18nT('dataset:folder_dataset'),
+    collectionLabel: i18nT('common:Folder')
   },
   [DatasetTypeEnum.dataset]: {
-    icon: 'core/dataset/commonDataset',
-    label: 'common_dataset',
-    collectionLabel: 'common.File'
+    icon: 'core/dataset/commonDatasetOutline',
+    avatar: 'core/dataset/commonDatasetColor',
+    label: i18nT('dataset:common_dataset'),
+    collectionLabel: i18nT('common:File')
   },
   [DatasetTypeEnum.websiteDataset]: {
-    icon: 'core/dataset/websiteDataset',
-    label: 'website_dataset',
-    collectionLabel: 'common.Website'
+    icon: 'core/dataset/websiteDatasetOutline',
+    avatar: 'core/dataset/websiteDatasetColor',
+    label: i18nT('dataset:website_dataset'),
+    collectionLabel: i18nT('common:Website'),
+    courseUrl: '/guide/dataset/websync'
   },
   [DatasetTypeEnum.externalFile]: {
-    icon: 'core/dataset/externalDataset',
-    label: 'external_file',
-    collectionLabel: 'common.File'
+    icon: 'core/dataset/externalDatasetOutline',
+    avatar: 'core/dataset/externalDatasetColor',
+    label: i18nT('dataset:external_file'),
+    collectionLabel: i18nT('common:File')
   }
 };
 
 export enum DatasetStatusEnum {
   active = 'active',
-  syncing = 'syncing'
+  syncing = 'syncing',
+  waiting = 'waiting',
+  error = 'error'
 }
 export const DatasetStatusMap = {
   [DatasetStatusEnum.active]: {
-    label: 'core.dataset.status.active'
+    label: i18nT('common:core.dataset.status.active')
   },
   [DatasetStatusEnum.syncing]: {
-    label: 'core.dataset.status.syncing'
+    label: i18nT('common:core.dataset.status.syncing')
+  },
+  [DatasetStatusEnum.waiting]: {
+    label: i18nT('common:core.dataset.status.waiting')
+  },
+  [DatasetStatusEnum.error]: {
+    label: i18nT('dataset:status_error')
   }
 };
 
@@ -48,38 +119,134 @@ export enum DatasetCollectionTypeEnum {
 
   file = 'file',
   link = 'link', // one link
-  externalFile = 'externalFile'
+  externalFile = 'externalFile',
+  apiFile = 'apiFile',
+  images = 'images'
 }
 export const DatasetCollectionTypeMap = {
   [DatasetCollectionTypeEnum.folder]: {
-    name: 'core.dataset.folder'
+    name: i18nT('common:core.dataset.folder')
   },
   [DatasetCollectionTypeEnum.file]: {
-    name: 'core.dataset.file'
+    name: i18nT('common:core.dataset.file')
   },
   [DatasetCollectionTypeEnum.externalFile]: {
-    name: 'core.dataset.externalFile'
+    name: i18nT('common:core.dataset.externalFile')
   },
   [DatasetCollectionTypeEnum.link]: {
-    name: 'core.dataset.link'
+    name: i18nT('common:core.dataset.link')
   },
   [DatasetCollectionTypeEnum.virtual]: {
-    name: 'core.dataset.Manual collection'
+    name: i18nT('dataset:empty_collection')
+  },
+  [DatasetCollectionTypeEnum.apiFile]: {
+    name: i18nT('common:core.dataset.apiFile')
+  },
+  [DatasetCollectionTypeEnum.images]: {
+    name: i18nT('dataset:core.dataset.Image collection')
   }
 };
 
 export enum DatasetCollectionSyncResultEnum {
   sameRaw = 'sameRaw',
-  success = 'success'
+  success = 'success',
+  failed = 'failed'
 }
 export const DatasetCollectionSyncResultMap = {
   [DatasetCollectionSyncResultEnum.sameRaw]: {
-    label: 'core.dataset.collection.sync.result.sameRaw'
+    label: i18nT('common:core.dataset.collection.sync.result.sameRaw')
   },
   [DatasetCollectionSyncResultEnum.success]: {
-    label: 'core.dataset.collection.sync.result.success'
+    label: i18nT('common:core.dataset.collection.sync.result.success')
+  },
+  [DatasetCollectionSyncResultEnum.failed]: {
+    label: i18nT('dataset:sync_collection_failed')
   }
 };
+
+/* ------------ collection tags -------------- */
+export enum DatasetCollectionTagTypeEnum {
+  string = 'string',
+  number = 'number',
+  datetime = 'datetime',
+  array = 'array'
+}
+
+export const DatasetCollectionTagTypeMap = {
+  [DatasetCollectionTagTypeEnum.string]: {
+    label: i18nT('dataset:core.dataset.tags.string')
+  },
+  [DatasetCollectionTagTypeEnum.number]: {
+    label: i18nT('dataset:core.dataset.tags.number')
+  },
+  [DatasetCollectionTagTypeEnum.datetime]: {
+    label: i18nT('dataset:core.dataset.tags.date')
+  },
+  [DatasetCollectionTagTypeEnum.array]: {
+    label: i18nT('dataset:core.dataset.tags.array')
+  }
+};
+
+export enum DatasetCollectionDataProcessModeEnum {
+  chunk = 'chunk',
+  qa = 'qa',
+  imageParse = 'imageParse',
+
+  backup = 'backup',
+  template = 'template',
+
+  auto = 'auto' // abandon
+}
+export const DatasetCollectionDataProcessModeMap = {
+  [DatasetCollectionDataProcessModeEnum.chunk]: {
+    label: i18nT('common:core.dataset.training.Chunk mode'),
+    tooltip: i18nT('common:core.dataset.import.Chunk Split Tip')
+  },
+  [DatasetCollectionDataProcessModeEnum.qa]: {
+    label: i18nT('common:core.dataset.training.QA mode'),
+    tooltip: i18nT('common:core.dataset.import.QA Import Tip')
+  },
+  [DatasetCollectionDataProcessModeEnum.imageParse]: {
+    label: i18nT('dataset:training.Image mode'),
+    tooltip: i18nT('common:core.dataset.import.Chunk Split Tip')
+  },
+  [DatasetCollectionDataProcessModeEnum.auto]: {
+    label: i18nT('common:core.dataset.training.Auto mode'),
+    tooltip: i18nT('common:core.dataset.training.Auto mode Tip')
+  },
+
+  [DatasetCollectionDataProcessModeEnum.backup]: {
+    label: i18nT('dataset:backup_mode'),
+    tooltip: i18nT('dataset:backup_mode')
+  },
+  [DatasetCollectionDataProcessModeEnum.template]: {
+    label: i18nT('dataset:template_mode'),
+    tooltip: i18nT('dataset:template_mode')
+  }
+};
+
+export enum ChunkTriggerConfigTypeEnum {
+  minSize = 'minSize',
+  forceChunk = 'forceChunk',
+  maxSize = 'maxSize'
+}
+export enum ChunkSettingModeEnum {
+  auto = 'auto',
+  custom = 'custom',
+  // 文本→chunk 委托给外部智能分块服务,平台不做本地切分
+  intelligent = 'intelligent'
+}
+
+export enum DataChunkSplitModeEnum {
+  paragraph = 'paragraph',
+  size = 'size',
+  char = 'char'
+}
+export enum ParagraphChunkAIModeEnum {
+  auto = 'auto',
+  force = 'force',
+  forbid = 'forbid'
+}
 
 /* ------------ data -------------- */
 
@@ -88,33 +255,29 @@ export enum ImportDataSourceEnum {
   fileLocal = 'fileLocal',
   fileLink = 'fileLink',
   fileCustom = 'fileCustom',
-  csvTable = 'csvTable',
-  externalFile = 'externalFile'
+  externalFile = 'externalFile',
+  apiDataset = 'apiDataset',
+  reTraining = 'reTraining',
+  imageDataset = 'imageDataset'
 }
 
 export enum TrainingModeEnum {
+  parse = 'parse',
   chunk = 'chunk',
+  qa = 'qa',
   auto = 'auto',
-  qa = 'qa'
+  image = 'image',
+  imageParse = 'imageParse'
 }
 
-export const TrainingTypeMap = {
-  [TrainingModeEnum.chunk]: {
-    label: 'core.dataset.training.Chunk mode',
-    tooltip: 'core.dataset.import.Chunk Split Tip',
-    openSource: true
-  },
-  [TrainingModeEnum.auto]: {
-    label: 'core.dataset.training.Auto mode',
-    tooltip: 'core.dataset.training.Auto mode Tip',
-    openSource: false
-  },
-  [TrainingModeEnum.qa]: {
-    label: 'core.dataset.training.QA mode',
-    tooltip: 'core.dataset.import.QA Import Tip',
-    openSource: true
-  }
-};
+export const DatasetSynonymCollectionName = 'dataset_synonyms';
+export const DatasetSynonymMappingCollectionName = 'dataset_synonym_mappings';
+
+export enum CollectionTrainingStatusEnum {
+  running = 'running',
+  error = 'error',
+  ready = 'ready'
+}
 
 /* ------------ search -------------- */
 export enum DatasetSearchModeEnum {
@@ -126,20 +289,20 @@ export enum DatasetSearchModeEnum {
 export const DatasetSearchModeMap = {
   [DatasetSearchModeEnum.embedding]: {
     icon: 'core/dataset/modeEmbedding',
-    title: 'core.dataset.search.mode.embedding',
-    desc: 'core.dataset.search.mode.embedding desc',
+    title: i18nT('common:core.dataset.search.mode.embedding'),
+    desc: i18nT('common:core.dataset.search.mode.embedding desc'),
     value: DatasetSearchModeEnum.embedding
   },
   [DatasetSearchModeEnum.fullTextRecall]: {
     icon: 'core/dataset/fullTextRecall',
-    title: 'core.dataset.search.mode.fullTextRecall',
-    desc: 'core.dataset.search.mode.fullTextRecall desc',
+    title: i18nT('common:core.dataset.search.mode.fullTextRecall'),
+    desc: i18nT('common:core.dataset.search.mode.fullTextRecall desc'),
     value: DatasetSearchModeEnum.fullTextRecall
   },
   [DatasetSearchModeEnum.mixedRecall]: {
     icon: 'core/dataset/mixedRecall',
-    title: 'core.dataset.search.mode.mixedRecall',
-    desc: 'core.dataset.search.mode.mixedRecall desc',
+    title: i18nT('common:core.dataset.search.mode.mixedRecall'),
+    desc: i18nT('common:core.dataset.search.mode.mixedRecall desc'),
     value: DatasetSearchModeEnum.mixedRecall
   }
 };
@@ -152,23 +315,23 @@ export enum SearchScoreTypeEnum {
 }
 export const SearchScoreTypeMap = {
   [SearchScoreTypeEnum.embedding]: {
-    label: 'core.dataset.search.score.embedding',
-    desc: 'core.dataset.search.score.embedding desc',
+    label: i18nT('common:core.dataset.search.mode.embedding'),
+    desc: i18nT('common:core.dataset.search.score.embedding desc'),
     showScore: true
   },
   [SearchScoreTypeEnum.fullText]: {
-    label: 'core.dataset.search.score.fullText',
-    desc: 'core.dataset.search.score.fullText desc',
+    label: i18nT('common:core.dataset.search.score.fullText'),
+    desc: i18nT('common:core.dataset.search.score.fullText desc'),
     showScore: false
   },
   [SearchScoreTypeEnum.reRank]: {
-    label: 'core.dataset.search.score.reRank',
-    desc: 'core.dataset.search.score.reRank desc',
+    label: i18nT('common:core.dataset.search.score.reRank'),
+    desc: i18nT('common:core.dataset.search.score.reRank desc'),
     showScore: true
   },
   [SearchScoreTypeEnum.rrf]: {
-    label: 'core.dataset.search.score.rrf',
-    desc: 'core.dataset.search.score.rrf desc',
+    label: i18nT('common:core.dataset.search.score.rrf'),
+    desc: i18nT('common:core.dataset.search.score.rrf desc'),
     showScore: false
   }
 };
@@ -180,5 +343,7 @@ export const LinkCollectionIcon = 'common/linkBlue';
 export enum DatasetSourceReadTypeEnum {
   fileLocal = 'fileLocal',
   link = 'link',
-  externalFile = 'externalFile'
+  externalFile = 'externalFile',
+  apiFile = 'apiFile',
+  reTraining = 'reTraining'
 }

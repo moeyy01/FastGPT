@@ -1,20 +1,22 @@
-import { useSystemStore } from '@/web/common/system/useSystemStore';
-import { Flex, Table, Thead, Tbody, Tr, Th, Td, TableContainer } from '@chakra-ui/react';
+import { FixedTableContainer } from '@fastgpt/web/components/common/FixedTable';
+import { ModelStatusLabel } from '@/components/Select/ModelStatusLabel';
+import { useModelSummary } from '@/web/core/ai/model/useModelSummary';
+import { Flex, Table, Tbody, Td, Th, Thead, Tr } from '@chakra-ui/react';
 import {
   DatasetSearchModeEnum,
   DatasetSearchModeMap
 } from '@fastgpt/global/core/dataset/constants';
-import { useTranslation } from 'next-i18next';
-import React, { useMemo } from 'react';
 import MyIcon from '@fastgpt/web/components/common/Icon';
+import { useTranslation } from 'next-i18next';
+import React from 'react';
 
 const SearchParamsTip = ({
   searchMode,
   similarity = 0,
-  limit = 1500,
+  limit = 5000,
   responseEmptyText,
   usingReRank = false,
-  datasetSearchUsingExtensionQuery,
+  usingExtensionQuery,
   queryExtensionModel
 }: {
   searchMode: `${DatasetSearchModeEnum}`;
@@ -22,38 +24,44 @@ const SearchParamsTip = ({
   limit?: number;
   responseEmptyText?: string;
   usingReRank?: boolean;
-  datasetSearchUsingExtensionQuery?: boolean;
+  usingExtensionQuery?: boolean;
   queryExtensionModel?: string;
 }) => {
   const { t } = useTranslation();
-  const { reRankModelList, llmModelList } = useSystemStore();
+  const detailState = useModelSummary({
+    modelId: usingExtensionQuery ? queryExtensionModel : undefined
+  });
 
-  const hasReRankModel = reRankModelList.length > 0;
+  const hasReRankModel = true;
   const hasEmptyResponseMode = responseEmptyText !== undefined;
   const hasSimilarityMode = usingReRank || searchMode === DatasetSearchModeEnum.embedding;
 
-  const extensionModelName = useMemo(
-    () =>
-      datasetSearchUsingExtensionQuery
-        ? llmModelList.find((item) => item.model === queryExtensionModel)?.name ??
-          llmModelList[0]?.name
-        : undefined,
-    [datasetSearchUsingExtensionQuery, llmModelList, queryExtensionModel]
-  );
-
   return (
-    <TableContainer
+    <FixedTableContainer
       bg={'primary.50'}
       borderRadius={'lg'}
       borderWidth={'1px'}
       borderColor={'primary.1'}
+      horizontalScroll
+      sx={{
+        '&::-webkit-scrollbar': {
+          height: '6px',
+          borderRadius: '4px'
+        },
+        '&::-webkit-scrollbar-thumb': {
+          backgroundColor: 'myGray.250 !important',
+          '&:hover': {
+            backgroundColor: 'myGray.300 !important'
+          }
+        }
+      }}
     >
       <Table fontSize={'xs'} overflow={'overlay'}>
         <Thead>
           <Tr bg={'transparent !important'}>
             <Th fontSize={'mini'}>{t('common:core.dataset.search.search mode')}</Th>
-            <Th fontSize={'mini'}>{t('common:core.dataset.search.Max Tokens')}</Th>
-            <Th fontSize={'mini'}>{t('common:core.dataset.search.Min Similarity')}</Th>
+            <Th fontSize={'mini'}>{t('common:max_quote_tokens')}</Th>
+            <Th fontSize={'mini'}>{t('common:min_similarity')}</Th>
             {hasReRankModel && <Th fontSize={'mini'}>{t('common:core.dataset.search.ReRank')}</Th>}
             <Th fontSize={'mini'}>{t('common:core.module.template.Query extension')}</Th>
             {hasEmptyResponseMode && (
@@ -85,13 +93,22 @@ const SearchParamsTip = ({
               </Td>
             )}
             <Td pt={0} pb={2} fontSize={'mini'}>
-              {extensionModelName ? extensionModelName : '❌'}
+              {usingExtensionQuery ? (
+                <ModelStatusLabel
+                  modelId={queryExtensionModel}
+                  detail={detailState.detail}
+                  loading={detailState.loading}
+                  error={detailState.error}
+                />
+              ) : (
+                '❌'
+              )}
             </Td>
             {hasEmptyResponseMode && <Th>{responseEmptyText !== '' ? '✅' : '❌'}</Th>}
           </Tr>
         </Tbody>
       </Table>
-    </TableContainer>
+    </FixedTableContainer>
   );
 };
 

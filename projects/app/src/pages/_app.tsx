@@ -1,44 +1,53 @@
 import type { AppProps } from 'next/app';
-import Script from 'next/script';
-
-import Layout from '@/components/Layout';
+import dynamic from 'next/dynamic';
 import { appWithTranslation } from 'next-i18next';
-
-import QueryClientContext from '@/web/context/QueryClient';
-import ChakraUIContext from '@/web/context/ChakraUI';
-import I18nContextProvider from '@/web/context/I18n';
-import { useInitApp } from '@/web/context/useInitApp';
-
+import { clientI18nConfig } from '@fastgpt/web/i18n/clientConfig';
+import { getLangFromCookie, LANG_KEY } from '@fastgpt/web/i18n/utils';
+import AppShell from '@/web/context/AppShell';
+import { isClientOnlyRoute } from '@/web/context/clientOnlyRouteConfig';
 import '@/web/styles/reset.scss';
-import NextHead from '@/components/common/NextHead';
+import '@scalar/api-reference-react/style.css';
 
-function App({ Component, pageProps }: AppProps) {
-  const { feConfigs, scripts, title } = useInitApp();
+const ClientOnlyPage = dynamic(() => import('@/web/context/ClientOnlyPage'), {
+  ssr: false
+});
+const AppRouter = (props: AppProps) => {
+  const clientOnly = isClientOnlyRoute(props.router.pathname);
 
   return (
-    <>
-      <NextHead
-        title={title}
-        desc={
-          feConfigs?.systemDescription ||
-          process.env.SYSTEM_DESCRIPTION ||
-          `${title} 是一个大模型应用编排系统，提供开箱即用的数据处理、模型调用等能力，可以快速的构建知识库并通过 Flow 可视化进行工作流编排，实现复杂的知识库场景！`
-        }
-        icon={feConfigs?.favicon || process.env.SYSTEM_FAVICON}
-      />
-      {scripts?.map((item, i) => <Script key={i} strategy="lazyOnload" {...item}></Script>)}
-
-      <QueryClientContext>
-        <I18nContextProvider>
-          <ChakraUIContext>
-            <Layout>
-              <Component {...pageProps} />
-            </Layout>
-          </ChakraUIContext>
-        </I18nContextProvider>
-      </QueryClientContext>
-    </>
+    <AppShell
+      {...props}
+      clientOnly={clientOnly}
+      renderPage={clientOnly ? () => <ClientOnlyPage {...props} /> : undefined}
+    />
   );
-}
+};
 
-export default appWithTranslation(App);
+const TranslatedAppRouter = appWithTranslation(AppRouter, clientI18nConfig);
+
+/**
+ * client-only 页面没有 SSR 翻译 props；有语言 Cookie 时在 Provider 初始化前注入。
+ * 没有 Cookie 时允许先使用默认语言，挂载后再由客户端 effect 恢复本地或浏览器语言。
+ */
+const App = (props: AppProps) => {
+  const clientOnly = isClientOnlyRoute(props.router.pathname);
+  if (!clientOnly || typeof window === 'undefined') {
+    return <TranslatedAppRouter {...props} />;
+  }
+
+  const initialLocale = getLangFromCookie(LANG_KEY);
+  if (!initialLocale) {
+    return <TranslatedAppRouter {...props} />;
+  }
+  const pageProps = {
+    ...props.pageProps,
+    _nextI18Next: {
+      ...props.pageProps?._nextI18Next,
+      initialLocale
+    }
+  };
+
+  return <TranslatedAppRouter {...props} pageProps={pageProps} />;
+};
+
+export default App;

@@ -3,31 +3,53 @@
   "version": "4.0",
   "private": true,
   "scripts": {
+    "dev:pro": "turbo run dev:pro --filter=@fastgpt/app",
     "prepare": "husky install",
-    "format-code": "prettier --config \"./.prettierrc.js\" --write \"./**/src/**/*.{ts,tsx,scss}\"",
-    "format-doc": "zhlint --dir ./docSite *.md --fix",
     "gen:theme-typings": "chakra-cli tokens packages/web/styles/theme.ts --out node_modules/.pnpm/node_modules/@chakra-ui/styled-system/dist/theming.types.d.ts",
-    "postinstall": "sh ./scripts/postinstall.sh",
-    "initIcon": "node ./scripts/icon/init.js",
+    "gen:deploy": "node ./deploy/init.mjs",
+    "postinstall": "pnpm gen:theme-typings && pnpm run build:sdks",
+    "initIcon": "node ./scripts/icon/init.js && prettier --config \"./.prettierrc.js\" --write \"packages/web/components/common/Icon/constants.ts\"",
     "previewIcon": "node ./scripts/icon/index.js",
-    "checkI18n": "node ./scripts/i18n/delete-unused-keys.js"
+    "lint": "turbo run lint",
+    "create:i18n": "node ./scripts/i18n/index.js",
+    "clean:unused:pro": "node --experimental-strip-types ./pro/scripts/cleanup-unused.ts",
+    "clean:unused:pro:write": "node --experimental-strip-types ./pro/scripts/cleanup-unused.ts --write",
+    "test": "node ./scripts/test/run.mjs",
+    "test:all": "pnpm test:workspace && pnpm test:vector",
+    "test:repo": "vitest run --config vitest.config.mts --coverage --passWithNoTests",
+    "test:workspace": "node ./scripts/test/withMongo.mjs pnpm exec turbo run test --filter=@fastgpt/app --filter=@fastgpt/admin --filter=@fastgpt/global --filter=@fastgpt/service --filter=@fastgpt/web",
+    "test:app": "turbo run test --filter=@fastgpt/app",
+    "test:admin": "turbo run test --filter=@fastgpt/admin",
+    "test:global": "turbo run test --filter=@fastgpt/global",
+    "test:service": "turbo run test --filter=@fastgpt/service",
+    "test:web": "turbo run test --filter=@fastgpt/web",
+    "test:service:integration": "turbo run test:integration --filter=@fastgpt/service",
+    "test:service:integration:sandbox": "pnpm --dir packages/service test:integration:sandbox",
+    "generate:i18n-loaders": "node scripts/generate-i18n-resource-loaders.mjs",
+    "check:i18n-loaders": "node scripts/check-i18n-resource-loaders.mjs",
+    "build:sdks": "pnpm -r --filter @fastgpt-sdk/storage --filter @fastgpt-sdk/otel --filter @fastgpt-sdk/sandbox-adapter build"
   },
   "devDependencies": {
     "@chakra-ui/cli": "^2.4.1",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "eslint": "catalog:lint",
+    "eslint-config-next": "catalog:lint",
     "husky": "^8.0.3",
-    "lint-staged": "^13.3.0",
-    "i18next": "23.11.5",
-    "next-i18next": "15.3.0",
-    "react-i18next": "14.1.2",
-    "prettier": "3.2.4",
-    "zhlint": "^0.7.4"
-  },
-  "lint-staged": {
-    "./**/**/*.{ts,tsx,scss}": "npm run format-code",
-    "./docSite/**/**/*.md": "npm run format-doc"
+    "i18next": "catalog:",
+    "js-yaml": "catalog:",
+    "lint-staged": "catalog:lint",
+    "mongodb-memory-server": "catalog:",
+    "next-i18next": "catalog:",
+    "prettier": "catalog:lint",
+    "react-i18next": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:lint",
+    "vitest": "catalog:"
   },
   "engines": {
-    "node": ">=18.16.0",
-    "pnpm": ">=9.0.0"
-  }
+    "node": ">=22.23.2"
+  },
+  "packageManager": "pnpm@10.33.4"
 }

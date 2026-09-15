@@ -1,0 +1,189 @@
+import {
+  AppChatConfigInputSchema,
+  AppQuestionGuideInputSchema,
+  AppTTSConfigInputSchema,
+  CreateAppBodySchema,
+  CreateAppRequestBodySchema,
+  OpenAPIAppChatConfigSchema,
+  OpenAPIAppScheduledTriggerConfigSchema,
+  UpdateAppBodySchema
+} from '@fastgpt/global/openapi/core/app/common/api';
+import { PublishAppBodySchema } from '@fastgpt/global/openapi/core/app/version/api';
+import type { z } from 'zod';
+import { describe, expect, it } from 'vitest';
+
+const currentNode = {
+  nodeId: 'start-1',
+  flowNodeType: 'workflowStart',
+  name: 'Start',
+  inputs: [
+    {
+      key: 'query',
+      label: 'Query',
+      renderTypeList: ['input'],
+      defaultToAgentGenerated: true
+    }
+  ],
+  outputs: []
+};
+
+describe('UpdateAppBodySchema', () => {
+  it('rejects workflow fields', () => {
+    expect(UpdateAppBodySchema.safeParse({ nodes: [] }).success).toBe(false);
+  });
+});
+
+describe('CreateAppBodySchema', () => {
+  it('accepts canonical workflow payload', () => {
+    expect(
+      CreateAppBodySchema.safeParse({
+        name: 'canonical app',
+        type: 'simple',
+        modules: [currentNode],
+        edges: [],
+        chatConfig: {}
+      }).success
+    ).toBe(true);
+  });
+
+  it('preserves empty scheduled trigger compatibility', () => {
+    expect(OpenAPIAppScheduledTriggerConfigSchema.parse({})).toBeUndefined();
+  });
+
+  it('normalizes null optional chat config fields', () => {
+    const responseConfig = OpenAPIAppChatConfigSchema.parse({
+      variables: null,
+      questionGuide: null,
+      scheduledTriggerConfig: null
+    });
+    const inputConfig = AppChatConfigInputSchema.parse({
+      questionGuide: null,
+      ttsConfig: null
+    });
+
+    expect(responseConfig.variables).toBeUndefined();
+    expect(responseConfig.questionGuide).toBeUndefined();
+    expect(responseConfig.scheduledTriggerConfig).toBeUndefined();
+    expect(inputConfig.questionGuide).toBeUndefined();
+    expect(inputConfig.ttsConfig).toBeUndefined();
+  });
+
+  it('preserves legacy chat model references until the post-deploy backfill finishes', () => {
+    const result = CreateAppBodySchema.parse({
+      name: 'legacy chat config',
+      type: 'simple',
+      chatConfig: {
+        questionGuide: { open: true, model: 'legacy-llm' },
+        ttsConfig: { type: 'model', model: 'legacy-tts', voice: 'alloy' }
+      }
+    });
+
+    expect(result.chatConfig?.questionGuide?.model).toBe('legacy-llm');
+    expect(result.chatConfig?.ttsConfig?.model).toBe('legacy-tts');
+  });
+
+  it('migrates legacy workflow before validation', () => {
+    const result = CreateAppRequestBodySchema.parse({
+      name: 'legacy app',
+      type: 'simple',
+      modules: [
+        {
+          ...currentNode,
+          inputs: [
+            {
+              ...currentNode.inputs[0],
+              llmModelType: 'chat'
+            }
+          ]
+        },
+        {
+          nodeId: 'legacy-system-config',
+          flowNodeType: 'userGuide',
+          name: 'Legacy system config',
+          inputs: [],
+          outputs: []
+        }
+      ],
+      edges: [],
+      chatConfig: { _id: 'legacy-chat-config' }
+    });
+
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules?.[0].inputs[0]).not.toHaveProperty('llmModelType');
+    expect(result.chatConfig).not.toHaveProperty('_id');
+  });
+
+  it('strips unsupported request fields after migration', () => {
+    const result = CreateAppRequestBodySchema.parse({
+      name: 'app with extra field',
+      type: 'simple',
+      modules: [currentNode],
+      edges: [],
+      chatConfig: {},
+      unsupported: true
+    });
+
+    expect(result).not.toHaveProperty('unsupported');
+  });
+});
+
+describe('PublishAppBodySchema', () => {
+  it('accepts current NodeIO and strips unknown workflow fields', () => {
+    expect(
+      PublishAppBodySchema.safeParse({ nodes: [currentNode], edges: [], chatConfig: {} }).success
+    ).toBe(true);
+
+    const result = PublishAppBodySchema.parse({
+      nodes: [
+        {
+          ...currentNode,
+          unsupportedNodeField: true,
+          inputs: [{ ...currentNode.inputs[0], unsupportedInputField: true }]
+        }
+      ],
+      edges: [],
+      chatConfig: {}
+    });
+
+    expect(result).not.toHaveProperty('nodes.0.unsupportedNodeField');
+    expect(result).not.toHaveProperty('nodes.0.inputs.0.unsupportedInputField');
+  });
+});
+
+describe('legacy chat model input schemas', () => {
+  it('keeps modelId optional in parsed configuration types', () => {
+    // 显式类型赋值让类型检查覆盖字段可省略性，运行时同时验证缺省字段不会被补出。
+    const questionGuide: z.infer<typeof AppQuestionGuideInputSchema> = { open: true };
+    const ttsConfig: z.infer<typeof AppTTSConfigInputSchema> = { type: 'model' };
+    expect(AppQuestionGuideInputSchema.parse(questionGuide)).toStrictEqual(questionGuide);
+    expect(AppTTSConfigInputSchema.parse(ttsConfig)).toStrictEqual(ttsConfig);
+  });
+
+  it.each([null, undefined])('normalizes empty modelId (%s) to undefined', (modelId) => {
+    expect(AppQuestionGuideInputSchema.parse({ open: true, modelId }).modelId).toBeUndefined();
+    expect(AppTTSConfigInputSchema.parse({ type: 'model', modelId }).modelId).toBeUndefined();
+  });
+
+  it.each([42, false, {}, []])('rejects invalid modelId (%j)', (modelId) => {
+    expect(AppQuestionGuideInputSchema.safeParse({ open: true, modelId }).success).toBe(false);
+    expect(AppTTSConfigInputSchema.safeParse({ type: 'model', modelId }).success).toBe(false);
+  });
+
+  it('preserves deprecated model references for runtime compatibility', () => {
+    expect(AppQuestionGuideInputSchema.parse({ open: true, model: 'legacy-llm' })).toMatchObject({
+      model: 'legacy-llm'
+    });
+    expect(
+      AppTTSConfigInputSchema.parse({ type: 'model', model: 'legacy-tts', voice: 'alloy' })
+    ).toMatchObject({ model: 'legacy-tts' });
+  });
+
+  it('keeps canonical modelId references unchanged', () => {
+    expect(AppQuestionGuideInputSchema.parse({ open: true, modelId: 'llm-id' })).toMatchObject({
+      modelId: 'llm-id'
+    });
+    expect(
+      AppTTSConfigInputSchema.parse({ type: 'model', modelId: 'tts-id', voice: 'alloy' })
+    ).toMatchObject({ modelId: 'tts-id' });
+  });
+});

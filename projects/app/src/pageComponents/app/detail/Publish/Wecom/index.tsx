@@ -1,0 +1,297 @@
+import { FixedTableContainer } from '@fastgpt/web/components/common/FixedTable';
+import React, { useMemo, useState } from 'react';
+import {
+  Flex,
+  Box,
+  Button,
+  IconButton,
+  Table,
+  Thead,
+  Tr,
+  Th,
+  Td,
+  Tbody,
+  useDisclosure,
+  Link
+} from '@chakra-ui/react';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import { useLoading } from '@fastgpt/web/hooks/useLoading';
+import { getShareChatList, delShareChatById } from '@/web/support/outLink/api';
+import { formatTimeToChatTime } from '@fastgpt/global/common/string/time';
+import { defaultOutLinkForm } from '@/web/core/app/constants';
+import type { WecomAppType, OutLinkEditType } from '@fastgpt/global/support/outLink/type';
+import { PublishChannelEnum } from '@fastgpt/global/support/outLink/constant';
+import { Trans } from 'next-i18next';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import dayjs from 'dayjs';
+import dynamic from 'next/dynamic';
+import MyMenu from '@fastgpt/web/components/common/MyMenu';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { getDocPath } from '@/web/common/system/doc';
+import { listCustomDomain } from '@/web/support/customDomain/api';
+import { i18nT } from '@fastgpt/global/common/i18n/utils';
+import { useSafeTranslation } from '@fastgpt/web/hooks/useSafeTranslation';
+
+const WecomEditModal = dynamic(() => import('./WecomEditModal'));
+const ShowShareLinkModal = dynamic(() => import('../components/showShareLinkModal'));
+
+const Wecom = ({
+  appId,
+  onRefreshOutLinkCounts
+}: {
+  appId: string;
+  onRefreshOutLinkCounts: () => Promise<unknown>;
+}) => {
+  const { t } = useSafeTranslation();
+  const { Loading, setIsLoading } = useLoading();
+  const { feConfigs } = useSystemStore();
+  const [editWecomData, setEditWecomData] = useState<OutLinkEditType<WecomAppType>>();
+  const [isEdit, setIsEdit] = useState<boolean>(false);
+
+  const baseUrl = useMemo(
+    () => feConfigs?.customApiDomain || `${location.origin}/api`,
+    [feConfigs?.customApiDomain]
+  );
+
+  const {
+    data: shareChatList = [],
+    loading: isFetching,
+    runAsync: refetchShareChatList
+  } = useRequest(() => getShareChatList<WecomAppType>({ appId, type: PublishChannelEnum.wecom }), {
+    manual: false
+  });
+
+  const {
+    onOpen: openShowShareLinkModal,
+    isOpen: showShareLinkModalOpen,
+    onClose: closeShowShareLinkModal
+  } = useDisclosure();
+
+  const [showShareLink, setShowShareLink] = useState<string | null>(null);
+
+  const { data: customDomains = [] } = useRequest(listCustomDomain, {
+    manual: false,
+    refreshOnWindowFocus: true
+  });
+
+  return (
+    <Box
+      h={'100%'}
+      minH={0}
+      minW={0}
+      display={'flex'}
+      flexDirection={'column'}
+      overflow={'hidden'}
+      position={'relative'}
+      p={6}
+    >
+      <Flex flexShrink={0} justifyContent={'space-between'} flexDirection="row">
+        <Flex alignItems={'center'}>
+          <Box color={'myGray.900'} fontWeight={'medium'} fontSize={'lg'}>
+            {t('publish:wecom.title')}
+          </Box>
+          {feConfigs?.docUrl && (
+            <Link
+              href={getDocPath('/guide/build/publish/wecom')}
+              target={'_blank'}
+              ml={2}
+              color={'primary.500'}
+              fontSize={'sm'}
+            >
+              <Flex alignItems={'center'}>
+                <MyIcon name="book" w={'17px'} h={'17px'} mr="1" />
+                {t('common:read_doc')}
+              </Flex>
+            </Link>
+          )}
+        </Flex>
+        <Flex gap={3}>
+          {feConfigs.customDomain?.enable && (
+            <Button
+              variant={'whitePrimary'}
+              size={['sm', 'md']}
+              onClick={() => {
+                window.open('/account/customDomain', '_blank');
+              }}
+            >
+              {t('publish:custom_domain_management')}
+            </Button>
+          )}
+          <Button
+            variant={'primary'}
+            colorScheme={'blue'}
+            size={['sm', 'md']}
+            leftIcon={<MyIcon name={'common/addLight'} w="1.25rem" color="white" />}
+            {...(shareChatList.length >= 10
+              ? {
+                  isDisabled: true,
+                  title: t('common:core.app.share.Amount limit tip')
+                }
+              : {})}
+            onClick={() => {
+              setEditWecomData(defaultOutLinkForm as any); // HACK
+              setIsEdit(false);
+            }}
+          >
+            {t('common:add_new')}
+          </Button>
+        </Flex>
+      </Flex>
+      <FixedTableContainer mt={3} flex={'1 1 0'} h={0} maxH="none">
+        <Table variant={'simple'} w={'100%'} overflowX={'auto'} fontSize={'sm'}>
+          <Thead>
+            <Tr>
+              <Th>{t('common:Name')} </Th>
+              <Th> {t('common:support.outlink.Usage points')} </Th>
+              {feConfigs?.isPlus && <Th>{t('common:expired_time')} </Th>}
+              <Th>{t('common:last_use_time')} </Th>
+              <Th>{t('common:Action')} </Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {shareChatList.map((item) => (
+              <Tr key={item._id}>
+                <Td>{item.name} </Td>
+                <Td>
+                  {Math.round(item.usagePoints)}
+                  {feConfigs?.isPlus
+                    ? `${
+                        item.limit?.maxUsagePoints && item.limit.maxUsagePoints > -1
+                          ? ` / ${item.limit.maxUsagePoints}`
+                          : ` / ${t('common:Unlimited')}`
+                      }`
+                    : ''}
+                </Td>
+                {feConfigs?.isPlus && (
+                  <Td>
+                    {item.limit?.expiredTime
+                      ? dayjs(item.limit.expiredTime).format('YYYY/MM/DD\nHH:mm')
+                      : '-'}
+                  </Td>
+                )}
+                <Td>
+                  {item.lastTime ? t(formatTimeToChatTime(item.lastTime)) : t('common:un_used')}
+                </Td>
+                <Td display={'flex'} alignItems={'center'}>
+                  <Button
+                    onClick={() => {
+                      setShowShareLink(`${baseUrl}/support/outLink/wecom/${item.shareId}`);
+                      openShowShareLinkModal();
+                    }}
+                    size={'sm'}
+                    mr={3}
+                    variant={'whitePrimary'}
+                  >
+                    {t('publish:request_address')}
+                  </Button>
+                  <MyMenu
+                    strategy="fixed"
+                    Button={
+                      <IconButton
+                        icon={<MyIcon name={'more'} w={'14px'} />}
+                        name={'more'}
+                        variant={'whitePrimary'}
+                        size={'sm'}
+                        aria-label={'more'}
+                      />
+                    }
+                    menuList={[
+                      {
+                        children: [
+                          {
+                            label: t('common:Edit'),
+                            icon: 'edit',
+                            onClick: () => {
+                              setEditWecomData({
+                                _id: item._id,
+                                name: item.name,
+                                limit: item.limit,
+                                app: item.app,
+                                showCite: item.showCite,
+                                defaultResponse: item.defaultResponse,
+                                immediateResponse: item.immediateResponse
+                              });
+                              setIsEdit(true);
+                            }
+                          },
+                          {
+                            label: t('common:Delete'),
+                            icon: 'delete',
+                            onClick: async () => {
+                              setIsLoading(true);
+                              try {
+                                await delShareChatById(item._id);
+                                void Promise.all([
+                                  refetchShareChatList(),
+                                  onRefreshOutLinkCounts()
+                                ]);
+                              } catch (error) {
+                                console.log(error);
+                              }
+                              setIsLoading(false);
+                            }
+                          }
+                        ]
+                      }
+                    ]}
+                  />
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+        {shareChatList.length === 0 && !isFetching && (
+          <EmptyTip
+            {...(feConfigs.customDomain?.enable && customDomains.length > 0
+              ? { text: '' }
+              : {
+                  text: (
+                    <Trans
+                      i18nKey={i18nT('app:publish_channel.wecom.empty')}
+                      components={{
+                        a: (
+                          <Link
+                            color="primary.600"
+                            key="link"
+                            href="/account/customDomain"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          />
+                        )
+                      }}
+                    />
+                  )
+                })}
+          />
+        )}
+      </FixedTableContainer>
+      {editWecomData && (
+        <WecomEditModal
+          appId={appId}
+          defaultData={editWecomData}
+          onCreate={async (shareId: string) => {
+            const [newList] = await Promise.all([refetchShareChatList(), onRefreshOutLinkCounts()]);
+            const newItem = newList.find((item) => item.shareId === shareId);
+            return newItem?._id;
+          }}
+          onEdit={() => refetchShareChatList()}
+          onClose={() => setEditWecomData(undefined)}
+          isEdit={isEdit}
+        />
+      )}
+      <Loading loading={isFetching} fixed={false} />
+      {showShareLinkModalOpen && (
+        <ShowShareLinkModal
+          shareLink={showShareLink ?? ''}
+          onClose={closeShowShareLinkModal}
+          img="/imgs/outlink/wecom-copylink-instruction.png"
+          defaultDomain={false}
+          showCustomDomainSelector={true}
+        />
+      )}
+    </Box>
+  );
+};
+
+export default React.memo(Wecom);

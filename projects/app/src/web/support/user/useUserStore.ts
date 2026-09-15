@@ -1,23 +1,32 @@
-import { create } from 'zustand';
-import { devtools, persist } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
+import { create, devtools, persist, immer } from '@fastgpt/web/common/zustand';
+
 import type { UserUpdateParams } from '@/types/user';
-import type { UserType } from '@fastgpt/global/support/user/type.d';
 import { getTokenLogin, putUserInfo } from '@/web/support/user/api';
-import { FeTeamPlanStatusType } from '@fastgpt/global/support/wallet/sub/type';
+import type { OrgType } from '@fastgpt/global/support/user/team/org/type';
+import type { UserType } from '@fastgpt/global/support/user/type';
+import type { ClientTeamPlanStatusType } from '@fastgpt/global/support/wallet/sub/type';
 import { getTeamPlanStatus } from './team/api';
+import { setCurrentAuthTmbId } from './currentAuthTmbId';
 
 type State = {
   systemMsgReadId: string;
   setSysMsgReadId: (id: string) => void;
+  enterpriseAuthNoticeReadTeamIds: string[];
+  setEnterpriseAuthNoticeRead: (teamId: string) => void;
+
+  isUpdateNotification: boolean;
+  setIsUpdateNotification: (val: boolean) => void;
 
   userInfo: UserType | null;
-  initUserInfo: () => Promise<UserType>;
+  isTeamAdmin: boolean;
+  initUserInfo: () => Promise<UserType | null>;
   setUserInfo: (user: UserType | null) => void;
   updateUserInfo: (user: UserUpdateParams) => Promise<void>;
 
-  teamPlanStatus: FeTeamPlanStatusType | null;
+  teamPlanStatus: ClientTeamPlanStatusType | null;
   initTeamPlanStatus: () => Promise<any>;
+
+  teamOrgs: OrgType[];
 };
 
 export const useUserStore = create<State>()(
@@ -30,25 +39,49 @@ export const useUserStore = create<State>()(
             state.systemMsgReadId = id;
           });
         },
+        enterpriseAuthNoticeReadTeamIds: [],
+        setEnterpriseAuthNoticeRead(teamId: string) {
+          if (!teamId) return;
+
+          set((state) => {
+            if (state.enterpriseAuthNoticeReadTeamIds.includes(teamId)) return;
+            state.enterpriseAuthNoticeReadTeamIds.push(teamId);
+          });
+        },
+
+        isUpdateNotification: true,
+        setIsUpdateNotification(val: boolean) {
+          set((state) => {
+            state.isUpdateNotification = val;
+          });
+        },
 
         userInfo: null,
+        isTeamAdmin: false,
         async initUserInfo() {
           get().initTeamPlanStatus();
 
-          const res = await getTokenLogin();
-          get().setUserInfo(res);
+          try {
+            const res = await getTokenLogin();
+            get().setUserInfo(res);
 
-          //设置html的fontsize
-          const html = document?.querySelector('html');
-          if (html) {
-            // html.style.fontSize = '16px';
+            //设置html的fontsize
+            const html = document?.querySelector('html');
+            if (html) {
+              // html.style.fontSize = '16px';
+            }
+
+            return res;
+          } catch (error) {
+            console.log('[Init user] error', error);
+            return null;
           }
-
-          return res;
         },
         setUserInfo(user: UserType | null) {
+          setCurrentAuthTmbId(user?.team?.tmbId);
           set((state) => {
             state.userInfo = user ? user : null;
+            state.isTeamAdmin = !!user?.team?.permission?.hasManagePer;
           });
         },
         async updateUserInfo(user: UserUpdateParams) {
@@ -71,19 +104,23 @@ export const useUserStore = create<State>()(
         },
         // team
         teamPlanStatus: null,
-        initTeamPlanStatus() {
+        async initTeamPlanStatus() {
           return getTeamPlanStatus().then((res) => {
             set((state) => {
               state.teamPlanStatus = res;
             });
             return res;
           });
-        }
+        },
+        teamMemberGroups: [],
+        teamOrgs: []
       })),
       {
         name: 'userStore',
         partialize: (state) => ({
-          systemMsgReadId: state.systemMsgReadId
+          systemMsgReadId: state.systemMsgReadId,
+          enterpriseAuthNoticeReadTeamIds: state.enterpriseAuthNoticeReadTeamIds,
+          isUpdateNotification: state.isUpdateNotification
         })
       }
     )

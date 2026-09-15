@@ -1,0 +1,106 @@
+import React, { type Dispatch } from 'react';
+import { LoginPageTypeEnum } from '@/web/support/user/login/constants';
+import { Box, Center } from '@chakra-ui/react';
+import { useQuery } from '@tanstack/react-query';
+import { getWXLoginQR, getWXLoginResult } from '@/web/support/user/api';
+import { getErrText } from '@fastgpt/global/common/error/utils';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import FormLayout from './FormLayout';
+import { useTranslation } from 'next-i18next';
+import Loading from '@fastgpt/web/components/common/MyLoading';
+import MyImage from '@fastgpt/web/components/common/Image/MyImage';
+import {
+  getBdVId,
+  getFastGPTSem,
+  getMsclkid,
+  onFastGPTLoginSuccess
+} from '@/web/support/marketing/utils';
+import PolicyTip from './PolicyTip';
+import type {
+  LoginSuccessResponseType,
+  WxLoginResultResponseType
+} from '@fastgpt/global/openapi/support/user/account/login/api';
+import type { LangEnum } from '@fastgpt/global/common/i18n/type';
+
+type LoginSuccessHandler = (res: LoginSuccessResponseType) => void | Promise<void>;
+
+interface Props {
+  loginSuccess: LoginSuccessHandler;
+  setPageType: Dispatch<`${LoginPageTypeEnum}`>;
+}
+
+const WechatForm = ({ setPageType, loginSuccess }: Props) => {
+  const { t, i18n } = useTranslation();
+  const { toast } = useToast();
+
+  const { data: wechatInfo, refetch: refetchWechatInfo } = useQuery(
+    ['getWXLoginQR'],
+    getWXLoginQR,
+    {
+      onError(err) {
+        toast({
+          status: 'warning',
+          title: getErrText(err, t('common:get_QR_failed'))
+        });
+      }
+    }
+  );
+
+  useQuery(
+    ['getWXLoginResult', wechatInfo?.code, i18n.language],
+    () =>
+      getWXLoginResult({
+        code: wechatInfo?.code || '',
+        bd_vid: getBdVId(),
+        msclkid: getMsclkid(),
+        fastgpt_sem: getFastGPTSem(),
+        language: i18n.language as LangEnum
+      }),
+    {
+      refetchInterval: 3 * 1000,
+      enabled: !!wechatInfo?.code,
+      async onSuccess(data: WxLoginResultResponseType | undefined) {
+        if (!data) return;
+
+        if ('expired' in data) {
+          await refetchWechatInfo();
+          return;
+        }
+
+        await onFastGPTLoginSuccess(loginSuccess, data);
+      }
+    }
+  );
+
+  return (
+    <FormLayout setPageType={setPageType} pageType={LoginPageTypeEnum.wechat}>
+      <Box>
+        <Box w={'full'} textAlign={'center'} pt={8} fontWeight={'medium'} fontSize={['sm', 'md']}>
+          {t('common:support.user.login.wx_qr_login')}
+        </Box>
+        <Box my={5} display={'flex'} w={'full'} justifyContent={'center'}>
+          {wechatInfo?.codeUrl ? (
+            <Box
+              border={'base'}
+              borderRadius={'md'}
+              p={'3.2px'}
+              bg={'#FBFBFB'}
+              overflow={'hidden'}
+              w={['186px', '226px']}
+              h={['186px', '226px']}
+            >
+              <MyImage w={'100%'} h={'100%'} src={wechatInfo?.codeUrl} alt="qrcode"></MyImage>
+            </Box>
+          ) : (
+            <Center w={200} h={200} position={'relative'}>
+              <Loading fixed={false} />
+            </Center>
+          )}
+        </Box>
+        <PolicyTip />
+      </Box>
+    </FormLayout>
+  );
+};
+
+export default WechatForm;

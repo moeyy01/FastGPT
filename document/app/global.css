@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-ui/css/black.css';
+
+/* 移动端目录下拉框：文本溢出省略号 */
+@media (max-width: 767px) {
+  button[class*='tocnav'] {
+    max-width: 100vw;
+    overflow: hidden;
+  }
+
+  button[class*='tocnav'] > span.grid {
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* 文章内超长链接/文本自动换行 */
+  article {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+}
+
+/* RootToggle 图标容器：缩小到与图标匹配，修复对齐和间距 */
+#nd-sidebar .size-9,
+#nd-sidebar .size-5,
+#nd-sidebar-mobile .size-9,
+#nd-sidebar-mobile .size-5,
+[data-radix-popper-content-wrapper] .size-9,
+[data-radix-popper-content-wrapper] .size-5 {
+  flex-shrink: 0;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+#nd-sidebar > div > div,
+#nd-sidebar-mobile > div > div {
+  padding-top: 6px !important;
+}
+
+#nd-sidebar > div > button,
+#nd-sidebar-mobile > div > button {
+  height: 38px;
+  padding: 6px 8px !important;
+}
+#nd-sidebar-mobile > div > button {
+  gap: 0;
+}
+
+/* Sidebar active nested border: keep the left marker color in sync with text. */
+#nd-sidebar a[data-active='true'] > div:first-child,
+#nd-sidebar-mobile a[data-active='true'] > div:first-child {
+  background-color: currentColor !important;
+}
+
+/* 移除导航栏图标的上边距 - 使用通用选择器匹配所有 radix 弹窗 */
+[data-radix-popper-content-wrapper] > div > a {
+  padding: 8px 6px;
+  height: 38px;
+}
+
+[data-radix-popper-content-wrapper] > div > a > div {
+  margin-top: 0 !important;
+}
+
+/* Image zoom modal overlay */
+html [data-rmiz-modal-overlay='visible'] {
+  --color-fd-background: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.7) !important;
+}
+html.dark [data-rmiz-modal-overlay='visible'] {
+  --color-fd-background: rgba(0, 0, 0, 0.75);
+  background-color: rgba(0, 0, 0, 0.75) !important;
+}
+
+/* Commercial contact dialog */
+.docs-contact-dialog {
+  position: fixed;
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(1040px, calc(100vw - 32px));
+  height: min(820px, calc(100vh - 32px));
+  margin: 0;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 16px;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
+}
+
+.docs-contact-dialog::backdrop {
+  background: rgb(15 23 42 / 58%);
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 640px) {
+  .docs-contact-dialog {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100vw;
+    height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* Content */
+
+/* img */
+#nd-page article img {
+  object-fit: contain;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 80%;
+  max-height: 500px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+}
+[data-rmiz-modal-img] {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+}

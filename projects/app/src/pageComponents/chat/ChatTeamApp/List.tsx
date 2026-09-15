@@ -1,0 +1,154 @@
+import React from 'react';
+import { Box, Grid, HStack } from '@chakra-ui/react';
+import { useRouter } from 'next/router';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import Avatar from '@fastgpt/web/components/common/Avatar';
+import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import { useContextSelector } from 'use-context-selector';
+import { AppListContext } from '@/pageComponents/dashboard/agent/context';
+import { AppTypeEnum, ToolTypeList } from '@fastgpt/global/core/app/constants';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import AppTypeTag from '@/pageComponents/chat/ChatTeamApp/TypeTag';
+
+import { formatTimeToChatTime } from '@fastgpt/global/common/string/time';
+import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import UserBox from '@fastgpt/web/components/common/UserBox';
+import { ChatPageContext } from '@/web/core/chat/context/chatPageContext';
+import { ChatSidebarPaneEnum } from '@/pageComponents/chat/constants';
+import { useSafeTranslation } from '@fastgpt/web/hooks/useSafeTranslation';
+
+const List = ({ appType }: { appType: AppTypeEnum | 'all' }) => {
+  const { t } = useSafeTranslation();
+  const router = useRouter();
+  const { isPc } = useSystem();
+
+  const myApps = useContextSelector(AppListContext, (v) =>
+    v.myApps.filter(
+      (app) =>
+        appType === 'all' ||
+        [
+          appType,
+          ToolTypeList.includes(appType) ? AppTypeEnum.toolFolder : AppTypeEnum.folder
+        ].includes(app.type)
+    )
+  );
+  const handlePaneChange = useContextSelector(ChatPageContext, (v) => v.handlePaneChange);
+  const upsertRecentlyUsedAppPlaceholder = useContextSelector(
+    ChatPageContext,
+    (v) => v.upsertRecentlyUsedAppPlaceholder
+  );
+
+  return (
+    <>
+      <Grid
+        pt="16px"
+        pb={[4, 6]}
+        gridTemplateColumns={[
+          'minmax(0,1fr)',
+          'repeat(2,minmax(0,1fr))',
+          'repeat(3,minmax(0,1fr))'
+        ]}
+        gridGap={5}
+        alignItems={'stretch'}
+      >
+        {myApps.map((app) => {
+          return (
+            <MyTooltip
+              key={app._id}
+              h="100%"
+              label={
+                app.type === AppTypeEnum.folder ? t('common:open_folder') : t('app:go_to_chat')
+              }
+            >
+              <MyBox
+                lineHeight={1.5}
+                h="100%"
+                pt={5}
+                pb={3}
+                px={5}
+                cursor={'pointer'}
+                border={'base'}
+                bg={'white'}
+                borderRadius={'lg'}
+                position={'relative'}
+                display={'flex'}
+                flexDirection={'column'}
+                minW={0}
+                _hover={{
+                  borderColor: 'primary.300',
+                  '& .more': {
+                    display: 'flex'
+                  },
+                  '& .time': {
+                    display: ['flex', 'none']
+                  }
+                }}
+                onClick={() => {
+                  if (app.type === AppTypeEnum.folder) {
+                    router.push({
+                      query: {
+                        ...router.query,
+                        parentId: app._id
+                      }
+                    });
+                  } else {
+                    upsertRecentlyUsedAppPlaceholder({
+                      appId: app._id,
+                      name: app.name,
+                      avatar: app.avatar
+                    });
+                    handlePaneChange(ChatSidebarPaneEnum.RECENTLY_USED_APPS, app._id);
+                  }
+                }}
+              >
+                <HStack minW={0}>
+                  <Avatar src={app.avatar} borderRadius={'sm'} w={'1.5rem'} />
+                  <Box flex={'1 0 0'} color={'myGray.900'} className="textEllipsis">
+                    {app.name}
+                  </Box>
+                  <Box mr={'-1.25rem'}>
+                    <AppTypeTag type={app.type} />
+                  </Box>
+                </HStack>
+                <Box
+                  flex={['1 0 60px', '1 0 72px']}
+                  pt={3}
+                  pr={8}
+                  textAlign={'justify'}
+                  wordBreak={'break-all'}
+                  fontSize={'xs'}
+                  color={'myGray.500'}
+                >
+                  <Box className={'textEllipsis2'} whiteSpace={'pre-wrap'}>
+                    {app.intro || t('common:no_intro')}
+                  </Box>
+                </Box>
+                <HStack h={'24px'} fontSize={'mini'} color={'myGray.500'} w="full">
+                  <HStack flex={'1 0 0'}>
+                    <UserBox
+                      sourceMember={app.sourceMember}
+                      fontSize="xs"
+                      avatarSize="1rem"
+                      spacing={0.5}
+                    />
+                  </HStack>
+                  <HStack>
+                    {isPc && (
+                      <HStack spacing={0.5}>
+                        <MyIcon name={'history'} w={'0.85rem'} color={'myGray.400'} />
+                        <Box color={'myGray.500'}>{t(formatTimeToChatTime(app.updateTime))}</Box>
+                      </HStack>
+                    )}
+                  </HStack>
+                </HStack>
+              </MyBox>
+            </MyTooltip>
+          );
+        })}
+      </Grid>
+      {myApps.length === 0 && <EmptyTip text={t('common:core.app.no_app')} pt={'30vh'} />}
+    </>
+  );
+};
+export default List;

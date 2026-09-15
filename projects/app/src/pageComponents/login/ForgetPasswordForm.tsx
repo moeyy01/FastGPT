@@ -1,0 +1,230 @@
+import React, { type Dispatch } from 'react';
+import { FormControl, Box, Input, Button } from '@chakra-ui/react';
+import { useForm } from 'react-hook-form';
+import { LoginPageTypeEnum } from '@/web/support/user/login/constants';
+import { postFindPassword } from '@/web/support/user/api';
+import { useSendCode } from '@/web/support/user/hooks/useSendCode';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { useTranslation } from 'next-i18next';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { checkPasswordRule } from '@fastgpt/global/common/string/password';
+import type { LoginSuccessResponseType } from '@fastgpt/global/openapi/support/user/account/login/api';
+import type { LangEnum } from '@fastgpt/global/common/i18n/type';
+import { VerificationCodeTypeEnum } from '@fastgpt/global/support/user/account/verification/constants';
+
+type LoginSuccessHandler = (res: LoginSuccessResponseType) => void | Promise<void>;
+
+interface Props {
+  setPageType: Dispatch<`${LoginPageTypeEnum}`>;
+  loginSuccess: LoginSuccessHandler;
+}
+
+interface RegisterType {
+  username: string;
+  code: string;
+  password: string;
+  password2: string;
+}
+
+const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
+  const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const { feConfigs } = useSystemStore();
+  const {
+    register,
+    handleSubmit,
+    getValues,
+    watch,
+    formState: { errors }
+  } = useForm<RegisterType>({
+    mode: 'onBlur'
+  });
+  const username = watch('username');
+
+  const { SendCodeBox } = useSendCode({
+    type: VerificationCodeTypeEnum.findPassword,
+    purpose: 'forgetPassword'
+  });
+
+  const placeholder = feConfigs?.find_password_method
+    ?.map((item) => {
+      switch (item) {
+        case 'email':
+          return t('common:support.user.login.Email');
+        case 'phone':
+          return t('common:support.user.login.Phone number');
+        default:
+          return t('common:support.user.login.Username');
+      }
+    })
+    .join('/');
+
+  const { runAsync: onclickFindPassword, loading: requesting } = useRequest(
+    async ({ username, code, password }: RegisterType) => {
+      const loginResponse = await postFindPassword({
+        username,
+        code,
+        password,
+        language: i18n.language as LangEnum
+      });
+      await loginSuccess(loginResponse);
+      toast({
+        status: 'success',
+        title: t('user:password.retrieved')
+      });
+    },
+    {
+      refreshDeps: [i18n.language, loginSuccess, t, toast]
+    }
+  );
+  const onSubmitErr = (err: Record<string, any>) => {
+    const val = Object.values(err)[0];
+    if (!val) return;
+    if (val.message) {
+      toast({
+        status: 'warning',
+        title: val.message,
+        duration: 3000,
+        isClosable: true
+      });
+    }
+  };
+
+  return (
+    <>
+      <Box
+        fontWeight={'medium'}
+        fontSize={'lg'}
+        lineHeight={'30px'}
+        textAlign={'center'}
+        color={'myGray.900'}
+      >
+        {t('user:password.retrieved_account', { account: feConfigs?.systemTitle })}
+      </Box>
+      <Box
+        mt={9}
+        onKeyDown={(e) => {
+          if (
+            e.key === 'Enter' &&
+            !e.shiftKey &&
+            !e.nativeEvent.isComposing &&
+            e.keyCode !== 229 &&
+            !requesting
+          ) {
+            handleSubmit(onclickFindPassword, onSubmitErr)();
+          }
+        }}
+      >
+        <FormControl isInvalid={!!errors.username}>
+          <Input
+            bg={'myGray.50'}
+            size={'lg'}
+            placeholder={placeholder}
+            {...register('username', {
+              required: t('user:password.email_phone_void'),
+              pattern: {
+                value:
+                  /(^1[3456789]\d{9}$)|(^[A-Za-z0-9]+([_\.][A-Za-z0-9]+)*@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,6}$)/,
+                message: t('user:password.email_phone_error')
+              }
+            })}
+          ></Input>
+        </FormControl>
+        <FormControl
+          mt={6}
+          isInvalid={!!errors.code}
+          display={'flex'}
+          alignItems={'center'}
+          position={'relative'}
+        >
+          <Input
+            bg={'myGray.50'}
+            size={'lg'}
+            flex={1}
+            maxLength={8}
+            placeholder={t('user:password.verification_code')}
+            {...register('code', {
+              required: t('user:password.code_required')
+            })}
+          ></Input>
+          <SendCodeBox username={username} />
+        </FormControl>
+        <FormControl mt={6} isInvalid={!!errors.password}>
+          <Input
+            bg={'myGray.50'}
+            type={'password'}
+            size={'lg'}
+            placeholder={t('common:support.user.login.Password')}
+            _invalid={{
+              borderColor: 'red.500',
+              boxShadow: '0 0 0 1px #F04438'
+            }}
+            {...register('password', {
+              required: true,
+              validate: (val) => {
+                if (!checkPasswordRule(val)) {
+                  return t('login:reset_password_tip');
+                }
+                return true;
+              }
+            })}
+          />
+          <Box
+            mt={2}
+            fontSize={'mini'}
+            lineHeight={'16px'}
+            fontWeight={'medium'}
+            letterSpacing={'0.5px'}
+            wordBreak={'break-word'}
+            color={errors.password ? 'red.600' : 'myGray.400'}
+          >
+            {t('login:reset_password_tip')}
+          </Box>
+        </FormControl>
+        <FormControl mt={6} isInvalid={!!errors.password2}>
+          <Input
+            bg={'myGray.50'}
+            type={'password'}
+            size={'lg'}
+            placeholder={t('user:password.confirm')}
+            {...register('password2', {
+              validate: (val) =>
+                getValues('password') === val ? true : t('user:password.not_match')
+            })}
+          ></Input>
+        </FormControl>
+
+        <Button
+          type="submit"
+          mt={12}
+          w={'100%'}
+          size={['md', 'md']}
+          rounded={['sm', 'md']}
+          h={['34px', '40px']}
+          fontWeight={['medium', 'medium']}
+          colorScheme="blue"
+          isLoading={requesting}
+          onClick={handleSubmit(onclickFindPassword, onSubmitErr)}
+        >
+          {t('user:password.retrieve')}
+        </Button>
+        <Box
+          float={'right'}
+          fontSize="mini"
+          lineHeight={'18px'}
+          mt={3}
+          fontWeight={'medium'}
+          color={'primary.700'}
+          cursor={'pointer'}
+          _hover={{ textDecoration: 'underline' }}
+          onClick={() => setPageType(LoginPageTypeEnum.passwordLogin)}
+        >
+          {t('user:password.to_login')}
+        </Box>
+      </Box>
+    </>
+  );
+};
+
+export default RegisterForm;

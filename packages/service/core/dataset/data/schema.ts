@@ -1,12 +1,14 @@
-import { connectionMongo, getMongoModel, type Model } from '../../../common/mongo';
+import { defineIndex, connectionMongo, getMongoModel } from '../../../common/mongo';
 const { Schema, model, models } = connectionMongo;
-import { DatasetDataSchemaType } from '@fastgpt/global/core/dataset/type.d';
+import { type DatasetDataSchemaType } from '@fastgpt/global/core/dataset/type';
 import {
   TeamCollectionName,
   TeamMemberCollectionName
 } from '@fastgpt/global/support/user/team/constant';
 import { DatasetCollectionName } from '../schema';
 import { DatasetColCollectionName } from '../collection/schema';
+import { DatasetDataIndexTypeEnum } from '@fastgpt/global/core/dataset/data/constants';
+import { serviceEnv } from '../../../env';
 
 export const DatasetDataCollectionName = 'dataset_datas';
 
@@ -31,24 +33,35 @@ const DatasetDataSchema = new Schema({
     ref: DatasetColCollectionName,
     required: true
   },
-  q: {
-    type: String,
-    required: true
-  },
+  q: String,
   a: {
-    type: String,
-    default: ''
+    type: String
   },
-  fullTextToken: {
-    type: String,
-    default: ''
+  imageId: String,
+  imageDescMap: Object,
+  metadata: {
+    type: Object
+  },
+  history: {
+    type: [
+      {
+        q: String,
+        a: String,
+        updateTime: Date
+      }
+    ]
   },
   indexes: {
     type: [
       {
+        // Abandon
         defaultIndex: {
-          type: Boolean,
-          default: false
+          type: Boolean
+        },
+        type: {
+          type: String,
+          enum: Object.values(DatasetDataIndexTypeEnum),
+          default: DatasetDataIndexTypeEnum.custom
         },
         dataId: {
           type: String,
@@ -62,7 +75,6 @@ const DatasetDataSchema = new Schema({
     ],
     default: []
   },
-
   updateTime: {
     type: Date,
     default: () => new Date()
@@ -71,27 +83,42 @@ const DatasetDataSchema = new Schema({
     type: Number,
     default: 0
   },
-  inited: {
-    type: Boolean
-  },
-  rebuilding: Boolean
+  rebuilding: Boolean,
+  synonymVersion: Number,
+  synonymRebuildingVersion: Number,
+
+  // Abandon
+  fullTextToken: String,
+  initFullText: Boolean,
+  initJieba: Boolean
 });
 
 // list collection and count data; list data; delete collection(relate data)
-DatasetDataSchema.index({
-  teamId: 1,
-  datasetId: 1,
-  collectionId: 1,
-  chunkIndex: 1,
-  updateTime: -1
+defineIndex(DatasetDataSchema, {
+  key: {
+    teamId: 1,
+    datasetId: 1,
+    collectionId: 1,
+    chunkIndex: 1,
+    updateTime: -1
+  }
 });
-// full text index
-DatasetDataSchema.index({ teamId: 1, datasetId: 1, fullTextToken: 'text' });
 // Recall vectors after data matching
-DatasetDataSchema.index({ teamId: 1, datasetId: 1, collectionId: 1, 'indexes.dataId': 1 });
-DatasetDataSchema.index({ updateTime: 1 });
+defineIndex(DatasetDataSchema, {
+  key: { teamId: 1, datasetId: 1, collectionId: 1, 'indexes.dataId': 1 }
+});
 // rebuild data
-DatasetDataSchema.index({ rebuilding: 1, teamId: 1, datasetId: 1 });
+defineIndex(DatasetDataSchema, {
+  key: { rebuilding: 1, teamId: 1, datasetId: 1 }
+});
+if (serviceEnv.DATASET_SYNONYM_ENABLED) {
+  defineIndex(DatasetDataSchema, {
+    key: { teamId: 1, datasetId: 1, synonymVersion: 1, synonymRebuildingVersion: 1 }
+  });
+}
+
+// Cron clear invalid data
+defineIndex(DatasetDataSchema, { key: { updateTime: 1 } });
 
 export const MongoDatasetData = getMongoModel<DatasetDataSchemaType>(
   DatasetDataCollectionName,

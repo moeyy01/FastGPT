@@ -1,65 +1,16 @@
-import {
-  delFileByFileIdList,
-  getGFSCollection
-} from '@fastgpt/service/common/file/gridfs/controller';
-import { mongoSessionRun } from '@fastgpt/service/common/mongo/sessionRun';
-import { addLog } from '@fastgpt/service/common/system/log';
+import { retryFn } from '@fastgpt/global/common/system/utils';
+import { getLogger, LogCategories } from '@fastgpt/service/common/logger';
 import {
   deleteDatasetDataVector,
   getVectorDataByTime
-} from '@fastgpt/service/common/vectorStore/controller';
+} from '@fastgpt/service/common/vectorDB/controller';
 import { MongoDatasetCollection } from '@fastgpt/service/core/dataset/collection/schema';
+import { getFullTextStore } from '@fastgpt/service/core/dataset/data/textStore';
 import { MongoDatasetData } from '@fastgpt/service/core/dataset/data/schema';
 import { MongoDatasetTraining } from '@fastgpt/service/core/dataset/training/schema';
+const logger = getLogger(LogCategories.MODULE.DATASET.QUEUES);
 
-/* 
-  check dataset.files data. If there is no match in dataset.collections, delete it
-  可能异常情况
-  1. 上传了文件，未成功创建集合
-*/
-export async function checkInvalidDatasetFiles(start: Date, end: Date) {
-  let deleteFileAmount = 0;
-  const collection = getGFSCollection('dataset');
-  const where = {
-    uploadDate: { $gte: start, $lte: end }
-  };
-
-  // 1. get all file _id
-  const files = await collection
-    .find(where, {
-      projection: {
-        metadata: 1,
-        _id: 1
-      }
-    })
-    .toArray();
-  addLog.info(`Clear invalid dataset files, total files: ${files.length}`);
-
-  let index = 0;
-  for await (const file of files) {
-    try {
-      // 2. find fileId in dataset.collections
-      const hasCollection = await MongoDatasetCollection.countDocuments({
-        teamId: file.metadata.teamId,
-        fileId: file._id
-      });
-
-      // 3. if not found, delete file
-      if (hasCollection === 0) {
-        await delFileByFileIdList({ bucketName: 'dataset', fileIdList: [String(file._id)] });
-        console.log('delete file', file._id);
-        deleteFileAmount++;
-      }
-      index++;
-      index % 100 === 0 && console.log(index);
-    } catch (error) {
-      console.log(error);
-    }
-  }
-  addLog.info(`Clear invalid dataset files finish, remove ${deleteFileAmount} files`);
-}
-
-/* 
+/*
   检测无效的 Mongo 数据
   异常情况：
   1. 训练过程删除知识库，可能导致还会有新的数据继续插入，导致无效。
@@ -89,42 +40,60 @@ export async function checkInvalidDatasetData(start: Date, end: Date) {
     }
   }
   const list = Array.from(map.values());
-  addLog.info(`Clear invalid dataset data, total collections: ${list.length}`);
+  logger.info('Start cleaning invalid dataset data records', {
+    totalCollections: list.length,
+    start,
+    end
+  });
   let index = 0;
 
   for await (const item of list) {
     try {
       // 3. 查看该collection是否存在，不存在，则删除对应的数据
-      const collection = await MongoDatasetCollection.findOne({ _id: item.collectionId });
+      const collection = await MongoDatasetCollection.findOne(
+        { _id: item.collectionId },
+        '_id'
+      ).lean();
       if (!collection) {
-        await mongoSessionRun(async (session) => {
-          await MongoDatasetTraining.deleteMany(
-            {
-              teamId: item.teamId,
-              collectionId: item.collectionId
-            },
-            { session }
-          );
-          await MongoDatasetData.deleteMany(
-            {
-              teamId: item.teamId,
-              collectionId: item.collectionId
-            },
-            { session }
-          );
-          await deleteDatasetDataVector({
+        logger.warn('Dataset collection not found, cleaning related records', { ...item });
+
+        await retryFn(async () => {
+          await MongoDatasetTraining.deleteMany({
             teamId: item.teamId,
-            datasetIds: [item.datasetId],
-            collectionIds: [item.collectionId]
+            datasetId: item.datasetId,
+            collectionId: item.collectionId
+          });
+
+          await Promise.all([
+            // 全文清理走统一抽象:milvus 全文在 modeldata_v2 向量行中,由 deleteDatasetDataVector
+            // 一并删除,这里为 no-op;其他向量库删除 Mongo 全文 token(互不干扰)
+            getFullTextStore().deleteByCollectionIds({
+              teamId: item.teamId,
+              datasetIds: [item.datasetId],
+              collectionIds: [item.collectionId]
+            }),
+            deleteDatasetDataVector({
+              teamId: item.teamId,
+              datasetIds: [item.datasetId],
+              collectionIds: [item.collectionId]
+            })
+          ]);
+
+          await MongoDatasetData.deleteMany({
+            teamId: item.teamId,
+            datasetId: item.datasetId,
+            collectionId: item.collectionId
           });
         });
-
-        console.log('collection is not found', item);
-        continue;
       }
-    } catch (error) {}
+    } catch (error) {
+      logger.error('Failed to clean invalid dataset data records', { ...item, error });
+    }
     if (++index % 100 === 0) {
-      console.log(index);
+      logger.debug('Invalid dataset data cleaning progress', {
+        processedCollections: index,
+        totalCollections: list.length
+      });
     }
   }
 }
@@ -133,13 +102,13 @@ export async function checkInvalidVector(start: Date, end: Date) {
   let deletedVectorAmount = 0;
   // 1. get all vector data
   const rows = await getVectorDataByTime(start, end);
-  addLog.info(`Clear invalid vector, total vector data: ${rows.length}`);
+  logger.info('Start cleaning invalid vector records', { totalVectors: rows.length, start, end });
 
   let index = 0;
 
   for await (const item of rows) {
     if (!item.teamId || !item.datasetId || !item.id) {
-      addLog.error('error data', item);
+      logger.error('Invalid vector record encountered', { ...item });
       continue;
     }
     try {
@@ -156,16 +125,29 @@ export async function checkInvalidVector(start: Date, end: Date) {
           teamId: item.teamId,
           id: item.id
         });
-        console.log('delete vector data', item.id);
+        logger.info('Deleted orphan vector record', {
+          vectorId: item.id,
+          teamId: item.teamId,
+          datasetId: item.datasetId
+        });
         deletedVectorAmount++;
       }
 
       index++;
-      index % 100 === 0 && console.log(index);
+      if (index % 100 === 0) {
+        logger.debug('Invalid vector cleaning progress', {
+          processedVectors: index,
+          totalVectors: rows.length,
+          deletedVectorAmount
+        });
+      }
     } catch (error) {
-      console.log(error);
+      logger.error('Failed to clean invalid vector record', { ...item, error });
     }
   }
 
-  addLog.info(`Clear invalid vector finish, remove ${deletedVectorAmount} data`);
+  logger.info('Finished cleaning invalid vector records', {
+    deletedVectorAmount,
+    totalVectors: rows.length
+  });
 }

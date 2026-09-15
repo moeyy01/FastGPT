@@ -1,5 +1,7 @@
-import type { NextApiResponse } from 'next';
+import type { NodeHttpResponse } from '../../../types/http';
 import { getAIApi } from '../config';
+import { Readable } from 'stream';
+import type { TTSSystemModelDataType } from '@fastgpt/global/core/ai/model.schema';
 
 export async function text2Speech({
   res,
@@ -10,34 +12,48 @@ export async function text2Speech({
   voice,
   speed = 1
 }: {
-  res: NextApiResponse;
-  onSuccess: (e: { model: string; buffer: Buffer }) => void;
+  res: NodeHttpResponse;
+  onSuccess: (e: { model: TTSSystemModelDataType; buffer: Buffer }) => void;
   onError: (e: any) => void;
   input: string;
-  model: string;
+  model: TTSSystemModelDataType;
   voice: string;
   speed?: number;
 }) {
-  const ai = getAIApi();
-  const response = await ai.audio.speech.create({
-    model,
-    // @ts-ignore
-    voice,
-    input,
-    response_format: 'mp3',
-    speed
-  });
+  const { ai } = getAIApi();
+  const response = await ai.audio.speech.create(
+    {
+      model: model.model,
+      // @ts-ignore
+      voice,
+      input,
+      response_format: 'mp3',
+      speed
+    },
+    model.requestUrl
+      ? {
+          path: model.requestUrl,
+          headers: {
+            ...(model.requestAuth ? { Authorization: `Bearer ${model.requestAuth}` } : {})
+          }
+        }
+      : {}
+  );
 
-  const readableStream = response.body as unknown as NodeJS.ReadableStream;
+  if (!response.body) {
+    throw new Error('Response body is empty');
+  }
+
+  const readableStream = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
   readableStream.pipe(res);
 
-  let bufferStore = Buffer.from([]);
+  const chunks: Uint8Array[] = [];
 
   readableStream.on('data', (chunk) => {
-    bufferStore = Buffer.concat([bufferStore, chunk]);
+    chunks.push(chunk);
   });
   readableStream.on('end', () => {
-    onSuccess({ model, buffer: bufferStore });
+    onSuccess({ model, buffer: Buffer.concat(chunks) });
   });
   readableStream.on('error', (e) => {
     onError(e);

@@ -1,120 +1,171 @@
 import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
-import { Schema, getMongoModel } from '../../common/mongo';
-import type { AppSchema as AppType } from '@fastgpt/global/core/app/type.d';
+import { defineIndex, Schema, getMongoModel } from '../../common/mongo';
+import type { AppSchemaType as AppType } from '@fastgpt/global/core/app/type';
 import {
   TeamCollectionName,
   TeamMemberCollectionName
 } from '@fastgpt/global/support/user/team/constant';
-import { AppDefaultPermissionVal } from '@fastgpt/global/support/permission/app/constant';
-import { getPermissionSchema } from '@fastgpt/global/support/permission/utils';
 
 export const AppCollectionName = 'apps';
 
 export const chatConfigType = {
   welcomeText: String,
+  welcomeConfig: Object,
   variables: Array,
-  questionGuide: Boolean,
+  questionGuide: Object,
   ttsConfig: Object,
   whisperConfig: Object,
   scheduledTriggerConfig: Object,
-  chatInputGuide: Object
+  chatInputGuide: Object,
+  fileSelectConfig: Object,
+  entryPoints: Array,
+  instruction: String,
+  autoExecute: Object
 };
 
 // schema
-const AppSchema = new Schema({
-  parentId: {
-    type: Schema.Types.ObjectId,
-    ref: AppCollectionName,
-    default: null
-  },
-  teamId: {
-    type: Schema.Types.ObjectId,
-    ref: TeamCollectionName,
-    required: true
-  },
-  tmbId: {
-    type: Schema.Types.ObjectId,
-    ref: TeamMemberCollectionName,
-    required: true
-  },
-  name: {
-    type: String,
-    required: true
-  },
-  type: {
-    type: String,
-    default: AppTypeEnum.workflow,
-    enum: Object.values(AppTypeEnum)
-  },
-  version: {
-    type: String,
-    enum: ['v1', 'v2']
-  },
-  avatar: {
-    type: String,
-    default: '/icon/logo.svg'
-  },
-  intro: {
-    type: String,
-    default: ''
-  },
-
-  updateTime: {
-    type: Date,
-    default: () => new Date()
-  },
-
-  // role and auth
-  teamTags: {
-    type: [String]
-  },
-
-  // save app(Not publish)
-  modules: {
-    type: Array,
-    default: []
-  },
-  edges: {
-    type: Array,
-    default: []
-  },
-  chatConfig: {
-    type: chatConfigType
-  },
-  // plugin config
-  pluginData: {
+const AppSchema = new Schema(
+  {
+    parentId: {
+      type: Schema.Types.ObjectId,
+      ref: AppCollectionName,
+      default: null
+    },
+    teamId: {
+      type: Schema.Types.ObjectId,
+      ref: TeamCollectionName,
+      required: true
+    },
+    tmbId: {
+      type: Schema.Types.ObjectId,
+      ref: TeamMemberCollectionName,
+      required: true
+    },
+    name: {
+      type: String,
+      required: true
+    },
     type: {
-      nodeVersion: String,
-      pluginUniId: String,
-      apiSchemaStr: String, // http plugin
-      customHeaders: String // http plugin
+      type: String,
+      default: AppTypeEnum.workflow,
+      enum: Object.values(AppTypeEnum)
+    },
+    version: {
+      type: String,
+      enum: ['v1', 'v2']
+    },
+    avatar: String,
+    intro: {
+      type: String,
+      default: ''
+    },
+    templateId: String,
+
+    updateTime: {
+      type: Date,
+      default: () => new Date()
+    },
+    createTime: {
+      type: Date,
+      default: () => new Date()
+    },
+
+    // Workflow data
+    modules: {
+      type: Array,
+      default: []
+    },
+    edges: {
+      type: Array,
+      default: []
+    },
+    chatConfig: {
+      type: chatConfigType
+    },
+
+    // Tool config
+    pluginData: {
+      type: {
+        nodeVersion: String,
+        pluginUniId: String,
+        apiSchemaStr: String, // http plugin
+        customHeaders: String // http plugin
+      }
+    },
+
+    scheduledTriggerConfig: {
+      cronString: {
+        type: String
+      },
+      timezone: {
+        type: String
+      },
+      defaultPrompt: {
+        type: String
+      }
+    },
+    scheduledTriggerNextTime: {
+      type: Date
+    },
+    resourceRefs: {
+      skillIds: {
+        type: [String],
+        default: []
+      }
+    },
+    inheritPermission: {
+      type: Boolean,
+      default: true
+    },
+
+    // Chat setting
+    favourite: Boolean,
+    quick: Boolean,
+
+    // 置顶。应用与文件夹共用，团队内共享
+    isPinned: Boolean,
+    pinnedAt: Date,
+
+    /** @deprecated */
+    defaultPermission: Number,
+    inited: Boolean,
+
+    // 软删除标记字段
+    deleteTime: {
+      type: Date,
+      default: null // null表示未删除，有值表示删除时间
     }
   },
+  {
+    minimize: false
+  }
+);
 
-  scheduledTriggerConfig: {
-    cronString: {
-      type: String
-    },
-    timezone: {
-      type: String
-    },
-    defaultPrompt: {
-      type: String
-    }
-  },
-  scheduledTriggerNextTime: {
-    type: Date
-  },
+defineIndex(AppSchema, { key: { teamId: 1, updateTime: -1 } });
+defineIndex(AppSchema, { key: { teamId: 1, createTime: 1 } });
+defineIndex(AppSchema, { key: { teamId: 1, type: 1 } });
+defineIndex(AppSchema, { key: { teamId: 1, parentId: 1 } });
+// 置顶优先排序。置顶项数量很少，只需覆盖排序前缀，不为各排序组合单独建索引
+// defineIndex(AppSchema, { key: { teamId: 1, isPinned: -1, pinnedAt: -1 } });
 
-  inited: {
-    type: Boolean
-  },
-
-  ...getPermissionSchema(AppDefaultPermissionVal)
+defineIndex(AppSchema, {
+  key: { teamId: 1, deleteTime: 1, 'resourceRefs.skillIds': 1 }
 });
 
-AppSchema.index({ teamId: 1, updateTime: -1 });
-AppSchema.index({ teamId: 1, type: 1 });
-AppSchema.index({ scheduledTriggerConfig: 1, intervalNextTime: -1 });
+// Schedule
+defineIndex(AppSchema, {
+  key: { scheduledTriggerConfig: 1, scheduledTriggerNextTime: -1 },
+  options: {
+    partialFilterExpression: {
+      scheduledTriggerConfig: { $exists: true }
+    }
+  }
+});
+
+// Admin count
+defineIndex(AppSchema, { key: { type: 1 } });
+defineIndex(AppSchema, { key: { deleteTime: 1 } });
+// Admin search
+defineIndex(AppSchema, { key: { name: 1 } });
 
 export const MongoApp = getMongoModel<AppType>(AppCollectionName, AppSchema);

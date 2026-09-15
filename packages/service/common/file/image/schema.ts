@@ -1,8 +1,9 @@
 import { TeamCollectionName } from '@fastgpt/global/support/user/team/constant';
-import { connectionMongo, getMongoModel, type Model } from '../../mongo';
-import { MongoImageSchemaType } from '@fastgpt/global/common/file/image/type.d';
-import { mongoImageTypeMap } from '@fastgpt/global/common/file/image/constants';
-const { Schema, model, models } = connectionMongo;
+import { defineIndex, Schema, getMongoModel } from '../../mongo';
+import { type MongoImageSchemaType } from '@fastgpt/global/common/file/image/type';
+import { getLogger, LogCategories } from '../../logger';
+
+const logger = getLogger(LogCategories.INFRA.MONGO);
 
 const ImageSchema = new Schema({
   teamId: {
@@ -14,31 +15,24 @@ const ImageSchema = new Schema({
     type: Date,
     default: () => new Date()
   },
-  expiredTime: {
-    type: Date
-  },
-  binary: {
-    type: Buffer
-  },
-  type: {
-    type: String,
-    enum: Object.keys(mongoImageTypeMap),
-    required: true
-  },
-  metadata: {
-    type: Object
-  }
+  expiredTime: Date,
+  binary: Buffer,
+  metadata: Object
 });
 
-try {
-  // tts expired
-  ImageSchema.index({ expiredTime: 1 }, { expireAfterSeconds: 60 });
-  ImageSchema.index({ type: 1 });
-  ImageSchema.index({ createTime: 1 });
-  // delete related img
-  ImageSchema.index({ teamId: 1, 'metadata.relatedId': 1 });
-} catch (error) {
-  console.log(error);
-}
+// tts expired（60 Minutes）
+defineIndex(ImageSchema, {
+  key: { expiredTime: 1 },
+  options: { expireAfterSeconds: 60 * 60 }
+});
+defineIndex(ImageSchema, { key: { type: 1 } });
+// delete related img
+defineIndex(ImageSchema, { key: { teamId: 1, 'metadata.relatedId': 1 } });
+
+// Cron clear invalid img
+defineIndex(ImageSchema, {
+  key: { createTime: 1 },
+  options: { partialFilterExpression: { 'metadata.relatedId': { $exists: true } } }
+});
 
 export const MongoImage = getMongoModel<MongoImageSchemaType>('image', ImageSchema);

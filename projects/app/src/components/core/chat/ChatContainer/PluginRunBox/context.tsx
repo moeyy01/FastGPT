@@ -1,58 +1,69 @@
-import React, { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
-import { createContext } from 'use-context-selector';
-import { PluginRunBoxProps } from './type';
-import { AIChatItemValueItemType, ChatSiteItemType } from '@fastgpt/global/core/chat/type';
-import { FieldValues } from 'react-hook-form';
+import React, { type ReactNode, useCallback, useRef } from 'react';
+import { createContext, useContextSelector } from 'use-context-selector';
+import { type PluginRunBoxProps } from './type';
+import { type AIChatItemValueItemType } from '@fastgpt/global/core/chat/type';
 import { PluginRunBoxTabEnum } from './constants';
-import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import { useToast } from '@fastgpt/web/hooks/useToast';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
-import { ChatItemValueTypeEnum, ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
-import { generatingMessageProps } from '../type';
+import { ChatRoleEnum, ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { type generatingMessageProps } from '../type';
 import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
-import { getPluginRunContent } from '@fastgpt/global/core/app/plugin/utils';
+import { useTranslation } from 'next-i18next';
+import { type ChatBoxInputFormType } from '../ChatBox/type';
+import { chats2GPTMessages } from '@fastgpt/global/core/chat/adapt';
+import { clientGetWorkflowToolRunUserQuery } from '@fastgpt/global/core/workflow/utils';
+import { ChatItemContext } from '@/web/core/chat/context/chatItemContext';
+import { ChatRecordContext } from '@/web/core/chat/context/chatRecordContext';
+import {
+  appendNodeResponseByParent,
+  mergeNodeResponseDataByIdAndParent
+} from '@fastgpt/global/core/chat/utils/mergeNode';
+import { getErrText } from '@fastgpt/global/common/error/utils';
+import { WorkflowRuntimeContextProvider } from '@/components/core/chat/ChatContainer/context/workflowRuntimeContext';
 
 type PluginRunContextType = PluginRunBoxProps & {
   isChatting: boolean;
-  onSubmit: (e: FieldValues) => Promise<any>;
+  onSubmit: (e: ChatBoxInputFormType) => Promise<any>;
+  instruction: string;
 };
 
-export const PluginRunContext = createContext<PluginRunContextType>({
-  pluginInputs: [],
-  //@ts-ignore
-  variablesForm: undefined,
-  histories: [],
-  setHistories: function (value: React.SetStateAction<ChatSiteItemType[]>): void {
-    throw new Error('Function not implemented.');
-  },
-  appId: '',
-  tab: PluginRunBoxTabEnum.input,
-  setTab: function (value: React.SetStateAction<PluginRunBoxTabEnum>): void {
-    throw new Error('Function not implemented.');
-  },
+export const PluginRunContext = createContext<
+  Omit<PluginRunContextType, 'appId' | 'chatId' | 'outLinkAuthData'>
+>({
   isChatting: false,
-  onSubmit: function (e: FieldValues): Promise<any> {
+  onSubmit: function (): Promise<any> {
     throw new Error('Function not implemented.');
-  }
+  },
+  instruction: ''
 });
 
 const PluginRunContextProvider = ({
   children,
   ...props
 }: PluginRunBoxProps & { children: ReactNode }) => {
-  const { pluginInputs, onStartChat, setHistories, histories, setTab } = props;
+  const { onStartChat } = props;
+
+  const pluginInputs = useContextSelector(ChatItemContext, (v) => v.chatBoxData?.app?.pluginInputs);
+  const setTab = useContextSelector(ChatItemContext, (v) => v.setPluginRunTab);
+  const resetVariables = useContextSelector(ChatItemContext, (v) => v.resetVariables);
+  const chatConfig = useContextSelector(ChatItemContext, (v) => v.chatBoxData?.app?.chatConfig);
+
+  const setChatRecords = useContextSelector(ChatRecordContext, (v) => v.setChatRecords);
+  const chatRecords = useContextSelector(ChatRecordContext, (v) => v.chatRecords);
+
+  const instruction = chatConfig?.instruction || '';
 
   const { toast } = useToast();
   const chatController = useRef(new AbortController());
-
+  const { t } = useTranslation();
   /* Abort chat completions, questionGuide */
   const abortRequest = useCallback(() => {
     chatController.current?.abort('stop');
   }, []);
 
   const generatingMessage = useCallback(
-    ({ event, text = '', status, name, tool, variables }: generatingMessageProps) => {
-      setHistories((state) =>
+    ({ event, text = '', status, name, tool, nodeResponse, variables }: generatingMessageProps) => {
+      setChatRecords((state) =>
         state.map((item, index) => {
           if (index !== state.length - 1 || item.obj !== ChatRoleEnum.AI) return item;
 
@@ -60,7 +71,12 @@ const PluginRunContextProvider = ({
             JSON.stringify(item.value[item.value.length - 1])
           );
 
-          if (event === SseResponseEventEnum.flowNodeStatus && status) {
+          if (event === SseResponseEventEnum.flowNodeResponse && nodeResponse) {
+            return {
+              ...item,
+              responseData: appendNodeResponseByParent(item.responseData, nodeResponse)
+            };
+          } else if (event === SseResponseEventEnum.flowNodeStatus && status) {
             return {
               ...item,
               status,
@@ -72,7 +88,6 @@ const PluginRunContextProvider = ({
           ) {
             if (!lastValue || !lastValue.text) {
               const newValue: AIChatItemValueItemType = {
-                type: ChatItemValueTypeEnum.text,
                 text: {
                   content: text
                 }
@@ -90,19 +105,13 @@ const PluginRunContextProvider = ({
             }
           } else if (event === SseResponseEventEnum.toolCall && tool) {
             const val: AIChatItemValueItemType = {
-              type: ChatItemValueTypeEnum.tool,
               tools: [tool]
             };
             return {
               ...item,
               value: item.value.concat(val)
             };
-          } else if (
-            event === SseResponseEventEnum.toolParams &&
-            tool &&
-            lastValue.type === ChatItemValueTypeEnum.tool &&
-            lastValue?.tools
-          ) {
+          } else if (event === SseResponseEventEnum.toolParams && tool && lastValue?.tools) {
             lastValue.tools = lastValue.tools.map((item) => {
               if (item.id === tool.id) {
                 item.params += tool.params;
@@ -118,7 +127,7 @@ const PluginRunContextProvider = ({
             return {
               ...item,
               value: item.value.map((val) => {
-                if (val.type === ChatItemValueTypeEnum.tool && val.tools) {
+                if (val.tools) {
                   const tools = val.tools.map((item) =>
                     item.id === tool.id ? { ...item, response: tool.response } : item
                   );
@@ -130,105 +139,148 @@ const PluginRunContextProvider = ({
                 return val;
               })
             };
+          } else if (event === SseResponseEventEnum.updateVariables && variables) {
+            resetVariables({ variables });
           }
 
           return item;
         })
       );
     },
-    [setHistories]
+    [setChatRecords, resetVariables]
   );
 
-  const isChatting = useMemo(
-    () => histories[histories.length - 1] && histories[histories.length - 1]?.status !== 'finish',
-    [histories]
-  );
+  const isChatting =
+    chatRecords[chatRecords.length - 1] && chatRecords[chatRecords.length - 1]?.status !== 'finish';
 
-  const { runAsync: onSubmit } = useRequest2(async (e: FieldValues) => {
-    if (!onStartChat) return;
-    if (isChatting) {
-      toast({
-        title: '正在聊天中...请等待结束',
-        status: 'warning'
-      });
-      return;
-    }
-    setTab(PluginRunBoxTabEnum.output);
+  const onSubmit = useCallback(
+    async ({ variables }: ChatBoxInputFormType) => {
+      if (!onStartChat) return;
+      if (isChatting) {
+        toast({
+          title: t('chat:is_chatting'),
+          status: 'warning'
+        });
+        return;
+      }
 
-    // reset controller
-    abortRequest();
-    const abortSignal = new AbortController();
-    chatController.current = abortSignal;
+      // reset controller
+      abortRequest();
+      const abortSignal = new AbortController();
+      chatController.current = abortSignal;
+      const humanChatItemId = getNanoid(24);
+      const responseChatItemId = getNanoid(24);
 
-    setHistories([
-      {
-        dataId: getNanoid(24),
-        obj: ChatRoleEnum.Human,
-        status: 'finish',
-        value: [
-          {
-            type: ChatItemValueTypeEnum.text,
-            text: {
-              content: getPluginRunContent({
-                pluginInputs
-              })
+      setChatRecords([
+        {
+          ...clientGetWorkflowToolRunUserQuery({
+            pluginInputs,
+            variables
+          }),
+          id: humanChatItemId,
+          dataId: humanChatItemId,
+          status: 'finish'
+        },
+        {
+          id: responseChatItemId,
+          dataId: responseChatItemId,
+          obj: ChatRoleEnum.AI,
+          value: [
+            {
+              text: {
+                content: ''
+              }
             }
-          }
-        ]
-      },
-      {
-        dataId: getNanoid(24),
-        obj: ChatRoleEnum.AI,
-        value: [
+          ],
+          status: 'loading'
+        }
+      ]);
+      setTab(PluginRunBoxTabEnum.output);
+
+      const messages = chats2GPTMessages({
+        messages: [
           {
-            type: ChatItemValueTypeEnum.text,
-            text: {
-              content: ''
-            }
+            dataId: getNanoid(24),
+            obj: ChatRoleEnum.Human,
+            value: []
           }
         ],
-        status: 'loading'
-      }
-    ]);
-
-    try {
-      const { responseData } = await onStartChat({
-        messages: [],
-        controller: chatController.current,
-        generatingMessage,
-        variables: e
+        reserveId: true,
+        reserveTool: true
       });
 
-      setHistories((state) =>
-        state.map((item, index) => {
-          if (index !== state.length - 1) return item;
-          return {
-            ...item,
-            status: 'finish',
-            responseData
-          };
-        })
-      );
-    } catch (err: any) {
-      toast({ title: err.message, status: 'error' });
-      setHistories((state) =>
-        state.map((item, index) => {
-          if (index !== state.length - 1) return item;
-          return {
-            ...item,
-            status: 'finish'
-          };
-        })
-      );
-    }
-  });
+      try {
+        await onStartChat({
+          messages,
+          responseChatItemId,
+          controller: chatController.current,
+          generatingMessage,
+          variables
+        });
+
+        setChatRecords((state) =>
+          state.map((item, index) => {
+            if (index !== state.length - 1) return item;
+
+            // Check node response error
+            const responseData = mergeNodeResponseDataByIdAndParent(item.responseData || []);
+            if (responseData[responseData.length - 1]?.error) {
+              toast({
+                title: t(getErrText(responseData[responseData.length - 1].error)),
+                status: 'error'
+              });
+            }
+
+            return {
+              ...item,
+              status: 'finish',
+              responseData
+            };
+          })
+        );
+      } catch (err: any) {
+        const errorMsg = t(getErrText(err, t('common:core.chat.error.Chat error') as any));
+        toast({ title: errorMsg, status: 'error' });
+        setChatRecords((state) =>
+          state.map((item, index) => {
+            if (index !== state.length - 1) return item;
+            return {
+              ...item,
+              status: 'finish'
+            };
+          })
+        );
+      }
+    },
+    [
+      abortRequest,
+      generatingMessage,
+      isChatting,
+      onStartChat,
+      pluginInputs,
+      setChatRecords,
+      setTab,
+      t,
+      toast
+    ]
+  );
 
   const contextValue: PluginRunContextType = {
     ...props,
     isChatting,
-    onSubmit
+    onSubmit,
+    instruction
   };
-  return <PluginRunContext.Provider value={contextValue}>{children}</PluginRunContext.Provider>;
+  return (
+    <WorkflowRuntimeContextProvider
+      sourceTarget={{ sourceType: ChatSourceTypeEnum.app, sourceId: props.appId }}
+      chatId={props.chatId}
+      outLinkAuthData={props.outLinkAuthData || {}}
+      fileUploadMode={props.fileUploadMode ?? 'runtime'}
+    >
+      <PluginRunContext.Provider value={contextValue}>{children}</PluginRunContext.Provider>
+    </WorkflowRuntimeContextProvider>
+  );
 };
 
 export default PluginRunContextProvider;

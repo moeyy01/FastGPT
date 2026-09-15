@@ -3,851 +3,507 @@ import React, {
   useRef,
   useState,
   useMemo,
-  forwardRef,
   useImperativeHandle,
-  ForwardedRef,
-  useEffect
+  useEffect,
+  useLayoutEffect
 } from 'react';
 import Script from 'next/script';
-import type {
-  AIChatItemValueItemType,
-  ChatSiteItemType,
-  UserChatItemValueItemType
-} from '@fastgpt/global/core/chat/type.d';
-import { useToast } from '@fastgpt/web/hooks/useToast';
-import { getErrText } from '@fastgpt/global/common/error/utils';
-import { Box, Flex, Checkbox } from '@chakra-ui/react';
+import { Box, type BoxProps } from '@chakra-ui/react';
 import { EventNameEnum, eventBus } from '@/web/common/utils/eventbus';
-import { chats2GPTMessages } from '@fastgpt/global/core/chat/adapt';
-import { useForm } from 'react-hook-form';
-import { useRouter } from 'next/router';
-import { useSystemStore } from '@/web/common/system/useSystemStore';
 import { useTranslation } from 'next-i18next';
-import {
-  closeCustomFeedback,
-  updateChatAdminFeedback,
-  updateChatUserFeedback
-} from '@/web/core/chat/api';
-import type { AdminMarkType } from './components/SelectMarkCollection';
-
-import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
-
-import { postQuestionGuide } from '@/web/core/ai/api';
-import type { ComponentRef, ChatBoxInputType, ChatBoxInputFormType } from './type.d';
-import type { StartChatFnProps, generatingMessageProps } from '../type';
+import type { MarkChatReadBodyType } from '@fastgpt/global/openapi/core/chat/history/api';
+import { postStopV2Chat } from '@/web/core/chat/api';
+import type {
+  ChatBoxInputType,
+  ChatGenerateStatusChangeHandler,
+  ChatGeneratingConflictRecovery
+} from './type';
+import type { StartChatFnProps } from '../type';
 import ChatInput from './Input/ChatInput';
-import ChatBoxDivider from '../../Divider';
-import { OutLinkChatAuthProps } from '@fastgpt/global/support/permission/chat';
-import { getNanoid } from '@fastgpt/global/common/string/tools';
-import { ChatItemValueTypeEnum, ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
-import { formatChatValue2InputType } from './utils';
-import { textareaMinH } from './constants';
-import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
-import ChatProvider, { ChatBoxContext, ChatProviderProps } from './Provider';
-
-import ChatItem from './components/ChatItem';
-
+import AgentAskComposer from './Input/AgentAskComposer';
+import { type OutLinkChatAuthProps } from '@fastgpt/global/support/permission/chat';
+import { ChatStatusEnum } from '@fastgpt/global/core/chat/constants';
+import type { ChatGenerateStatusEnum } from '@fastgpt/global/core/chat/constants';
+import { getInteractiveByHistories, isPendingAgentAsk } from './utils/interactive';
+import { extractDeepestInteractive } from '@fastgpt/global/core/workflow/runtime/utils';
+import {
+  ChatInputWrapperStyle,
+  ChatTypeEnum,
+  FeedbackTypeEnum,
+  HomeChatContentWrapperStyle
+} from './constants';
+import ChatProvider, { ChatBoxContext, type ChatProviderProps } from './Provider';
+import { WorkflowRuntimeContext } from '../context/workflowRuntimeContext';
 import dynamic from 'next/dynamic';
-import type { StreamResponseType } from '@/web/common/api/fetch';
+import { type StreamResponseType } from '@/web/common/api/fetch';
 import { useContextSelector } from 'use-context-selector';
+import { useCreation, useDebounceEffect, useMemoizedFn } from 'ahooks';
+import { getWebReqUrl } from '@fastgpt/web/common/system/utils';
+import { ChatRecordContext } from '@/web/core/chat/context/chatRecordContext';
+import { ChatItemContext } from '@/web/core/chat/context/chatItemContext';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import { VariableInputEnum } from '@fastgpt/global/core/workflow/constants';
+import { useMemoEnhance } from '@fastgpt/web/hooks/useMemoEnhance';
+import { getChatScrollTargetKey, shouldForceScrollAfterRecordsLoaded } from './utils/scrollUtils';
+import { isChatRoundPending } from './utils/chatStatus';
+import { getProcessedChatRecords } from './utils/recordGroups';
+import { useChatInputForm } from './hooks/useChatInputForm';
+import { useChatScroll } from './hooks/useChatScroll';
+import { useVariableInputVisibility } from './hooks/useVariableInputVisibility';
+import { useQuestionGuide } from './hooks/useQuestionGuide';
+import { useChatResume } from './hooks/useChatResume';
+import { useChatGenerate } from './hooks/useChatGenerate';
+import { useChatRecordActions } from './hooks/useChatRecordActions';
+import { useChatFeedbackActions } from './hooks/useChatFeedbackActions';
+import ChatBoxModals from './components/ChatBoxModals';
+import type { ChatRecordsListProps } from './components/ChatRecordsList';
+import AppChatMain from './components/AppChatMain';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
-import { useThrottleFn } from 'ahooks';
+import ScrollToBottomButton from './components/ScrollToBottomButton';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import {
+  QuickReplyContextProvider,
+  useRegisterQuickReplyClickHandler
+} from '../context/quickReplyContext';
+import type { ChatAuthTargetInput } from '@/web/core/chat/utils';
+import { useChatAuthApiTarget } from '@/web/core/chat/utils';
+import { requestStopAndAbortClient } from './utils/stop';
+import { getLastAiDataId } from './utils/resume';
 
-const ResponseTags = dynamic(() => import('./components/ResponseTags'));
-const FeedbackModal = dynamic(() => import('./components/FeedbackModal'));
-const ReadFeedbackModal = dynamic(() => import('./components/ReadFeedbackModal'));
-const SelectMarkCollection = dynamic(() => import('./components/SelectMarkCollection'));
-const Empty = dynamic(() => import('./components/Empty'));
-const WelcomeBox = dynamic(() => import('./components/WelcomeBox'));
-const VariableInput = dynamic(() => import('./components/VariableInput'));
-
-enum FeedbackTypeEnum {
-  user = 'user',
-  admin = 'admin',
-  hidden = 'hidden'
-}
+const ChatHomeVariablesForm = dynamic(() => import('./components/home/ChatHomeVariablesForm'));
+const DesktopHomeLayout = dynamic(() => import('./components/home/DesktopHomeLayout'));
+const MobileHomeLayout = dynamic(() => import('./components/home/MobileHomeLayout'));
+const WorkorderEntrance = dynamic(() => import('@/pageComponents/chat/WorkorderEntrance'));
 
 type Props = OutLinkChatAuthProps &
-  ChatProviderProps & {
-    feedbackType?: `${FeedbackTypeEnum}`;
-    showMarkIcon?: boolean; // admin mark dataset
-    showVoiceIcon?: boolean;
-    showEmptyIntro?: boolean;
-    userAvatar?: string;
-    showFileSelector?: boolean;
+  ChatProviderProps &
+  BoxProps & {
+    isReady: boolean;
+    features?: ChatBoxFeatures;
     active?: boolean; // can use
-    appId: string;
-
-    // not chat test params
+    disabledSendTip?: string;
 
     onStartChat?: (e: StartChatFnProps) => Promise<
       StreamResponseType & {
         isNewChat?: boolean;
       }
     >;
-    onDelMessage?: (e: { contentId: string }) => void;
+    onTriggerRefresh?: () => void;
+    /** 已读标记由外部页面注入，ChatBox 不直接耦合普通 App history 接口。 */
+    onMarkChatRead?: (data: MarkChatReadBodyType) => Promise<unknown>;
+    /** 生成状态变化只通过 props 通知外部，ChatBox 不直接同步侧栏历史或最近使用。 */
+    onChatGenerateStatusChange?: ChatGenerateStatusChangeHandler;
+    EmptyState?: React.ReactNode;
+    /** 日志详情中展示用户反馈内容时使用的用户显示名。 */
+    feedbackUserName?: string;
   };
 
-/* 
-  The input is divided into sections
-  1. text
-  2. img
-  3. file
-  4. ....
-*/
+export type ChatBoxFeatures = {
+  feedbackType?: `${FeedbackTypeEnum}`;
+  mark?: boolean;
+  /** 语音识别输入开关。 */
+  voice?: boolean;
+  /** AI 回复朗读和自动 TTS 开关。 */
+  tts?: boolean;
+  /** 输入引导和回答后的推荐问题开关。 */
+  inputGuide?: boolean;
+  /** AI 回复底部的 sandbox 打开入口开关。 */
+  sandbox?: boolean;
+  workorder?: boolean;
+  autoResume?: boolean;
+  markRead?: boolean;
+  quickReplies?: boolean;
+  disableFooterHoverTranslate?: boolean;
+  footerRunDetailPosition?: 'default' | 'afterCopy';
+};
 
-const ChatBox = (
-  {
-    feedbackType = FeedbackTypeEnum.hidden,
-    showMarkIcon = false,
-    showVoiceIcon = true,
-    showEmptyIntro = false,
-    appAvatar,
-    userAvatar,
-    showFileSelector,
-    active = true,
-    appId,
-    chatId,
-    shareId,
-    outLinkUid,
-    teamId,
-    teamToken,
-    onStartChat,
-    onDelMessage
-  }: Props,
-  ref: ForwardedRef<ComponentRef>
-) => {
-  const ChatBoxRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
+const resolveChatBoxFeatures = (
+  features?: ChatBoxFeatures
+): Required<Omit<ChatBoxFeatures, 'feedbackType'>> & {
+  feedbackType: `${FeedbackTypeEnum}`;
+} => ({
+  feedbackType: features?.feedbackType ?? FeedbackTypeEnum.hidden,
+  mark: features?.mark ?? false,
+  voice: features?.voice ?? true,
+  tts: features?.tts ?? true,
+  inputGuide: features?.inputGuide ?? true,
+  sandbox: features?.sandbox ?? true,
+  workorder: features?.workorder ?? false,
+  autoResume: features?.autoResume ?? false,
+  markRead: features?.markRead ?? true,
+  quickReplies: features?.quickReplies ?? false,
+  disableFooterHoverTranslate: features?.disableFooterHoverTranslate ?? false,
+  footerRunDetailPosition: features?.footerRunDetailPosition ?? 'default'
+});
+
+const ChatBox = ({
+  isReady = true,
+  features,
+  active = true,
+  disabledSendTip,
+  onStartChat,
+  chatType,
+  onTriggerRefresh,
+  onMarkChatRead,
+  onChatGenerateStatusChange,
+  boxBodyProps,
+  inputBodyProps,
+  sourceTarget: _sourceTarget,
+  chatId: _chatId,
+  outLinkAuthData: _outLinkAuthData,
+  InputLeftComponent: _InputLeftComponent,
+  dialogTips: _dialogTips,
+  wideLogo: _wideLogo,
+  squareLogo: _squareLogo,
+  slogan: _slogan,
+  quickAppList: _quickAppList,
+  onSwitchQuickApp: _onSwitchQuickApp,
+  EmptyState,
+  feedbackUserName,
+  ...props
+}: Props) => {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { setLoading, feConfigs } = useSystemStore();
   const { isPc } = useSystem();
   const TextareaDom = useRef<HTMLTextAreaElement>(null);
   const chatController = useRef(new AbortController());
   const questionGuideController = useRef(new AbortController());
   const pluginController = useRef(new AbortController());
-  const isNewChatReplace = useRef(false);
+  const resumeController = useRef<AbortController>();
+  const resumedChatTargetRef = useRef<string>();
+  const lastRecordsLoadedScrollTargetRef = useRef<string>();
+  const resolvedFeatures = useMemo(() => resolveChatBoxFeatures(features), [features]);
 
-  const [feedbackId, setFeedbackId] = useState<string>();
-  const [readFeedbackData, setReadFeedbackData] = useState<{
-    chatItemId: string;
-    content: string;
-  }>();
-  const [adminMarkData, setAdminMarkData] = useState<AdminMarkType & { chatItemId: string }>();
   const [questionGuides, setQuestionGuide] = useState<string[]>([]);
+  const [expandedDeletedGroups, setExpandedDeletedGroups] = useState<Set<string>>(new Set());
+  const { ScrollContainerRef, scrollToBottom, generatingScroll, isScrollToBottomButtonVisible } =
+    useChatScroll();
 
-  const {
-    welcomeText,
-    variableList,
-    allVariableList,
-    questionGuide,
-    startSegmentedAudio,
-    finishSegmentedAudio,
-    setAudioPlayingChatId,
-    splitText2Audio,
-    chatHistories,
-    setChatHistories,
-    variablesForm,
-    isChatting
-  } = useContextSelector(ChatBoxContext, (v) => v);
+  const chatBoxData = useContextSelector(ChatItemContext, (v) => v.chatBoxData);
+  const setChatBoxData = useContextSelector(ChatItemContext, (v) => v.setChatBoxData);
+  const ChatBoxRef = useContextSelector(ChatItemContext, (v) => v.ChatBoxRef);
+  const setIsVariableVisible = useContextSelector(ChatItemContext, (v) => v.setIsVariableVisible);
 
-  // compute variable input is finish.
-  const chatForm = useForm<ChatBoxInputFormType>({
-    defaultValues: {
-      input: '',
-      files: [],
-      chatStarted: false
-    }
+  const isLoadingRecords = useContextSelector(ChatRecordContext, (v) => v.isLoadingRecords);
+  const chatRecords = useContextSelector(ChatRecordContext, (v) => v.chatRecords);
+  const setChatRecords = useContextSelector(ChatRecordContext, (v) => v.setChatRecords);
+  const isChatRecordsLoaded = useContextSelector(ChatRecordContext, (v) => v.isChatRecordsLoaded);
+  const ScrollData = useContextSelector(ChatRecordContext, (v) => v.ScrollData);
+  const itemRefs = useContextSelector(ChatRecordContext, (v) => v.itemRefs);
+
+  const sourceKey = useContextSelector(WorkflowRuntimeContext, (v) => v.sourceKey);
+  const sourceTarget = useContextSelector(WorkflowRuntimeContext, (v) => v.sourceTarget);
+  const chatId = useContextSelector(WorkflowRuntimeContext, (v) => v.chatId);
+  const outLinkAuthData = useContextSelector(WorkflowRuntimeContext, (v) => v.outLinkAuthData);
+  const chatAuthTarget = useChatAuthApiTarget({ sourceTarget, outLinkAuthData });
+  const activeSourceKeyRef = useRef<string | undefined>(sourceKey);
+  const activeChatIdRef = useRef<string | undefined>(chatId);
+  useLayoutEffect(() => {
+    activeSourceKeyRef.current = sourceKey;
+    activeChatIdRef.current = chatId;
+  }, [sourceKey, chatId]);
+  const chatScrollTargetKey = useMemo(
+    () => getChatScrollTargetKey({ sourceKey, chatId }),
+    [sourceKey, chatId]
+  );
+  const welcomeText = useContextSelector(ChatBoxContext, (v) => v.welcomeText);
+  const welcomeQuestions = useContextSelector(ChatBoxContext, (v) => v.welcomeQuestions);
+  const variableList = useContextSelector(ChatBoxContext, (v) => v.variableList);
+  const questionGuide = useContextSelector(ChatBoxContext, (v) => v.questionGuide);
+  const isChatting = useContextSelector(ChatBoxContext, (v) => v.isChatting);
+  const isRoundPending = isChatRoundPending({
+    isChatting,
+    chatGenerateStatus:
+      chatBoxData.sourceKey === sourceKey && chatBoxData.chatId === chatId
+        ? chatBoxData.chatGenerateStatus
+        : undefined,
+    lastChat: chatRecords[chatRecords.length - 1]
   });
-  const { setValue, watch } = chatForm;
-  const chatStartedWatch = watch('chatStarted');
-  const chatStarted = chatStartedWatch || chatHistories.length > 0 || variableList.length === 0;
 
-  // 滚动到底部
-  const scrollToBottom = useCallback((behavior: 'smooth' | 'auto' = 'smooth', delay = 0) => {
-    setTimeout(() => {
-      if (!ChatBoxRef.current) {
-        setTimeout(() => {
-          scrollToBottom(behavior);
-        }, 500);
-      } else {
-        ChatBoxRef.current.scrollTo({
-          top: ChatBoxRef.current.scrollHeight,
-          behavior
-        });
+  const notifyChatGenerateStatusChange = useMemoizedFn(
+    (
+      status: ChatGenerateStatusEnum,
+      options?: {
+        hasBeenRead?: boolean;
+        targetSourceKey?: string;
+        targetChatId?: string;
+        title?: string;
       }
-    }, delay);
-  }, []);
+    ) => {
+      const targetSourceKey = options?.targetSourceKey ?? sourceKey;
+      if (targetSourceKey !== sourceKey) return;
 
-  // 聊天信息生成中……获取当前滚动条位置，判断是否需要滚动到底部
-  const { run: generatingScroll } = useThrottleFn(
-    () => {
-      if (!ChatBoxRef.current) return;
-      const isBottom =
-        ChatBoxRef.current.scrollTop + ChatBoxRef.current.clientHeight + 150 >=
-        ChatBoxRef.current.scrollHeight;
+      const targetChatId = options?.targetChatId ?? chatId;
+      if (!targetChatId) return;
 
-      isBottom && scrollToBottom('auto');
-    },
-    {
-      wait: 100
+      onChatGenerateStatusChange?.({
+        sourceTarget,
+        chatId: targetChatId,
+        status,
+        hasBeenRead: options?.hasBeenRead,
+        title: options?.title
+      });
     }
   );
 
-  const generatingMessage = useCallback(
+  const markChatRead = useMemoizedFn(async (data: MarkChatReadBodyType) => {
+    if (!resolvedFeatures.markRead || !onMarkChatRead) return;
+
+    return onMarkChatRead(data);
+  });
+  const finishChatGenerateStatus = useMemoizedFn(
     ({
-      event,
-      text = '',
       status,
-      name,
-      tool,
-      autoTTSResponse,
-      variables
-    }: generatingMessageProps & { autoTTSResponse?: boolean }) => {
-      setChatHistories((state) =>
-        state.map((item, index) => {
-          if (index !== state.length - 1) return item;
-          if (item.obj !== ChatRoleEnum.AI) return item;
-
-          autoTTSResponse && splitText2Audio(formatChatValue2InputType(item.value).text || '');
-
-          const lastValue: AIChatItemValueItemType = JSON.parse(
-            JSON.stringify(item.value[item.value.length - 1])
-          );
-
-          if (event === SseResponseEventEnum.flowNodeStatus && status) {
-            return {
-              ...item,
-              status,
-              moduleName: name
-            };
-          } else if (
-            (event === SseResponseEventEnum.answer || event === SseResponseEventEnum.fastAnswer) &&
-            text
-          ) {
-            if (!lastValue || !lastValue.text) {
-              const newValue: AIChatItemValueItemType = {
-                type: ChatItemValueTypeEnum.text,
-                text: {
-                  content: text
-                }
-              };
-              return {
-                ...item,
-                value: item.value.concat(newValue)
-              };
-            } else {
-              lastValue.text.content += text;
-              return {
-                ...item,
-                value: item.value.slice(0, -1).concat(lastValue)
-              };
-            }
-          } else if (event === SseResponseEventEnum.toolCall && tool) {
-            const val: AIChatItemValueItemType = {
-              type: ChatItemValueTypeEnum.tool,
-              tools: [tool]
-            };
-            return {
-              ...item,
-              value: item.value.concat(val)
-            };
-          } else if (
-            event === SseResponseEventEnum.toolParams &&
-            tool &&
-            lastValue.type === ChatItemValueTypeEnum.tool &&
-            lastValue?.tools
-          ) {
-            lastValue.tools = lastValue.tools.map((item) => {
-              if (item.id === tool.id) {
-                item.params += tool.params;
-              }
-              return item;
-            });
-            return {
-              ...item,
-              value: item.value.slice(0, -1).concat(lastValue)
-            };
-          } else if (event === SseResponseEventEnum.toolResponse && tool) {
-            // replace tool response
-            return {
-              ...item,
-              value: item.value.map((val) => {
-                if (val.type === ChatItemValueTypeEnum.tool && val.tools) {
-                  const tools = val.tools.map((item) =>
-                    item.id === tool.id ? { ...item, response: tool.response } : item
-                  );
-                  return {
-                    ...val,
-                    tools
-                  };
-                }
-                return val;
-              })
-            };
-          } else if (event === SseResponseEventEnum.updateVariables && variables) {
-            variablesForm.reset(variables);
-          }
-
-          return item;
-        })
-      );
-      generatingScroll();
-    },
-    [generatingScroll, setChatHistories, splitText2Audio, variablesForm]
-  );
-
-  // 重置输入内容
-  const resetInputVal = useCallback(
-    ({ text = '', files = [] }: ChatBoxInputType) => {
-      if (!TextareaDom.current) return;
-      setValue('files', files);
-      setValue('input', text);
-
-      setTimeout(() => {
-        /* 回到最小高度 */
-        if (TextareaDom.current) {
-          TextareaDom.current.style.height =
-            text === '' ? textareaMinH : `${TextareaDom.current.scrollHeight}px`;
-        }
-      }, 100);
-    },
-    [setValue]
-  );
-
-  // create question guide
-  const createQuestionGuide = useCallback(
-    async ({ history }: { history: ChatSiteItemType[] }) => {
-      if (!questionGuide || chatController.current?.signal?.aborted) return;
-
-      try {
-        const abortSignal = new AbortController();
-        questionGuideController.current = abortSignal;
-
-        const result = await postQuestionGuide(
-          {
-            messages: chats2GPTMessages({ messages: history, reserveId: false }).slice(-6),
-            shareId,
-            outLinkUid,
-            teamId,
-            teamToken
-          },
-          abortSignal
-        );
-        if (Array.isArray(result)) {
-          setQuestionGuide(result);
-          setTimeout(() => {
-            scrollToBottom();
-          }, 100);
-        }
-      } catch (error) {}
-    },
-    [questionGuide, shareId, outLinkUid, teamId, teamToken, scrollToBottom]
-  );
-
-  /* Abort chat completions, questionGuide */
-  const abortRequest = useCallback(() => {
-    chatController.current?.abort('stop');
-    questionGuideController.current?.abort('stop');
-    pluginController.current?.abort('stop');
-  }, []);
-
-  /**
-   * user confirm send prompt
-   */
-  const sendPrompt = useCallback(
-    ({
-      text = '',
-      files = [],
-      history = chatHistories,
-      autoTTSResponse = false
-    }: ChatBoxInputType & {
-      autoTTSResponse?: boolean;
-      history?: ChatSiteItemType[];
+      finishedInActiveChat,
+      targetChatTarget = chatAuthTarget,
+      targetSourceKey = sourceKey,
+      targetChatId = chatId,
+      shouldUpdateChatBoxData
+    }: {
+      status: ChatGenerateStatusEnum;
+      finishedInActiveChat: boolean;
+      targetChatTarget?: ChatAuthTargetInput;
+      targetSourceKey?: string;
+      targetChatId?: string;
+      shouldUpdateChatBoxData?: (state: typeof chatBoxData) => boolean;
     }) => {
-      variablesForm.handleSubmit(
-        async (variables) => {
-          if (!onStartChat) return;
-          if (isChatting) {
-            toast({
-              title: '正在聊天中...请等待结束',
-              status: 'warning'
-            });
-            return;
-          }
+      if (!targetSourceKey || !targetChatId) return;
 
-          abortRequest();
-
-          text = text.trim();
-
-          if (!text && files.length === 0) {
-            toast({
-              title: '内容为空',
-              status: 'warning'
-            });
-            return;
-          }
-
-          // delete invalid variables， 只保留在 variableList 中的变量
-          const requestVariables: Record<string, any> = {};
-          allVariableList?.forEach((item) => {
-            requestVariables[item.key] = variables[item.key] || '';
-          });
-
-          const responseChatId = getNanoid(24);
-          questionGuideController.current?.abort('stop');
-
-          // set auto audio playing
-          if (autoTTSResponse) {
-            await startSegmentedAudio();
-            setAudioPlayingChatId(responseChatId);
-          }
-
-          const newChatList: ChatSiteItemType[] = [
-            ...history,
-            {
-              dataId: getNanoid(24),
-              obj: ChatRoleEnum.Human,
-              value: [
-                ...files.map((file) => ({
-                  type: ChatItemValueTypeEnum.file,
-                  file: {
-                    type: file.type,
-                    name: file.name,
-                    url: file.url || ''
-                  }
-                })),
-                ...(text
-                  ? [
-                      {
-                        type: ChatItemValueTypeEnum.text,
-                        text: {
-                          content: text
-                        }
-                      }
-                    ]
-                  : [])
-              ] as UserChatItemValueItemType[],
-              status: 'finish'
-            },
-            {
-              dataId: responseChatId,
-              obj: ChatRoleEnum.AI,
-              value: [
-                {
-                  type: ChatItemValueTypeEnum.text,
-                  text: {
-                    content: ''
-                  }
-                }
-              ],
-              status: 'loading'
+      setChatBoxData((state) =>
+        (shouldUpdateChatBoxData?.(state) ??
+        (state.sourceKey === targetSourceKey && state.chatId === targetChatId))
+          ? {
+              ...state,
+              chatGenerateStatus: status,
+              hasBeenRead: finishedInActiveChat
             }
-          ];
+          : state
+      );
 
-          // 插入内容
-          setChatHistories(newChatList);
-
-          // 清空输入内容
-          resetInputVal({});
-          setQuestionGuide([]);
-          scrollToBottom('smooth', 100);
-          try {
-            // create abort obj
-            const abortSignal = new AbortController();
-            chatController.current = abortSignal;
-
-            const messages = chats2GPTMessages({ messages: newChatList, reserveId: true });
-
-            const {
-              responseData,
-              responseText,
-              isNewChat = false
-            } = await onStartChat({
-              messages: messages.slice(0, -1),
-              responseChatItemId: responseChatId,
-              controller: abortSignal,
-              generatingMessage: (e) => generatingMessage({ ...e, autoTTSResponse }),
-              variables: requestVariables
-            });
-
-            isNewChatReplace.current = isNewChat;
-
-            // set finish status
-            setChatHistories((state) =>
-              state.map((item, index) => {
-                if (index !== state.length - 1) return item;
-                return {
-                  ...item,
-                  status: 'finish',
-                  responseData
-                };
-              })
-            );
-            setTimeout(() => {
-              createQuestionGuide({
-                history: newChatList.map((item, i) =>
-                  i === newChatList.length - 1
-                    ? {
-                        ...item,
-                        value: [
-                          {
-                            type: ChatItemValueTypeEnum.text,
-                            text: {
-                              content: responseText
-                            }
-                          }
-                        ]
-                      }
-                    : item
-                )
-              });
-              generatingScroll();
-              isPc && TextareaDom.current?.focus();
-            }, 100);
-
-            // tts audio
-            autoTTSResponse && splitText2Audio(responseText, true);
-          } catch (err: any) {
-            toast({
-              title: t(getErrText(err, 'core.chat.error.Chat error') as any),
-              status: 'error',
-              duration: 5000,
-              isClosable: true
-            });
-
-            if (!err?.responseText) {
-              resetInputVal({ text, files });
-              setChatHistories(newChatList.slice(0, newChatList.length - 2));
-            }
-
-            // set finish status
-            setChatHistories((state) =>
-              state.map((item, index) => {
-                if (index !== state.length - 1) return item;
-                return {
-                  ...item,
-                  status: 'finish'
-                };
-              })
-            );
-          }
-
-          autoTTSResponse && finishSegmentedAudio();
-        },
-        (err) => {
-          console.log(err);
-        }
-      )();
-    },
-    [
-      abortRequest,
-      chatHistories,
-      createQuestionGuide,
-      finishSegmentedAudio,
-      generatingMessage,
-      generatingScroll,
-      isChatting,
-      isPc,
-      onStartChat,
-      resetInputVal,
-      scrollToBottom,
-      setAudioPlayingChatId,
-      setChatHistories,
-      splitText2Audio,
-      startSegmentedAudio,
-      t,
-      toast,
-      variableList,
-      variablesForm
-    ]
-  );
-
-  // retry input
-  const retryInput = useCallback(
-    (dataId?: string) => {
-      if (!dataId || !onDelMessage) return;
-
-      return async () => {
-        setLoading(true);
-        const index = chatHistories.findIndex((item) => item.dataId === dataId);
-        const delHistory = chatHistories.slice(index);
-        try {
-          await Promise.all(
-            delHistory.map((item) => {
-              if (item.dataId) {
-                return onDelMessage({ contentId: item.dataId });
-              }
-            })
-          );
-          setChatHistories((state) => (index === 0 ? [] : state.slice(0, index)));
-
-          sendPrompt({
-            ...formatChatValue2InputType(delHistory[0].value),
-            history: chatHistories.slice(0, index)
-          });
-        } catch (error) {
-          toast({
-            status: 'warning',
-            title: getErrText(error, 'Retry failed')
-          });
-        }
-        setLoading(false);
-      };
-    },
-    [chatHistories, onDelMessage, sendPrompt, setChatHistories, setLoading, toast]
-  );
-  // delete one message(One human and the ai response)
-  const delOneMessage = useCallback(
-    (dataId?: string) => {
-      if (!dataId || !onDelMessage) return;
-      return () => {
-        setChatHistories((state) => {
-          let aiIndex = -1;
-
-          return state.filter((chat, i) => {
-            if (chat.dataId === dataId) {
-              aiIndex = i + 1;
-              onDelMessage({
-                contentId: dataId
-              });
-              return false;
-            } else if (aiIndex === i && chat.obj === ChatRoleEnum.AI && chat.dataId) {
-              onDelMessage({
-                contentId: chat.dataId
-              });
-              return false;
-            }
-            return true;
-          });
+      const syncStatus = (hasBeenRead: boolean) => {
+        notifyChatGenerateStatusChange(status, {
+          targetSourceKey,
+          targetChatId,
+          hasBeenRead
         });
       };
-    },
-    [onDelMessage, setChatHistories]
-  );
-  // admin mark
-  const onMark = useCallback(
-    (chat: ChatSiteItemType, q = '') => {
-      if (!showMarkIcon || chat.obj !== ChatRoleEnum.AI) return;
 
-      return () => {
-        if (!chat.dataId) return;
-
-        if (chat.adminFeedback) {
-          setAdminMarkData({
-            chatItemId: chat.dataId,
-            datasetId: chat.adminFeedback.datasetId,
-            collectionId: chat.adminFeedback.collectionId,
-            dataId: chat.adminFeedback.dataId,
-            q: chat.adminFeedback.q || q || '',
-            a: chat.adminFeedback.a
-          });
-        } else {
-          setAdminMarkData({
-            chatItemId: chat.dataId,
-            q,
-            a: formatChatValue2InputType(chat.value).text
-          });
-        }
-      };
-    },
-    [showMarkIcon]
-  );
-  const onAddUserLike = useCallback(
-    (chat: ChatSiteItemType) => {
-      if (
-        feedbackType !== FeedbackTypeEnum.user ||
-        chat.obj !== ChatRoleEnum.AI ||
-        chat.userBadFeedback
-      )
-        return;
-      return () => {
-        if (!chat.dataId || !chatId || !appId) return;
-
-        const isGoodFeedback = !!chat.userGoodFeedback;
-        setChatHistories((state) =>
-          state.map((chatItem) =>
-            chatItem.dataId === chat.dataId
-              ? {
-                  ...chatItem,
-                  userGoodFeedback: isGoodFeedback ? undefined : 'yes'
-                }
-              : chatItem
-          )
-        );
-        try {
-          updateChatUserFeedback({
-            appId,
-            chatId,
-            teamId,
-            teamToken,
-            chatItemId: chat.dataId,
-            shareId,
-            outLinkUid,
-            userGoodFeedback: isGoodFeedback ? undefined : 'yes'
-          });
-        } catch (error) {}
-      };
-    },
-    [appId, chatId, feedbackType, outLinkUid, setChatHistories, shareId, teamId, teamToken]
-  );
-  const onCloseUserLike = useCallback(
-    (chat: ChatSiteItemType) => {
-      if (feedbackType !== FeedbackTypeEnum.admin) return;
-      return () => {
-        if (!chat.dataId || !chatId || !appId) return;
-        setChatHistories((state) =>
-          state.map((chatItem) =>
-            chatItem.dataId === chat.dataId
-              ? { ...chatItem, userGoodFeedback: undefined }
-              : chatItem
-          )
-        );
-        updateChatUserFeedback({
-          appId,
-          teamId,
-          teamToken,
-          chatId,
-          chatItemId: chat.dataId,
-          userGoodFeedback: undefined
-        });
-      };
-    },
-    [appId, chatId, feedbackType, setChatHistories, teamId, teamToken]
-  );
-  const onAddUserDislike = useCallback(
-    (chat: ChatSiteItemType) => {
-      if (
-        feedbackType !== FeedbackTypeEnum.user ||
-        chat.obj !== ChatRoleEnum.AI ||
-        chat.userGoodFeedback
-      ) {
+      if (!finishedInActiveChat) {
+        syncStatus(false);
         return;
       }
-      if (chat.userBadFeedback) {
-        return () => {
-          if (!chat.dataId || !chatId || !appId) return;
-          setChatHistories((state) =>
-            state.map((chatItem) =>
-              chatItem.dataId === chat.dataId
-                ? { ...chatItem, userBadFeedback: undefined }
-                : chatItem
-            )
-          );
-          try {
-            updateChatUserFeedback({
-              appId,
-              chatId,
-              chatItemId: chat.dataId,
-              shareId,
-              teamId,
-              teamToken,
-              outLinkUid
-            });
-          } catch (error) {}
-        };
-      } else {
-        return () => setFeedbackId(chat.dataId);
-      }
-    },
-    [appId, chatId, feedbackType, outLinkUid, setChatHistories, shareId, teamId, teamToken]
-  );
-  const onReadUserDislike = useCallback(
-    (chat: ChatSiteItemType) => {
-      if (feedbackType !== FeedbackTypeEnum.admin || chat.obj !== ChatRoleEnum.AI) return;
-      return () => {
-        if (!chat.dataId) return;
-        setReadFeedbackData({
-          chatItemId: chat.dataId || '',
-          content: chat.userBadFeedback || ''
+
+      void markChatRead({
+        ...targetChatTarget,
+        chatId: targetChatId
+      })
+        .catch(() => {})
+        .finally(() => {
+          syncStatus(true);
         });
-      };
-    },
-    [feedbackType]
-  );
-  const onCloseCustomFeedback = useCallback(
-    (chat: ChatSiteItemType, i: number) => {
-      return (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.checked && appId && chatId && chat.dataId) {
-          closeCustomFeedback({
-            appId,
-            chatId,
-            chatItemId: chat.dataId,
-            index: i
-          });
-          // update dom
-          setChatHistories((state) =>
-            state.map((chatItem) =>
-              chatItem.obj === ChatRoleEnum.AI && chatItem.dataId === chat.dataId
-                ? {
-                    ...chatItem,
-                    customFeedbacks: chatItem.customFeedbacks?.filter((_, index) => index !== i)
-                  }
-                : chatItem
-            )
-          );
-        }
-      };
-    },
-    [appId, chatId, setChatHistories]
+    }
   );
 
-  const showEmpty = useMemo(
-    () =>
-      feConfigs?.show_emptyChat &&
-      showEmptyIntro &&
-      chatHistories.length === 0 &&
-      !variableList?.length &&
-      !welcomeText,
-    [
-      chatHistories.length,
-      feConfigs?.show_emptyChat,
-      showEmptyIntro,
-      variableList?.length,
-      welcomeText
-    ]
+  const resumeTargetAiDataId = useMemo(() => getLastAiDataId(chatRecords), [chatRecords]);
+
+  // Workflow running, there are user input or selection
+  const { interactive: lastInteractive, canSendQuery } = useMemo(
+    () => getInteractiveByHistories(chatRecords),
+    [chatRecords]
   );
-  const statusBoxData = useMemo(() => {
+
+  const { chatForm, setValue, chatStarted, chatStartedWatch, resetInputVal } = useChatInputForm({
+    sourceKey,
+    chatId,
+    chatBoxSourceKey: chatBoxData?.sourceKey,
+    chatRecordsLength: chatRecords.length,
+    chatType,
+    variableList,
+    TextareaDom
+  });
+  const createQuestionGuide = useQuestionGuide({
+    chatTarget: resolvedFeatures.inputGuide ? chatAuthTarget : undefined,
+    chatId,
+    questionGuide,
+    chatControllerRef: chatController,
+    questionGuideControllerRef: questionGuideController,
+    setQuestionGuide,
+    generatingScroll
+  });
+  const [chatGeneratingConflict, setChatGeneratingConflict] =
+    useState<ChatGeneratingConflictRecovery>();
+
+  const { abortRequest, flushGeneratingMessages, generatingMessage, sendPrompt } = useChatGenerate({
+    onStartChat,
+    isRoundPending,
+    chatControllerRef: chatController,
+    questionGuideControllerRef: questionGuideController,
+    pluginControllerRef: pluginController,
+    resumeControllerRef: resumeController,
+    resumedChatTargetRef,
+    activeSourceKeyRef,
+    activeChatIdRef,
+    TextareaDom,
+    resetInputVal,
+    setQuestionGuide,
+    createQuestionGuide,
+    scrollToBottom,
+    generatingScroll,
+    notifyChatGenerateStatusChange,
+    finishChatGenerateStatus,
+    onChatGeneratingConflict: resolvedFeatures.autoResume ? setChatGeneratingConflict : undefined
+  });
+  const requestStopChat = useMemoizedFn(async () => {
+    await requestStopAndAbortClient({
+      requestStop: () =>
+        postStopV2Chat({
+          ...chatAuthTarget,
+          chatId
+        }),
+      abortClientRequest: () => abortRequest('stop')
+    });
+  });
+  const sendPromptWithDisabledGuard = useMemoizedFn((input: ChatBoxInputType) => {
+    if (disabledSendTip) {
+      toast({
+        title: disabledSendTip,
+        status: 'warning'
+      });
+      return;
+    }
+    sendPrompt(input);
+  });
+
+  const { isRecordActionLoading, retryInput, editInput } = useChatRecordActions({
+    sendPrompt
+  });
+  const {
+    feedbackId,
+    setFeedbackId,
+    adminMarkData,
+    setAdminMarkData,
+    likeFeedbackEffect,
+    onMark,
+    onAddUserLike,
+    onAddUserDislike,
+    onCloseCustomFeedback,
+    onToggleFeedbackReadStatus,
+    onFeedbackSuccess,
+    onAdminMarkSuccess
+  } = useChatFeedbackActions({
+    feedbackType: resolvedFeatures.feedbackType,
+    enableMark: resolvedFeatures.mark,
+    chatType,
+    onTriggerRefresh
+  });
+
+  const statusBoxData = useCreation(() => {
     if (!isChatting) return;
-    const chatContent = chatHistories[chatHistories.length - 1];
+    const chatContent = chatRecords[chatRecords.length - 1];
     if (!chatContent) return;
 
     return {
-      status: chatContent.status || 'loading',
-      name: t(chatContent.moduleName || ('' as any)) || t('common:common.Loading')
+      status: chatContent.status || ChatStatusEnum.loading,
+      name: t(chatContent.moduleName || ('' as any)) || t('common:Loading')
     };
-  }, [chatHistories, isChatting, t]);
+  }, [chatRecords, isChatting, t]);
 
   // page change and abort request
   useEffect(() => {
-    isNewChatReplace.current = false;
+    // Reset local UI state when switching chats.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on chat switch
     setQuestionGuide([]);
-    return () => {
-      chatController.current?.abort('leave');
-      if (!isNewChatReplace.current) {
-        questionGuideController.current?.abort('leave');
-      }
-    };
-  }, [router.query]);
+    setChatGeneratingConflict(undefined);
+    setValue('chatStarted', false);
+    resumedChatTargetRef.current = undefined;
+    // abortRequest('leave');
 
-  // add listener
+    return () => {
+      abortRequest('leave');
+    };
+  }, [chatId, sourceKey, abortRequest, setValue]);
+
+  useEffect(() => {
+    if (
+      !shouldForceScrollAfterRecordsLoaded({
+        isChatRecordsLoaded,
+        targetKey: chatScrollTargetKey,
+        lastScrolledTargetKey: lastRecordsLoadedScrollTargetRef.current
+      })
+    ) {
+      return;
+    }
+
+    lastRecordsLoadedScrollTargetRef.current = chatScrollTargetKey;
+    scrollToBottom('auto');
+  }, [chatScrollTargetKey, isChatRecordsLoaded, scrollToBottom]);
+
+  const onChatGeneratingConflictRecovered = useMemoizedFn(() => {
+    toast({
+      title: t('chat:chat_generating_resumed'),
+      status: 'info',
+      duration: 5000
+    });
+  });
+
+  const { recoverChatGeneratingConflict } = useChatResume({
+    enableAutoResume: resolvedFeatures.autoResume,
+    isReady,
+    resumeTargetAiDataId,
+    activeSourceKeyRef,
+    activeChatIdRef,
+    resumedChatTargetRef,
+    resumeControllerRef: resumeController,
+    generatingMessage,
+    flushGeneratingMessages,
+    scrollToBottom,
+    finishChatGenerateStatus,
+    onChatGeneratingConflictRecovered
+  });
+
+  useEffect(() => {
+    if (!chatGeneratingConflict || isChatting) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- consume the one-shot recovery signal after the failed round is rolled back
+    setChatGeneratingConflict(undefined);
+    recoverChatGeneratingConflict(chatGeneratingConflict);
+  }, [chatGeneratingConflict, isChatting, recoverChatGeneratingConflict]);
+
+  const activeInteractive = lastInteractive
+    ? extractDeepestInteractive(lastInteractive)
+    : undefined;
+  const isAgentAskPending = isPendingAgentAsk(lastInteractive);
+  const canRenderChatInput =
+    onStartChat && chatStarted && active && (canSendQuery || isAgentAskPending);
+  const canSendPrompt = canRenderChatInput && !isRoundPending;
+  const canRenderScrollToBottomButton =
+    (chatType === ChatTypeEnum.chat ||
+      chatType === ChatTypeEnum.home ||
+      chatType === ChatTypeEnum.test ||
+      chatType === ChatTypeEnum.share) &&
+    isScrollToBottomButtonVisible;
+
+  // Add listener
   useEffect(() => {
     const windowMessage = ({ data }: MessageEvent<{ type: 'sendPrompt'; text: string }>) => {
       if (data?.type === 'sendPrompt' && data?.text) {
         sendPrompt({
-          text: data.text
+          text: data.text,
+          interactive: lastInteractive
         });
       }
     };
     window.addEventListener('message', windowMessage);
 
-    eventBus.on(EventNameEnum.sendQuestion, ({ text }: { text: string }) => {
-      if (!text) return;
-      sendPrompt({
-        text
-      });
-    });
+    const fn = ({ focus = false, ...e }: ChatBoxInputType & { focus?: boolean }) => {
+      if (canSendPrompt || focus) {
+        sendPrompt({
+          ...e,
+          interactive: lastInteractive
+        });
+      }
+    };
+    eventBus.on(EventNameEnum.sendQuestion, fn);
     eventBus.on(EventNameEnum.editQuestion, ({ text }: { text: string }) => {
       if (!text) return;
       resetInputVal({ text });
@@ -858,235 +514,278 @@ const ChatBox = (
       eventBus.off(EventNameEnum.sendQuestion);
       eventBus.off(EventNameEnum.editQuestion);
     };
-  }, [resetInputVal, sendPrompt]);
+  }, [isReady, resetInputVal, sendPrompt, canSendPrompt, lastInteractive]);
+
+  /** 快捷回复点击：直接发送选项文本，并保留输入框原有内容。 */
+  const handleQuickReplyClick = useMemoizedFn((text: string) => {
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
+
+    sendPromptWithDisabledGuard({
+      text: trimmedText,
+      interactive: lastInteractive
+    });
+  });
+
+  useRegisterQuickReplyClickHandler(
+    resolvedFeatures.quickReplies ? handleQuickReplyClick : undefined
+  );
+
+  // Auto send prompt
+  useDebounceEffect(
+    () => {
+      if (
+        isReady &&
+        chatBoxData?.app?.chatConfig?.autoExecute?.open &&
+        chatStarted &&
+        chatRecords.length === 0 &&
+        isChatRecordsLoaded
+      ) {
+        sendPrompt({
+          text: chatBoxData?.app?.chatConfig?.autoExecute?.defaultPrompt || 'AUTO_EXECUTE',
+          hideInUI: true,
+          interactive: lastInteractive
+        });
+      }
+    },
+    [
+      isReady,
+      chatStarted,
+      chatRecords.length,
+      isChatRecordsLoaded,
+      sendPrompt,
+      chatBoxData?.app?.chatConfig?.autoExecute
+    ],
+    {
+      wait: 1000
+    }
+  );
 
   // output data
-  useImperativeHandle(ref, () => ({
+  useImperativeHandle(ChatBoxRef, () => ({
     restartChat() {
       abortRequest();
+
+      setChatRecords([]);
       setValue('chatStarted', false);
-      scrollToBottom('smooth', 500);
     },
-    scrollToBottom,
-    sendPrompt: (question: string) => {
-      sendPrompt({
-        text: question
-      });
+    scrollToBottom(behavior = 'auto') {
+      scrollToBottom(behavior, 500);
     }
   }));
 
-  return (
-    <Flex flexDirection={'column'} h={'100%'} position={'relative'}>
-      <Script src="/js/html2pdf.bundle.min.js" strategy="lazyOnload"></Script>
-      {/* chat box container */}
-      <Box ref={ChatBoxRef} flex={'1 0 0'} h={0} w={'100%'} overflow={'overlay'} px={[4, 0]} pb={3}>
-        <Box id="chat-container" maxW={['100%', '92%']} h={'100%'} mx={'auto'}>
-          {showEmpty && <Empty />}
-          {!!welcomeText && <WelcomeBox welcomeText={welcomeText} />}
-          {/* variable input */}
-          {!!variableList?.length && (
-            <VariableInput chatStarted={chatStarted} chatForm={chatForm} />
-          )}
-          {/* chat history */}
-          <Box id={'history'}>
-            {chatHistories.map((item, index) => (
-              <Box key={item.dataId} py={5}>
-                {item.obj === ChatRoleEnum.Human && (
-                  <ChatItem
-                    type={item.obj}
-                    avatar={userAvatar}
-                    chat={item}
-                    onRetry={retryInput(item.dataId)}
-                    onDelete={delOneMessage(item.dataId)}
-                    isLastChild={index === chatHistories.length - 1}
-                  />
-                )}
-                {item.obj === ChatRoleEnum.AI && (
-                  <>
-                    <ChatItem
-                      type={item.obj}
-                      avatar={appAvatar}
-                      chat={item}
-                      isLastChild={index === chatHistories.length - 1}
-                      {...(item.obj === ChatRoleEnum.AI && {
-                        showVoiceIcon,
-                        shareId,
-                        outLinkUid,
-                        teamId,
-                        teamToken,
-                        statusBoxData,
-                        questionGuides,
-                        onMark: onMark(
-                          item,
-                          formatChatValue2InputType(chatHistories[index - 1]?.value)?.text
-                        ),
-                        onAddUserLike: onAddUserLike(item),
-                        onCloseUserLike: onCloseUserLike(item),
-                        onAddUserDislike: onAddUserDislike(item),
-                        onReadUserDislike: onReadUserDislike(item)
-                      })}
-                    >
-                      <ResponseTags
-                        flowResponses={item.responseData}
-                        showDetail={!shareId && !teamId}
-                      />
+  useVariableInputVisibility({ ScrollContainerRef, setIsVariableVisible });
 
-                      {/* custom feedback */}
-                      {item.customFeedbacks && item.customFeedbacks.length > 0 && (
-                        <Box>
-                          <ChatBoxDivider
-                            icon={'core/app/customFeedback'}
-                            text={t('common:core.app.feedback.Custom feedback')}
-                          />
-                          {item.customFeedbacks.map((text, i) => (
-                            <Box key={`${text}${i}`}>
-                              <MyTooltip
-                                label={t('common:core.app.feedback.close custom feedback')}
-                              >
-                                <Checkbox onChange={onCloseCustomFeedback(item, i)}>
-                                  {text}
-                                </Checkbox>
-                              </MyTooltip>
-                            </Box>
-                          ))}
-                        </Box>
-                      )}
-                      {/* admin mark content */}
-                      {showMarkIcon && item.adminFeedback && (
-                        <Box fontSize={'sm'}>
-                          <ChatBoxDivider
-                            icon="core/app/markLight"
-                            text={t('common:core.chat.Admin Mark Content')}
-                          />
-                          <Box whiteSpace={'pre-wrap'}>
-                            <Box color={'black'}>{item.adminFeedback.q}</Box>
-                            <Box color={'myGray.600'}>{item.adminFeedback.a}</Box>
-                          </Box>
-                        </Box>
-                      )}
-                    </ChatItem>
-                  </>
-                )}
-              </Box>
-            ))}
-          </Box>
+  // Home chat, and no chat records
+  const isHomeRender = useMemo(() => {
+    return chatType === ChatTypeEnum.home && chatRecords.length === 0 && !chatStartedWatch;
+  }, [chatType, chatRecords.length, chatStartedWatch]);
+
+  const toggleDeletedGroup = useCallback((dataIds: string[]) => {
+    setExpandedDeletedGroups((prev) => {
+      const newSet = new Set(prev);
+      // Check if all dataIds are in the set
+      const allExpanded = dataIds.every((id) => newSet.has(id));
+
+      if (allExpanded) {
+        // Collapse: remove all dataIds
+        dataIds.forEach((id) => newSet.delete(id));
+      } else {
+        // Expand: add all dataIds
+        dataIds.forEach((id) => newSet.add(id));
+      }
+
+      return newSet;
+    });
+  }, []);
+
+  // 预处理聊天记录：Log 模式下扩展 chatRecords，添加折叠信息
+  const processedRecords = useMemoEnhance(
+    () => getProcessedChatRecords({ chatType, chatRecords, expandedDeletedGroups }),
+    [chatType, chatRecords, expandedDeletedGroups]
+  );
+  const recordsListProps: ChatRecordsListProps = useMemo(
+    () => ({
+      records: processedRecords,
+      expandedDeletedGroups,
+      itemRefs,
+      enableTTS: resolvedFeatures.tts,
+      enableMark: resolvedFeatures.mark,
+      enableSandbox: resolvedFeatures.sandbox,
+      statusBoxData,
+      questionGuides,
+      onToggleDeletedGroup: toggleDeletedGroup,
+      onRetry: retryInput,
+      onEdit: editInput,
+      onMark,
+      onAddUserLike,
+      onAddUserDislike,
+      likeFeedbackEffect,
+      disableFooterHoverTranslate: resolvedFeatures.disableFooterHoverTranslate,
+      footerRunDetailPosition: resolvedFeatures.footerRunDetailPosition,
+      feedbackUserName,
+      onCloseCustomFeedback,
+      onToggleFeedbackReadStatus
+    }),
+    [
+      processedRecords,
+      expandedDeletedGroups,
+      itemRefs,
+      resolvedFeatures.tts,
+      resolvedFeatures.mark,
+      resolvedFeatures.sandbox,
+      statusBoxData,
+      questionGuides,
+      toggleDeletedGroup,
+      retryInput,
+      editInput,
+      onMark,
+      onAddUserLike,
+      onAddUserDislike,
+      likeFeedbackEffect,
+      resolvedFeatures.disableFooterHoverTranslate,
+      resolvedFeatures.footerRunDetailPosition,
+      feedbackUserName,
+      onCloseCustomFeedback,
+      onToggleFeedbackReadStatus
+    ]
+  );
+  const HomeChatInput = (
+    <>
+      {variableList.filter((item) => item.type !== VariableInputEnum.internal).length > 0 ? (
+        <Box w={'100%'}>
+          <ChatHomeVariablesForm chatForm={chatForm} />
         </Box>
-      </Box>
-      {/* message input */}
-      {onStartChat && chatStarted && active && appId && (
+      ) : (
         <ChatInput
-          onSendMessage={sendPrompt}
-          onStop={() => chatController.current?.abort('stop')}
+          onSendMessage={sendPromptWithDisabledGuard}
+          onStopChat={requestStopChat}
+          enableInputGuide={resolvedFeatures.inputGuide}
+          enableVoiceInput={resolvedFeatures.voice}
+          disableSend={isRoundPending || (!isReady && !disabledSendTip)}
           TextareaDom={TextareaDom}
           resetInputVal={resetInputVal}
-          showFileSelector={showFileSelector}
           chatForm={chatForm}
-          appId={appId}
         />
       )}
-      {/* user feedback modal */}
-      {!!feedbackId && chatId && appId && (
-        <FeedbackModal
-          appId={appId}
-          teamId={teamId}
-          teamToken={teamToken}
-          chatId={chatId}
-          chatItemId={feedbackId}
-          shareId={shareId}
-          outLinkUid={outLinkUid}
-          onClose={() => setFeedbackId(undefined)}
-          onSuccess={(content: string) => {
-            setChatHistories((state) =>
-              state.map((item) =>
-                item.dataId === feedbackId ? { ...item, userBadFeedback: content } : item
-              )
-            );
-            setFeedbackId(undefined);
-          }}
-        />
-      )}
-      {/* admin read feedback modal */}
-      {!!readFeedbackData && (
-        <ReadFeedbackModal
-          content={readFeedbackData.content}
-          onClose={() => setReadFeedbackData(undefined)}
-          onCloseFeedback={() => {
-            setChatHistories((state) =>
-              state.map((chatItem) =>
-                chatItem.dataId === readFeedbackData.chatItemId
-                  ? { ...chatItem, userBadFeedback: undefined }
-                  : chatItem
-              )
-            );
-            try {
-              if (!chatId || !appId) return;
-              updateChatUserFeedback({
-                appId,
-                chatId,
-                chatItemId: readFeedbackData.chatItemId
-              });
-            } catch (error) {}
-            setReadFeedbackData(undefined);
-          }}
-        />
-      )}
-      {/* admin mark data */}
-      {!!adminMarkData && (
-        <SelectMarkCollection
-          adminMarkData={adminMarkData}
-          setAdminMarkData={(e) => setAdminMarkData({ ...e, chatItemId: adminMarkData.chatItemId })}
-          onClose={() => setAdminMarkData(undefined)}
-          onSuccess={(adminFeedback) => {
-            if (!appId || !chatId || !adminMarkData.chatItemId) return;
-            updateChatAdminFeedback({
-              appId,
-              chatId,
-              chatItemId: adminMarkData.chatItemId,
-              ...adminFeedback
-            });
+    </>
+  );
 
-            // update dom
-            setChatHistories((state) =>
-              state.map((chatItem) =>
-                chatItem.dataId === adminMarkData.chatItemId
-                  ? {
-                      ...chatItem,
-                      adminFeedback
-                    }
-                  : chatItem
-              )
-            );
-
-            if (readFeedbackData && chatId && appId) {
-              updateChatUserFeedback({
-                appId,
-                chatId,
-                chatItemId: readFeedbackData.chatItemId,
-                userBadFeedback: undefined
-              });
-              setChatHistories((state) =>
-                state.map((chatItem) =>
-                  chatItem.dataId === readFeedbackData.chatItemId
-                    ? { ...chatItem, userBadFeedback: undefined }
-                    : chatItem
-                )
-              );
-              setReadFeedbackData(undefined);
+  return (
+    <MyBox
+      isLoading={isRecordActionLoading}
+      display={'flex'}
+      flexDirection={'column'}
+      h={'100%'}
+      position={'relative'}
+      {...props}
+    >
+      <Script src={getWebReqUrl('/js/html2pdf.bundle.min.js')} strategy="lazyOnload"></Script>
+      {/* chat box container */}
+      {isHomeRender ? (
+        <MyBox
+          isLoading={isLoadingRecords}
+          display="flex"
+          flexDirection="column"
+          flex={'1 0 0'}
+          h={0}
+          {...HomeChatContentWrapperStyle}
+        >
+          {isPc ? (
+            <DesktopHomeLayout inputSlot={HomeChatInput} />
+          ) : (
+            <MobileHomeLayout inputSlot={HomeChatInput} />
+          )}
+        </MyBox>
+      ) : (
+        <>
+          <AppChatMain
+            ScrollData={ScrollData}
+            ScrollContainerRef={ScrollContainerRef}
+            welcomeText={welcomeText}
+            welcomeQuestions={resolvedFeatures.quickReplies ? welcomeQuestions : []}
+            chatStarted={chatStarted}
+            chatForm={chatForm}
+            chatType={chatType}
+            recordsListProps={recordsListProps}
+            maxW={props.maxW}
+            boxBodyProps={boxBodyProps}
+            EmptyState={
+              chatRecords.length === 0 && isChatRecordsLoaded && !isLoadingRecords
+                ? EmptyState
+                : undefined
             }
-          }}
-        />
+          />
+          {canRenderChatInput && (
+            <Box {...ChatInputWrapperStyle} {...inputBodyProps}>
+              {resolvedFeatures.workorder && <WorkorderEntrance />}
+              <Box position="relative">
+                <ScrollToBottomButton
+                  isVisible={canRenderScrollToBottomButton}
+                  onClick={() => scrollToBottom('smooth')}
+                />
+
+                <Box display={isAgentAskPending ? 'none' : undefined}>
+                  <ChatInput
+                    onSendMessage={sendPromptWithDisabledGuard}
+                    lastInteractive={lastInteractive}
+                    onStopChat={requestStopChat}
+                    enableInputGuide={resolvedFeatures.inputGuide}
+                    enableVoiceInput={resolvedFeatures.voice}
+                    disableSend={isRoundPending}
+                    TextareaDom={TextareaDom}
+                    resetInputVal={resetInputVal}
+                    chatForm={chatForm}
+                  />
+                </Box>
+                {isAgentAskPending && activeInteractive?.type === 'agentAsk' && (
+                  <Box
+                    w={'100%'}
+                    maxW={inputBodyProps?.maxW ?? ['100%', '780px']}
+                    mx={inputBodyProps?.mx ?? inputBodyProps?.margin ?? 'auto'}
+                    pb={inputBodyProps?.pb ?? ['calc(16px + env(safe-area-inset-bottom))', 4]}
+                  >
+                    <AgentAskComposer
+                      questions={activeInteractive.params.questions}
+                      onSubmit={(answers) =>
+                        sendPromptWithDisabledGuard({
+                          text: JSON.stringify({ answers }),
+                          interactive: lastInteractive,
+                          hideInUI: true
+                        })
+                      }
+                    />
+                  </Box>
+                )}
+              </Box>
+            </Box>
+          )}
+        </>
       )}
-    </Flex>
+
+      <ChatBoxModals
+        chatId={chatId}
+        feedbackId={feedbackId}
+        adminMarkData={adminMarkData}
+        onCloseFeedback={() => setFeedbackId(undefined)}
+        onFeedbackSuccess={onFeedbackSuccess}
+        onCloseAdminMark={() => setAdminMarkData(undefined)}
+        onAdminMarkChange={setAdminMarkData}
+        onAdminMarkSuccess={onAdminMarkSuccess}
+      />
+    </MyBox>
   );
 };
-const ForwardChatBox = forwardRef(ChatBox);
+const ChatBoxContainer = (props: Props) => {
+  const resolvedFeatures = resolveChatBoxFeatures(props.features);
 
-const ChatBoxContainer = (props: Props, ref: ForwardedRef<ComponentRef>) => {
   return (
-    <ChatProvider {...props}>
-      <ForwardChatBox {...props} ref={ref} />
+    <ChatProvider {...props} enableTTS={resolvedFeatures.tts}>
+      <QuickReplyContextProvider enableQuickReplies={resolvedFeatures.quickReplies}>
+        <ChatBox {...props} />
+      </QuickReplyContextProvider>
     </ChatProvider>
   );
 };
 
-export default React.memo(forwardRef(ChatBoxContainer));
+export default React.memo(ChatBoxContainer);

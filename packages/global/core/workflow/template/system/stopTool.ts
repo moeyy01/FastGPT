@@ -1,19 +1,20 @@
 import { FlowNodeTypeEnum } from '../../node/constant';
-import { FlowNodeTemplateType } from '../../type/node';
+import { type FlowNodeTemplateType } from '../../type/node';
 import { FlowNodeTemplateTypeEnum } from '../../constants';
-import { getHandleConfig } from '../utils';
+import { i18nT } from '../../../../common/i18n/utils';
 
 export const StopToolNode: FlowNodeTemplateType = {
   id: FlowNodeTypeEnum.stopTool,
   templateType: FlowNodeTemplateTypeEnum.ai,
   flowNodeType: FlowNodeTypeEnum.stopTool,
-  sourceHandle: getHandleConfig(false, false, false, false),
-  targetHandle: getHandleConfig(true, true, true, true),
+  showSourceHandle: false,
+  showTargetHandle: true,
   avatar: 'core/workflow/template/stopTool',
-  name: '工具调用终止',
-  intro:
-    '该模块需配置工具调用使用。当该模块被执行时，本次工具调用将会强制结束，并且不再调用AI针对工具调用结果回答问题。',
-  version: '481',
+  avatarLinear: 'core/workflow/template/stopToolLinear',
+  colorSchema: 'violet',
+  name: i18nT('workflow:tool_call_termination'),
+  intro: i18nT('workflow:intro_tool_call_termination'),
+  isShowInContext: (ctx) => !!ctx && (ctx.isSidebar ? ctx.hasToolNode : !!ctx.isConnectedTool),
   inputs: [],
   outputs: []
 };

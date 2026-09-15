@@ -1,6 +1,6 @@
-@import './reactflow.scss';
-@import './default.scss';
-@import './chakraui.scss';
+@use './reactflow.scss';
+@use './default.scss';
+@use './chakraui.scss';
 
 body,
 h1,
@@ -29,31 +29,13 @@ svg {
   margin: 0;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(189, 193, 197, 0.7);
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(189, 193, 197, 1);
+* {
+  scrollbar-color: rgba(189, 193, 197, 0.7) transparent;
+  scrollbar-width: auto;
 }
 
-div {
-  &::-webkit-scrollbar-thumb {
-    background: rgba(189, 193, 197, 0.7) !important;
-    transition: background 1s;
-  }
-
-  &::-webkit-scrollbar-thumb:hover {
-    background: rgba(189, 193, 197, 1) !important;
-  }
+:root {
+  --lexical-indent-base-value: 24px;
 }
 
 input::placeholder,
@@ -75,10 +57,6 @@ textarea::placeholder {
 @media (max-width: 900px) {
   html {
     font-size: 14px;
-  }
-  ::-webkit-scrollbar {
-    width: 2px;
-    height: 2px;
   }
 }
 

@@ -1,0 +1,47 @@
+import { NextAPI } from '@/service/middleware/entry';
+import type { ApiRequestProps, ApiResponseType } from '@fastgpt/next/type';
+import { getLocale } from '@fastgpt/service/common/middle/i18n';
+import { authSystemAdmin } from '@fastgpt/service/support/permission/user/auth';
+import type {
+  GetAdminSystemToolDetailQueryType,
+  GetAdminSystemToolDetailResponseType
+} from '@fastgpt/global/openapi/core/plugin/admin/tool/api';
+import { GetAdminSystemToolDetailQuerySchema } from '@fastgpt/global/openapi/core/plugin/admin/tool/api';
+import { SystemToolRepo } from '@fastgpt/service/core/app/tool/systemTool/systemTool.repo';
+import type { AdminSystemToolDetailType } from '@fastgpt/global/core/app/tool/systemTool/type';
+import { AdminSystemToolDetailSchema } from '@fastgpt/global/core/app/tool/systemTool/type';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+
+export type getSystemToolDetailQuery = GetAdminSystemToolDetailQueryType;
+
+export type getSystemToolDetailBody = Record<string, never>;
+
+export type getSystemToolsResponse = GetAdminSystemToolDetailResponseType;
+
+async function handler(
+  req: ApiRequestProps<getSystemToolDetailBody, getSystemToolDetailQuery>,
+  _res: ApiResponseType<any>
+): Promise<getSystemToolsResponse> {
+  const { toolId, version } = parseApiInput({
+    req,
+    querySchema: GetAdminSystemToolDetailQuerySchema
+  }).query;
+  const lang = getLocale(req);
+
+  await authSystemAdmin({ req });
+
+  const systemToolRepo = SystemToolRepo.getInstance();
+  const tool = await systemToolRepo.getSystemToolDetail({
+    pluginId: toolId,
+    lang,
+    source: 'system',
+    version,
+    maskSecrets: true
+  });
+
+  return AdminSystemToolDetailSchema.parse({
+    ...tool
+  } satisfies AdminSystemToolDetailType);
+}
+
+export default NextAPI(handler);

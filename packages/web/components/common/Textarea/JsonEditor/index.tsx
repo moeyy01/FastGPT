@@ -1,12 +1,13 @@
-import React, { useEffect, useCallback, useRef, useState } from 'react';
-import Editor, { Monaco, loader, useMonaco } from '@monaco-editor/react';
-import { Box, BoxProps } from '@chakra-ui/react';
+import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
+import Editor, { type Monaco, loader, useMonaco } from '@monaco-editor/react';
+import { Box, type BoxProps } from '@chakra-ui/react';
 import MyIcon from '../../Icon';
 import { useToast } from '../../../../hooks/useToast';
 import { useTranslation } from 'next-i18next';
+import { getWebReqUrl } from '../../../../common/system/utils';
 
 loader.config({
-  paths: { vs: '/js/monaco-editor.0.45.0/vs' }
+  paths: { vs: getWebReqUrl('/js/monaco-editor.0.45.0/vs') }
 });
 
 type EditorVariablePickerType = {
@@ -24,7 +25,10 @@ type Props = Omit<BoxProps, 'resize' | 'onChange'> & {
   defaultHeight?: number;
   placeholder?: string;
   isDisabled?: boolean;
+  readOnly?: boolean;
   isInvalid?: boolean;
+  /** 提交入口统一展示校验错误时可关闭失焦提示，避免同一次提交产生重复 Toast。 */
+  validateOnBlur?: boolean;
 };
 
 const options = {
@@ -46,11 +50,14 @@ const options = {
   scrollBeyondLastLine: false,
   folding: false,
   overviewRulerBorder: false,
-  tabSize: 2
+  tabSize: 2,
+  padding: {
+    top: 8,
+    bottom: 8
+  }
 };
 
 const JSONEditor = ({
-  defaultValue,
   value,
   onChange,
   resize,
@@ -58,7 +65,9 @@ const JSONEditor = ({
   placeholder,
   defaultHeight = 100,
   isDisabled = false,
+  readOnly = false,
   isInvalid = false,
+  validateOnBlur = true,
   ...props
 }: Props) => {
   const { toast } = useToast();
@@ -69,6 +78,7 @@ const JSONEditor = ({
   const completionRegisterRef = useRef<any>();
   const monaco = useMonaco();
   const triggerChar = useRef<string>();
+  const monarchProviderRegistered = useRef<boolean>(false);
 
   useEffect(() => {
     if (!monaco) return;
@@ -129,22 +139,6 @@ const JSONEditor = ({
       }
     });
 
-    // 自定义语法高亮
-    monaco.languages.setMonarchTokensProvider('json', {
-      tokenizer: {
-        root: [
-          // 匹配variables里的变量
-          [new RegExp(`{{(${variables.map((item) => item.key).join('|')})}}`), 'variable'],
-          [/".*?"/, 'string'], // 匹配字符串
-          [/[{}\[\]]/, '@brackets'], // 匹配括号
-          [/[0-9]+/, 'number'], // 匹配数字
-          [/true|false/, 'keyword'], // 匹配布尔值
-          [/:/, 'delimiter'], // 匹配冒号
-          [/,/, 'delimiter.comma'] // 匹配逗号
-        ]
-      }
-    });
-
     return () => {
       completionRegisterRef.current?.dispose();
     };
@@ -168,63 +162,120 @@ const JSONEditor = ({
     document.addEventListener('mouseup', handleMouseUp);
   }, []);
 
+  const formatedValue = useMemo(() => {
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (value === undefined || value === null) {
+      return '';
+    }
+
+    if (typeof value === 'object') {
+      return JSON.stringify(value, null, 2);
+    }
+
+    return String(value);
+  }, [value]);
+
   const onBlur = useCallback(() => {
-    if (!value) return;
+    if (!validateOnBlur || !formatedValue) return;
     // replace {{xx}} to true
-    const replaceValue = value?.replace(/{{(.*?)}}/g, 'true');
+    const replaceValue = formatedValue?.replace(/{{(.*?)}}/g, 'true');
     try {
       JSON.parse(replaceValue);
-    } catch (error) {
+    } catch {
       toast({
         status: 'warning',
-        title: t('common:common.jsonEditor.Parse error')
+        title: t('common:json_parse_error')
       });
     }
-  }, [value]);
-  const beforeMount = useCallback((monaco: Monaco) => {
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-      validate: false,
-      allowComments: false,
-      schemas: [
-        {
-          uri: 'http://myserver/foo-schema.json', // 一个假设的 URI
-          fileMatch: ['*'], // 匹配所有文件
-          schema: {} // 空的 Schema
-        }
-      ]
-    });
+  }, [formatedValue, toast, t, validateOnBlur]);
 
-    monaco.editor.defineTheme('JSONEditorTheme', {
-      base: 'vs', // 可以基于已有的主题进行定制
-      inherit: true, // 继承基础主题的设置
-      rules: [{ token: 'variable', foreground: '2B5FD9' }],
-      colors: {
-        'editor.background': '#ffffff00',
-        'editorLineNumber.foreground': '#aaa',
-        'editorOverviewRuler.border': '#ffffff00',
-        'editor.lineHighlightBackground': '#F7F8FA',
-        'scrollbarSlider.background': '#E8EAEC',
-        'editorIndentGuide.activeBackground': '#ddd',
-        'editorIndentGuide.background': '#eee'
+  const beforeMount = useCallback(
+    (monaco: Monaco) => {
+      // 配置 JSON 语言诊断选项
+      monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+        validate: false,
+        allowComments: false,
+        schemas: [
+          {
+            uri: 'http://myserver/foo-schema.json', // 一个假设的 URI
+            fileMatch: ['*'], // 匹配所有文件
+            schema: {} // 空的 Schema
+          }
+        ]
+      });
+
+      // 定义自定义主题
+      monaco.editor.defineTheme('JSONEditorTheme', {
+        base: 'vs', // 可以基于已有的主题进行定制
+        inherit: true, // 继承基础主题的设置
+        rules: [{ token: 'variable', foreground: '2B5FD9' }],
+        colors: {
+          'editor.background': '#ffffff00',
+          'editorLineNumber.foreground': '#aaa',
+          'editorOverviewRuler.border': '#ffffff00',
+          'editor.lineHighlightBackground': '#F7F8FA',
+          'scrollbarSlider.background': '#E8EAEC',
+          'editorIndentGuide.activeBackground': '#ddd',
+          'editorIndentGuide.background': '#eee'
+        }
+      });
+
+      // 注册自定义语法高亮（仅注册一次）
+      if (!monarchProviderRegistered.current) {
+        try {
+          monaco.languages.setMonarchTokensProvider('json', {
+            tokenizer: {
+              root: [
+                // 匹配variables里的变量
+                [new RegExp(`{{(${variables.map((item) => item.key).join('|')})}}`), 'variable'],
+                [/".*?"/, 'string'], // 匹配字符串
+                [/[{}\[\]]/, '@brackets'], // 匹配括号
+                [/[0-9]+/, 'number'], // 匹配数字
+                [/true|false/, 'keyword'], // 匹配布尔值
+                [/:/, 'delimiter'], // 匹配冒号
+                [/,/, 'delimiter.comma'] // 匹配逗号
+              ]
+            }
+          });
+          monarchProviderRegistered.current = true;
+        } catch (error) {
+          console.warn('Failed to register Monaco Monarch token provider:', error);
+        }
       }
-    });
-  }, []);
+    },
+    [variables]
+  );
 
   return (
     <Box
-      borderWidth={isInvalid ? '2px' : '1px'}
-      borderRadius={'md'}
+      borderWidth={'1px'}
+      borderRadius={'sm'}
       borderColor={isInvalid ? 'red.500' : 'myGray.200'}
-      py={2}
       height={height}
       position={'relative'}
+      transition={'border-color 0.3s ease-in-out, box-shadow 0.3s ease-in-out'}
+      _focusWithin={
+        isInvalid
+          ? {
+              borderColor: 'red.500',
+              boxShadow: '0px 0px 0px 2.4px rgba(244, 69, 46, 0.15)'
+            }
+          : {
+              borderColor: 'primary.600',
+              boxShadow: '0px 0px 0px 2.4px rgba(51, 112, 255, 0.15)',
+              bg: 'white'
+            }
+      }
       {...props}
     >
       {resize && (
         <Box
           position={'absolute'}
-          right={'0'}
-          bottom={'0'}
+          right={'-2'}
+          bottom={'-3'}
           zIndex={10}
           cursor={'ns-resize'}
           px={'4px'}
@@ -236,11 +287,10 @@ const JSONEditor = ({
       <Editor
         height={'100%'}
         defaultLanguage="json"
-        options={options as any}
+        options={{ ...options, readOnly } as any}
         theme="JSONEditorTheme"
         beforeMount={beforeMount}
-        defaultValue={defaultValue}
-        value={value}
+        value={formatedValue}
         onChange={(e) => {
           onChange?.(e || '');
           if (!e) {
@@ -252,11 +302,23 @@ const JSONEditor = ({
         wrapperProps={{
           onBlur
         }}
-        onMount={() => {
+        onMount={(editor) => {
           if (!value) {
             setPlaceholderDisplay('block');
           } else {
             setPlaceholderDisplay('none');
+          }
+
+          // Prevent browser autofill from causing getModifierState errors
+          const editorDom = editor.getDomNode();
+          if (editorDom) {
+            const textarea = editorDom.querySelector('textarea');
+            if (textarea) {
+              textarea.setAttribute('autocomplete', 'off');
+              textarea.setAttribute('autocorrect', 'off');
+              textarea.setAttribute('autocapitalize', 'off');
+              textarea.setAttribute('spellcheck', 'false');
+            }
           }
         }}
       />
@@ -268,9 +330,25 @@ const JSONEditor = ({
         fontSize={'xs'}
         color={'myGray.500'}
         display={placeholderDisplay}
+        whiteSpace={'pre-wrap'}
+        pointerEvents={'none'}
+        userSelect={'none'}
       >
         {placeholder}
       </Box>
+      {isDisabled && (
+        <Box
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          bg="rgba(255, 255, 255, 0.4)"
+          borderRadius="sm"
+          zIndex={1}
+          cursor="not-allowed"
+        />
+      )}
     </Box>
   );
 };

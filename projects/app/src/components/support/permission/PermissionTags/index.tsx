@@ -1,34 +1,34 @@
 import React, { useMemo } from 'react';
 import { Permission } from '@fastgpt/global/support/permission/controller';
-import { PermissionListType } from '@fastgpt/global/support/permission/type';
-import { PermissionList } from '@fastgpt/global/support/permission/constant';
+import type { RoleListType } from '@fastgpt/global/support/permission/type';
 import MyTag from '@fastgpt/web/components/common/Tag/index';
 import { HStack } from '@chakra-ui/react';
-import { useTranslation } from 'next-i18next';
+import { useClientTranslation } from '@fastgpt/web/i18n/useClientTranslation';
+import { CommonRoleList } from '@fastgpt/global/support/permission/constant';
 
 const PermissionTag = ({
   permission,
-  permissionList
+  roleList: roleList
 }: {
   permission: Permission;
-  permissionList: PermissionListType;
+  roleList: RoleListType;
 }) => {
-  const { t } = useTranslation();
+  const { t } = useClientTranslation();
 
   const { commonLabel, otherLabels } = useMemo(() => {
-    const Per = new Permission({ per: permission.value });
+    const Per = new Permission({ role: permission.role });
 
     const commonLabel = (() => {
       if (permission.isOwner) return t('common:permission.Owner');
-      if (permission.hasManagePer) return PermissionList['manage'].name;
-      if (permission.hasWritePer) return PermissionList['write'].name;
-      if (permission.hasReadPer) return PermissionList['read'].name;
+      if (permission.hasManagePer) return t(CommonRoleList['manage'].name as any);
+      if (permission.hasWritePer) return t(CommonRoleList['write'].name as any);
+      if (permission.hasReadPer) return t(CommonRoleList['read'].name as any);
 
       return;
     })();
 
     const otherLabels: string[] = [];
-    Object.values(permissionList).forEach((item) => {
+    Object.values(roleList).forEach((item) => {
       if (item.checkBoxType === 'multiple') {
         if (Per.checkPer(item.value)) {
           otherLabels.push(item.name);
@@ -44,8 +44,10 @@ const PermissionTag = ({
     permission.hasManagePer,
     permission.hasReadPer,
     permission.hasWritePer,
-    permission.value,
-    permissionList
+    permission.isOwner,
+    permission.role,
+    roleList,
+    t
   ]);
   return (
     <HStack>

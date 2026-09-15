@@ -1,0 +1,34 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@fastgpt-sdk/storage/access-link": ["../sdk/storage/src/access-link/index.ts"],
+      "@fastgpt-sdk/storage": ["../sdk/storage/src/index.ts"],
+      "@fastgpt-sdk/otel": ["../sdk/otel/src/index.ts"],
+      "@fastgpt-sdk/otel/logger": ["../sdk/otel/src/logger-entry.ts"],
+      "@fastgpt-sdk/otel/metrics": ["../sdk/otel/src/metrics-entry.ts"],
+      "@fastgpt-sdk/otel/tracing": ["../sdk/otel/src/tracing-entry.ts"],
+      "@fastgpt/*": ["../packages/*"],
+      "@test/*": ["./*"],
+      "@/*": ["../projects/app/src/*"]
+    },
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../packages/**/*.ts",
+    "../packages/**/*.tsx",
+    "../packages/**/*.d.ts",
+    "../projects/app/src/**/*.ts",
+    "../projects/app/src/**/*"
+  ],
+  "exclude": ["node_modules", "../node_modules", "dist", "../dist"]
+}

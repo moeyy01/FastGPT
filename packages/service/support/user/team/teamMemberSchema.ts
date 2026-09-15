@@ -1,13 +1,13 @@
-import { connectionMongo, getMongoModel } from '../../../common/mongo';
+import { defineIndex, connectionMongo, getMongoModel } from '../../../common/mongo';
 const { Schema } = connectionMongo;
-import { TeamMemberSchema as TeamMemberType } from '@fastgpt/global/support/user/team/type.d';
+import { type TeamMemberSchema as TeamMemberType } from '@fastgpt/global/support/user/team/type';
 import { userCollectionName } from '../../user/schema';
 import {
-  TeamMemberRoleMap,
   TeamMemberStatusMap,
   TeamMemberCollectionName,
   TeamCollectionName
 } from '@fastgpt/global/support/user/team/constant';
+import { getRandomUserAvatar } from '@fastgpt/global/support/user/utils';
 
 const TeamMemberSchema = new Schema({
   teamId: {
@@ -20,13 +20,15 @@ const TeamMemberSchema = new Schema({
     ref: userCollectionName,
     required: true
   },
+  avatar: {
+    type: String,
+    default: () => getRandomUserAvatar()
+  },
   name: {
     type: String,
+    required: true,
+    trim: true,
     default: 'Member'
-  },
-  role: {
-    type: String
-    // enum: Object.keys(TeamMemberRoleMap) // disable enum validation for old data
   },
   status: {
     type: String,
@@ -36,18 +38,51 @@ const TeamMemberSchema = new Schema({
     type: Date,
     default: () => new Date()
   },
+  updateTime: {
+    type: Date
+  },
+
+  /** @deprecated
+   * But some code still use this to judge whether the member is a owner.
+   * TODO: Remove this field and replace it with a more appropriate way to determine ownership.
+   */
+  role: {
+    type: String
+  },
+  /** @deprecated */
   defaultTeam: {
-    type: Boolean,
-    default: false
+    type: Boolean
   }
 });
 
-try {
-  TeamMemberSchema.index({ teamId: 1 }, { background: true });
-  TeamMemberSchema.index({ userId: 1 }, { background: true });
-} catch (error) {
-  console.log(error);
-}
+TeamMemberSchema.virtual('team', {
+  ref: TeamCollectionName,
+  localField: 'teamId',
+  foreignField: '_id',
+  justOne: true
+});
+TeamMemberSchema.virtual('user', {
+  ref: userCollectionName,
+  localField: 'userId',
+  foreignField: '_id',
+  justOne: true
+});
+
+defineIndex(TeamMemberSchema, {
+  key: { teamId: 1 },
+  options: { background: true }
+});
+
+defineIndex(TeamMemberSchema, {
+  key: { userId: 1, teamId: 1 },
+  options: { unique: true, background: true }
+});
+
+defineIndex(TeamMemberSchema, {
+  key: { userId: 1 },
+  deprecated: true,
+  options: { background: true }
+});
 
 export const MongoTeamMember = getMongoModel<TeamMemberType>(
   TeamMemberCollectionName,

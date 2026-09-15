@@ -1,0 +1,249 @@
+import AccountContainer from '@/pageComponents/account/AccountContainer';
+import { Box, Flex, Grid, Progress, useDisclosure } from '@chakra-ui/react';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import { useClientTranslation } from '@fastgpt/web/i18n/useClientTranslation';
+import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { TeamMemberRoleEnum } from '@fastgpt/global/support/user/team/constant';
+import dynamic from 'next/dynamic';
+import { useState, useMemo } from 'react';
+import WorkflowVariableModal from '@/pageComponents/account/thirdParty/WorkflowVariableModal';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { GET } from '@/web/common/api/request';
+import type { checkUsageResponse } from '@/pages/api/support/user/team/thirtdParty/checkUsage';
+import MyBox from '@fastgpt/web/components/common/MyBox';
+import {
+  accountContentScrollStyles,
+  accountPageRootStyles,
+  accountTitleTextStyles
+} from '@/pageComponents/account/styles';
+
+const OpenAIAccountModal = dynamic(
+  () => import('@/pageComponents/account/thirdParty/OpenAIAccountModal')
+);
+
+export type ThirdPartyAccountType = {
+  name: string;
+  icon: string;
+  iconColor?: string;
+  key?: string;
+  intro: string;
+  onClick?: () => void;
+  isOpen?: boolean;
+  active: boolean;
+  usage?: {
+    used: number;
+    total: number;
+  };
+};
+
+const ThirdParty = () => {
+  const { t } = useClientTranslation('account_thirdParty');
+  const { feConfigs } = useSystemStore();
+  const { toast } = useToast();
+  const { isOpen: isOpenOpenai, onClose: onCloseOpenai, onOpen: onOpenOpenai } = useDisclosure();
+
+  const [workflowVariable, setWorkflowVariable] = useState<ThirdPartyAccountType>();
+
+  const { userInfo } = useUserStore();
+
+  const isOwner = userInfo?.team?.role === TeamMemberRoleEnum.owner;
+
+  const defaultAccountList: ThirdPartyAccountType[] = useMemo(
+    () => [
+      {
+        name: t('account_thirdParty:openai_account_configuration'),
+        iconColor: 'black',
+        icon: 'common/openai',
+        intro: t('account_thirdParty:open_api_notice'),
+        onClick: onOpenOpenai,
+        isOpen: feConfigs?.show_openai_account,
+        active: userInfo?.team?.openaiAccount?.key !== undefined
+      }
+    ],
+    [feConfigs?.show_openai_account, onOpenOpenai, t, userInfo?.team?.openaiAccount?.key]
+  );
+
+  const { data: workflowVariables = [], loading } = useRequest(
+    async (): Promise<ThirdPartyAccountType[]> => {
+      return Promise.all(
+        (feConfigs?.externalProviderWorkflowVariables || []).map(async (item) => {
+          const usage = await (async () => {
+            try {
+              return await GET<checkUsageResponse>('/support/user/team/thirtdParty/checkUsage', {
+                key: item.key
+              });
+            } catch {
+              return;
+            }
+          })();
+
+          const account = {
+            key: item.key,
+            name: item.name,
+            active: userInfo?.team?.externalWorkflowVariables?.[item.key] !== undefined,
+            icon: 'common/variable',
+            iconColor: 'primary.600',
+            intro: item.intro || t('account_thirdParty:no_intro')
+          };
+
+          return {
+            ...account,
+            usage,
+            onClick: () => setWorkflowVariable(account),
+            isOpen: item.isOpen
+          };
+        })
+      );
+    },
+    {
+      manual: false,
+      refreshDeps: [
+        feConfigs?.externalProviderWorkflowVariables,
+        userInfo?.team?.externalWorkflowVariables
+      ]
+    }
+  );
+
+  const accountList = useMemo(
+    () => [...defaultAccountList, ...workflowVariables],
+    [defaultAccountList, workflowVariables]
+  );
+
+  return (
+    <AccountContainer>
+      <MyBox
+        isLoading={loading}
+        bg={'white'}
+        {...accountPageRootStyles}
+        display={'flex'}
+        flexDirection={'column'}
+      >
+        <Flex
+          display={['none', 'flex']}
+          h={'64px'}
+          flexShrink={0}
+          px={[4, 6]}
+          alignItems={'center'}
+          borderBottom={'1px solid'}
+          borderColor={'myGray.200'}
+        >
+          <Box as={'h1'} {...accountTitleTextStyles}>
+            {t('account_thirdParty:third_party_account')}
+          </Box>
+        </Flex>
+        <Grid
+          gridTemplateColumns={[
+            '1fr',
+            'repeat(2,1fr)',
+            'repeat(3,1fr)',
+            'repeat(3,1fr)',
+            'repeat(4,1fr)'
+          ]}
+          gridGap={4}
+          alignItems={'stretch'}
+          alignContent={'flex-start'}
+          {...accountContentScrollStyles}
+          p={[4, 6]}
+        >
+          {accountList
+            .filter((item) => item.isOpen)
+            .map((item) => (
+              <Flex
+                key={item.name}
+                flexDirection={'column'}
+                border={'1px solid'}
+                borderColor={'myGray.200'}
+                pt={4}
+                px={5}
+                borderRadius={'10px'}
+                h={'146px'}
+                cursor={'pointer'}
+                _hover={{
+                  borderColor: 'primary.600'
+                }}
+                onClick={
+                  isOwner
+                    ? item.onClick
+                    : () =>
+                        toast({
+                          title: t('account_thirdParty:error.no_permission'),
+                          status: 'warning'
+                        })
+                }
+                position={'relative'}
+              >
+                <Flex>
+                  <MyIcon name={item.icon as any} w={'24px'} color={item.iconColor} />
+                  <Box ml={2} flex={1} fontWeight={'medium'} fontSize={'16px'} color={'myGray.900'}>
+                    {item.name}
+                  </Box>
+                  <Box
+                    color={item.active ? 'green.600' : 'myGray.700'}
+                    bg={item.active ? 'green.50' : 'myGray.100'}
+                    px={2}
+                    py={1}
+                    borderRadius={'sm'}
+                    fontSize={'10px'}
+                  >
+                    {item.active
+                      ? t('account_thirdParty:configured')
+                      : t('account_thirdParty:not_configured')}
+                  </Box>
+                </Flex>
+                <Box
+                  className="textEllipsis2"
+                  mt={3}
+                  fontSize={'mini'}
+                  color={'myGray.500'}
+                  lineHeight={'18px'}
+                >
+                  {item.intro}
+                </Box>
+                <Box flex={1} />
+                {item.active && item.usage && (
+                  <Box w={'full'} mb={4}>
+                    <Flex fontSize={'mini'} color={'myGray.500'}>
+                      <Box>{t('account_thirdParty:usage')}</Box>
+                      {item.usage?.total ? (
+                        <Box ml={1}>
+                          {item.usage.used}/{item.usage.total}
+                        </Box>
+                      ) : (
+                        <Box ml={1}>{t('account_thirdParty:unavailable')}</Box>
+                      )}
+                    </Flex>
+                    <Box mt={1} w={'full'}>
+                      <Progress
+                        size={'sm'}
+                        value={(item.usage.used / item.usage.total) * 100}
+                        colorScheme={'blue'}
+                        borderRadius={'md'}
+                        borderWidth={'1px'}
+                        borderColor={'low'}
+                        isAnimated
+                        hasStripe
+                      />
+                    </Box>
+                  </Box>
+                )}
+              </Flex>
+            ))}
+        </Grid>
+      </MyBox>
+
+      {isOpenOpenai && userInfo && (
+        <OpenAIAccountModal defaultData={userInfo?.team?.openaiAccount} onClose={onCloseOpenai} />
+      )}
+      {workflowVariable && (
+        <WorkflowVariableModal
+          defaultData={workflowVariable}
+          onClose={() => setWorkflowVariable(undefined)}
+        />
+      )}
+    </AccountContainer>
+  );
+};
+
+export default ThirdParty;

@@ -1,0 +1,201 @@
+import { MongoChatItem } from './chatItemSchema';
+import { MongoChat } from './chatSchema';
+import { axios } from '../../common/api/axios';
+import {
+  type AIChatItemType,
+  type ChatItemDBSchemaType,
+  type UserChatItemType
+} from '@fastgpt/global/core/chat/type';
+import { getLogger, LogCategories } from '../../common/logger';
+import { serviceEnv } from '../../env';
+import { getChatItemResponseData } from './nodeResponseStorage';
+import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { buildChatSourceQuery } from './source';
+
+const logger = getLogger(LogCategories.MODULE.CHAT.RECORD);
+
+export type Metadata = {
+  [key: string]: {
+    label: string;
+    value: string;
+  };
+};
+
+export const pushChatLog = ({
+  chatId,
+  chatItemIdHuman,
+  chatItemIdAi,
+  appId,
+  metadata
+}: {
+  chatId: string;
+  chatItemIdHuman: string;
+  chatItemIdAi: string;
+  appId: string;
+  metadata?: Metadata;
+}) => {
+  const interval = serviceEnv.CHAT_LOG_INTERVAL;
+  const url = serviceEnv.CHAT_LOG_URL;
+  if (interval && interval > 0 && url) {
+    logger.debug('Chat log push scheduled', {
+      intervalMs: interval,
+      appId,
+      chatItemIdHuman,
+      chatItemIdAi
+    });
+    setTimeout(() => {
+      pushChatLogInternal({ chatId, chatItemIdHuman, chatItemIdAi, appId, url, metadata });
+    }, interval);
+  }
+};
+
+type ChatLog = {
+  title: string;
+  feedback: 'like' | 'dislike' | null;
+  chatItemId: string;
+  uid: string;
+  question: string;
+  answer: string;
+  chatId: string;
+  responseTime: number;
+  metadata: string;
+  sourceName: string;
+  createdAt: number;
+  sourceId: string;
+};
+
+const pushChatLogInternal = async ({
+  chatId,
+  chatItemIdHuman,
+  chatItemIdAi,
+  appId,
+  url,
+  metadata
+}: {
+  chatId: string;
+  chatItemIdHuman: string;
+  chatItemIdAi: string;
+  appId: string;
+  url: string;
+  metadata?: Metadata;
+}) => {
+  try {
+    const [chatItemHuman, chatItemAi] = await Promise.all([
+      MongoChatItem.findById(chatItemIdHuman).lean() as Promise<
+        (UserChatItemType & ChatItemDBSchemaType) | null
+      >,
+      MongoChatItem.findById(chatItemIdAi).lean() as Promise<
+        (AIChatItemType & ChatItemDBSchemaType) | null
+      >
+    ]);
+
+    if (!chatItemHuman || !chatItemAi) {
+      return;
+    }
+
+    const chat = await MongoChat.findOne({
+      ...buildChatSourceQuery({ sourceType: ChatSourceTypeEnum.app, sourceId: appId }),
+      chatId
+    }).lean();
+
+    if (!chat) {
+      return;
+    }
+
+    const metadataString = JSON.stringify(metadata ?? {});
+
+    const uid = chat.outLinkUid || chat.tmbId;
+    // Pop last two items
+    const question = chatItemHuman.value
+      .map((item) => {
+        if (item.text) {
+          return item.text?.content;
+        } else if (item.file) {
+          if (item.file?.type === 'image') {
+            return `![${item.file?.name}](${item.file?.url})`;
+          }
+          return `[${item.file?.name}](${item.file?.url})`;
+        }
+        return '';
+      })
+      .join('\n');
+    const answer = chatItemAi.value
+      .map((item) => {
+        const text = [];
+        if (item.text?.content) {
+          text.push(item.text?.content);
+        }
+        if (item.tools) {
+          text.push(
+            item.tools.map(
+              (tool) =>
+                `\`\`\`json
+${JSON.stringify(
+  {
+    name: tool.toolName,
+    params: tool.params,
+    response: tool.response
+  },
+  null,
+  2
+)}
+\`\`\``
+            )
+          );
+        }
+        if (item.interactive) {
+          text.push(`\`\`\`json
+${JSON.stringify(item.interactive, null, 2)}
+            \`\`\``);
+        }
+        return text.join('\n');
+      })
+      .join('\n');
+
+    if (!question || !answer) {
+      logger.error('Chat log push payload is empty', {
+        chatId,
+        question: chatItemHuman.value,
+        answer: chatItemAi.value
+      });
+      return;
+    }
+
+    const responseData = await getChatItemResponseData({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: appId,
+      chatId,
+      chatItemDataId: chatItemAi.dataId
+    });
+    const responseTime = responseData.reduce((acc, item) => acc + (item?.runningTime ?? 0), 0) || 0;
+
+    const sourceIdPrefix = serviceEnv.CHAT_LOG_SOURCE_ID_PREFIX;
+
+    const chatLog: ChatLog = {
+      title: chat.title,
+      feedback: (() => {
+        if (chatItemAi.userGoodFeedback) {
+          return 'like';
+        } else if (chatItemAi.userBadFeedback) {
+          return 'dislike';
+        } else {
+          return null;
+        }
+      })(),
+      chatItemId: `${chatItemIdHuman},${chatItemIdAi}`,
+      uid,
+      question,
+      answer,
+      chatId,
+      responseTime: responseTime * 1000,
+      metadata: metadataString,
+      sourceName: chat.source ?? '-',
+      // @ts-ignore
+      createdAt: new Date(chatItemAi.time).getTime(),
+      sourceId: `${sourceIdPrefix}${appId}`
+    };
+    await axios.post(`${url}/api/chat/push`, chatLog);
+  } catch (e) {
+    logger.error('Chat log push failed', { chatId, error: e });
+  }
+};

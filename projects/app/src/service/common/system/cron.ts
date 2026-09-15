@@ -1,18 +1,23 @@
 import { setCron } from '@fastgpt/service/common/system/cron';
 import { startTrainingQueue } from '@/service/core/dataset/training/utils';
 import { clearTmpUploadFiles } from '@fastgpt/service/common/file/utils';
-import { checkInvalidDatasetFiles, checkInvalidDatasetData, checkInvalidVector } from './cronTask';
+import { checkInvalidDatasetData, checkInvalidVector } from './cronTask';
 import { checkTimerLock } from '@fastgpt/service/common/system/timerLock/utils';
 import { TimerIdEnum } from '@fastgpt/service/common/system/timerLock/constants';
 import { addHours } from 'date-fns';
 import { getScheduleTriggerApp } from '@/service/core/app/utils';
+import { runSandboxArchiveCron as sandboxCronJob } from '@fastgpt/service/core/ai/sandbox/interface/admin';
+import { clearExpiredS3FilesCron } from '@fastgpt/service/common/s3/lifecycle/cleanup';
+import { cleanStaleGeneratingChats } from '@fastgpt/service/core/chat/cleanStaleGeneratingChats';
 
+// Try to run train every minute
 const setTrainingQueueCron = () => {
   setCron('*/1 * * * *', () => {
     startTrainingQueue();
   });
 };
 
+// Clear tmp upload files every ten minutes
 const setClearTmpUploadFilesCron = () => {
   // Clear tmp upload files every ten minutes
   setCron('*/10 * * * *', () => {
@@ -21,17 +26,6 @@ const setClearTmpUploadFilesCron = () => {
 };
 
 const clearInvalidDataCron = () => {
-  setCron('0 */1 * * *', async () => {
-    if (
-      await checkTimerLock({
-        timerId: TimerIdEnum.checkInValidDatasetFiles,
-        lockMinuted: 59
-      })
-    ) {
-      checkInvalidDatasetFiles(addHours(new Date(), -6), addHours(new Date(), -2));
-    }
-  });
-
   setCron('10 */1 * * *', async () => {
     if (
       await checkTimerLock({
@@ -55,6 +49,7 @@ const clearInvalidDataCron = () => {
   });
 };
 
+// Run app timer trigger every hour
 const scheduleTriggerAppCron = () => {
   setCron('0 */1 * * *', async () => {
     if (
@@ -66,6 +61,21 @@ const scheduleTriggerAppCron = () => {
       getScheduleTriggerApp();
     }
   });
+  getScheduleTriggerApp();
+};
+
+/** 基于 Redis stream activity 快速纠正异常中断的 generating 会话，保留 30 分钟兜底 */
+const cleanStaleGeneratingChatCron = () => {
+  setCron('*/1 * * * *', async () => {
+    if (
+      await checkTimerLock({
+        timerId: TimerIdEnum.cleanStaleGeneratingChat,
+        lockMinuted: 1
+      })
+    ) {
+      await cleanStaleGeneratingChats();
+    }
+  });
 };
 
 export const startCron = () => {
@@ -73,4 +83,7 @@ export const startCron = () => {
   setClearTmpUploadFilesCron();
   clearInvalidDataCron();
   scheduleTriggerAppCron();
+  clearExpiredS3FilesCron();
+  sandboxCronJob();
+  cleanStaleGeneratingChatCron();
 };

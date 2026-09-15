@@ -1,85 +1,272 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Controller } from 'react-hook-form';
-import RenderPluginInput from './renderPluginInput';
-import { Button, Flex } from '@chakra-ui/react';
-import { useTranslation } from 'react-i18next';
+import { Box, Button, Flex, FormControl, FormErrorMessage } from '@chakra-ui/react';
+import { useTranslation } from 'next-i18next';
 import { useContextSelector } from 'use-context-selector';
 import { PluginRunContext } from '../context';
-import { WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
+import Markdown from '@/components/Markdown';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import FormLabel from '@fastgpt/web/components/common/MyBox/FormLabel';
+import { type UserChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import { type ChatBoxInputFormType } from '../../ChatBox/type';
+import { type FlowNodeInputItemType } from '@fastgpt/global/core/workflow/type/io';
+import { ChatItemContext } from '@/web/core/chat/context/chatItemContext';
+import { ChatRecordContext } from '@/web/core/chat/context/chatRecordContext';
+import { FlowNodeInputTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
+import InputRender from '@/components/core/app/formRender';
+import { nodeInputTypeToInputType } from '@/components/core/app/formRender/utils';
+import { WorkflowRuntimeContext } from '@/components/core/chat/ChatContainer/context/workflowRuntimeContext';
+import { useMemoEnhance } from '@fastgpt/web/hooks/useMemoEnhance';
+import { useDeepCompareEffect } from 'ahooks';
+import PopoverConfirm from '@fastgpt/web/components/common/MyPopover/PopoverConfirm';
 
 const RenderInput = () => {
-  const { pluginInputs, variablesForm, histories, onStartChat, onNewChat, onSubmit, isChatting } =
-    useContextSelector(PluginRunContext, (v) => v);
-
   const { t } = useTranslation();
-  const {
-    control,
-    handleSubmit,
-    reset,
-    formState: { errors }
-  } = variablesForm;
 
-  useEffect(() => {
-    reset(
-      pluginInputs.reduce(
+  const pluginInputs = useContextSelector(ChatItemContext, (v) => v.chatBoxData?.app?.pluginInputs);
+  const variablesForm = useContextSelector(ChatItemContext, (v) => v.variablesForm);
+
+  const histories = useContextSelector(ChatRecordContext, (v) => v.chatRecords);
+
+  const onStartChat = useContextSelector(PluginRunContext, (v) => v.onStartChat);
+  const onNewChat = useContextSelector(PluginRunContext, (v) => v.onNewChat);
+  const onSubmit = useContextSelector(PluginRunContext, (v) => v.onSubmit);
+  const isChatting = useContextSelector(PluginRunContext, (v) => v.isChatting);
+  const instruction = useContextSelector(PluginRunContext, (v) => v.instruction);
+  const outLinkAuthData = useContextSelector(WorkflowRuntimeContext, (v) => v.outLinkAuthData);
+
+  const { control, handleSubmit, reset } = variablesForm;
+
+  // Get plugin input components
+  const formatPluginInputs = useMemoEnhance(() => {
+    if (histories.length === 0) return pluginInputs;
+    try {
+      const historyValue = histories[0]?.value as UserChatItemValueItemType[];
+      const inputValueString = historyValue.find((item) => item.text?.content)?.text?.content;
+
+      if (!inputValueString) return pluginInputs;
+      return JSON.parse(inputValueString) as FlowNodeInputItemType[];
+    } catch (error) {
+      console.error('Failed to parse input value:', error);
+      return pluginInputs;
+    }
+  }, [histories, pluginInputs]);
+
+  const [restartData, setRestartData] = useState<ChatBoxInputFormType>();
+  const onClickNewChat = useCallback(
+    (e: ChatBoxInputFormType) => {
+      setRestartData(e);
+      onNewChat?.();
+    },
+    [onNewChat]
+  );
+
+  const onResetDefault = useCallback(() => {
+    reset({
+      variables: formatPluginInputs.reduce(
         (acc, input) => {
           acc[input.key] = input.defaultValue;
           return acc;
         },
         {} as Record<string, any>
       )
-    );
-  }, [pluginInputs, histories]);
-  const isDisabledInput = histories.length > 0;
+    });
+  }, [reset, formatPluginInputs]);
+
+  // Reset input value
+  useDeepCompareEffect(() => {
+    // Set config default value
+    if (histories.length === 0) {
+      if (restartData) {
+        reset(restartData);
+        setRestartData(undefined);
+        return;
+      }
+
+      onResetDefault();
+      return;
+    }
+
+    // Set history to default value
+    const historyVariables = (() => {
+      const historyValue = histories[0]?.value as UserChatItemValueItemType[];
+      if (!historyValue) return undefined;
+
+      try {
+        const inputValueString = historyValue.find((item) => item.text?.content)?.text?.content;
+        return (
+          inputValueString &&
+          JSON.parse(inputValueString).reduce(
+            (
+              acc: Record<string, any>,
+              {
+                key,
+                value
+              }: {
+                key: string;
+                value: any;
+              }
+            ) => ({ ...acc, [key]: value }),
+            {}
+          )
+        );
+      } catch (error) {
+        console.error('Failed to parse input value:', error);
+        return undefined;
+      }
+    })();
+    reset({
+      variables: historyVariables
+    });
+  }, [histories, formatPluginInputs]);
+
+  const formFileUploading = useContextSelector(WorkflowRuntimeContext, (v) => v.fileUploading);
+
+  const fileUploading = formFileUploading;
+  const hasHistory = histories.length > 0;
+  const isDisabledInput = !!hasHistory;
 
   return (
     <>
-      {pluginInputs.map((input) => {
-        return (
-          <Controller
-            key={input.key}
-            control={control}
-            name={input.key}
-            rules={{
-              validate: (value) => {
-                if (input.valueType === WorkflowIOValueTypeEnum.boolean) {
-                  return value !== undefined;
-                }
-                return !!value;
-              }
-            }}
-            render={({ field: { onChange, value } }) => {
-              return (
-                <RenderPluginInput
-                  value={value}
-                  onChange={onChange}
-                  label={input.label}
-                  description={input.description}
-                  isDisabled={isDisabledInput}
-                  valueType={input.valueType}
-                  placeholder={input.placeholder}
-                  required={input.required}
-                  min={input.min}
-                  max={input.max}
-                  isInvalid={errors && Object.keys(errors).includes(input.key)}
-                />
-              );
-            }}
-          />
-        );
-      })}
+      {/* instruction */}
+      {instruction && (
+        <Box
+          border={'1px solid'}
+          borderColor={'myGray.250'}
+          p={4}
+          rounded={'md'}
+          fontSize={'sm'}
+          color={'myGray.600'}
+          mb={4}
+        >
+          <Markdown source={instruction} />
+        </Box>
+      )}
+      {/* Filed */}
+      {formatPluginInputs
+        .filter((input) => {
+          const inputType = input.renderTypeList[0];
+          const isOutLink = outLinkAuthData && Object.keys(outLinkAuthData).length > 0;
+
+          if (isOutLink) {
+            return (
+              inputType !== FlowNodeInputTypeEnum.customVariable &&
+              inputType !== FlowNodeInputTypeEnum.hidden
+            );
+          }
+
+          if (inputType === FlowNodeInputTypeEnum.hidden) {
+            return false;
+          }
+
+          return true;
+        })
+        .map((input) => {
+          const inputType = input.renderTypeList[0];
+          const inputKey = `variables.${input.key}` as const;
+          const isOutLink = outLinkAuthData && Object.keys(outLinkAuthData).length > 0;
+
+          return (
+            <Box _notLast={{ mb: 4 }} key={inputKey}>
+              <Flex alignItems={'center'} mb={1}>
+                {input.required && <Box color={'red.500'}>*</Box>}
+                <FormLabel>{input.label}</FormLabel>
+                {input.description && <QuestionTip ml={1} label={input.description} />}
+                {isOutLink && inputType === FlowNodeInputTypeEnum.customVariable && (
+                  <Flex
+                    color={'primary.600'}
+                    bg={'primary.100'}
+                    px={2}
+                    py={1}
+                    gap={1}
+                    ml={2}
+                    fontSize={'mini'}
+                    rounded={'sm'}
+                  >
+                    <MyIcon name={'common/info'} color={'primary.600'} w={4} />
+                    {t('chat:variable_invisable_in_share')}
+                  </Flex>
+                )}
+              </Flex>
+              <Controller
+                key={inputKey}
+                control={control}
+                name={inputKey}
+                rules={{
+                  validate: (value) => {
+                    if (isDisabledInput) return true;
+                    if (
+                      input.renderTypeList.includes(FlowNodeInputTypeEnum.password) &&
+                      input.minLength
+                    ) {
+                      if (!value || typeof value !== 'object' || !value.value) return false;
+                      if (value.value.length < input.minLength) {
+                        return t('common:min_length', { minLenth: input.minLength });
+                      }
+                      return true;
+                    }
+                    if (typeof value === 'number' || typeof value === 'boolean') return true;
+                    if (!input.required) return true;
+
+                    if (input.renderTypeList.includes(FlowNodeInputTypeEnum.fileSelect)) {
+                      if (!value || !Array.isArray(value) || value.length === 0) {
+                        return t('common:required');
+                      }
+                      return true;
+                    }
+
+                    return !!value;
+                  }
+                }}
+                render={({ field: { onChange, value }, fieldState: { error } }) => {
+                  return (
+                    <FormControl isInvalid={!!error}>
+                      <InputRender
+                        {...input}
+                        key={inputKey}
+                        value={value}
+                        onChange={onChange}
+                        isDisabled={isDisabledInput}
+                        isInvalid={!!error}
+                        inputType={nodeInputTypeToInputType(input.renderTypeList)}
+                        form={variablesForm}
+                        fieldName={inputKey}
+                        outLinkAuthData={outLinkAuthData}
+                        isRichText={false}
+                        canLocalUpload={input.canLocalUpload ?? true}
+                      />
+                      {error && <FormErrorMessage>{error.message}</FormErrorMessage>}
+                    </FormControl>
+                  );
+                }}
+              />
+            </Box>
+          );
+        })}
+      {/* Run Button */}
       {onStartChat && onNewChat && (
-        <Flex justifyContent={'end'} mt={8}>
+        <Flex justifyContent={'end'} mt={8} gap={4}>
+          <PopoverConfirm
+            content={t('chat:confirm_clear_input_value')}
+            onConfirm={onResetDefault}
+            Trigger={<Button variant={'whiteBase'}>{t('chat:clear_input_value')}</Button>}
+          />
+
           <Button
             isLoading={isChatting}
+            isDisabled={fileUploading}
             onClick={() => {
-              if (histories.length > 0) {
-                return onNewChat();
-              }
-              handleSubmit(onSubmit)();
+              handleSubmit((e) => {
+                if (hasHistory) {
+                  onClickNewChat(e);
+                } else {
+                  onSubmit(e);
+                }
+              })();
             }}
           >
-            {histories.length > 0 ? t('common:common.Restart') : t('common:common.Run')}
+            {hasHistory ? t('common:Restart') : t('common:Run')}
           </Button>
         </Flex>
       )}

@@ -1,46 +1,99 @@
-import { UploadImgProps } from '@fastgpt/global/common/file/api';
 import { imageBaseUrl } from '@fastgpt/global/common/file/image/constants';
 import { MongoImage } from './schema';
-import { ClientSession } from '../../../common/mongo';
-import { guessBase64ImageType } from '../utils';
+import { type ClientSession, Types } from '../../../common/mongo';
+import { guessBase64ImageType } from './utils';
 import { readFromSecondary } from '../../mongo/utils';
+import { UserError } from '@fastgpt/global/common/error/utils';
+import { getS3AvatarSource } from '../../s3/sources/avatar';
+import { isS3ObjectKey } from '../../s3/utils';
+import path from 'path';
+import { getNanoid } from '@fastgpt/global/common/string/tools';
+import { serviceEnv } from '../../../env';
 
-export function getMongoImgUrl(id: string, extension: string) {
-  return `${imageBaseUrl}${id}.${extension}`;
-}
+const imageRouteBase = serviceEnv.NEXT_PUBLIC_BASE_URL;
 
-export const maxImgSize = 1024 * 1024 * 12;
-const base64MimeRegex = /data:image\/([^\)]+);base64/;
-export async function uploadMongoImg({
-  type,
-  base64Img,
+export const copyAvatarImage = async ({
   teamId,
-  expiredTime,
-  metadata,
-  shareId
-}: UploadImgProps & {
+  imageUrl,
+  temporary,
+  session
+}: {
   teamId: string;
-}) {
-  if (base64Img.length > maxImgSize) {
-    return Promise.reject('Image too large');
+  imageUrl: string;
+  temporary: boolean;
+  session?: ClientSession;
+}) => {
+  if (!imageUrl) return;
+
+  const avatarSource = getS3AvatarSource();
+  if (isS3ObjectKey(imageUrl?.slice(avatarSource.prefix.length), 'avatar')) {
+    const filename = (() => {
+      const extname = path.extname(imageUrl);
+      if (!extname) return getNanoid(6);
+      return path.basename(imageUrl);
+    })();
+    const key = await getS3AvatarSource().copyAvatar({
+      key: imageUrl,
+      teamId,
+      filename,
+      temporary
+    });
+    return key;
   }
 
-  const [base64Mime, base64Data] = base64Img.split(',');
-  const mime = `image/${base64Mime.match(base64MimeRegex)?.[1] ?? 'image/jpeg'}`;
-  const binary = Buffer.from(base64Data, 'base64');
-  const extension = mime.split('/')[1];
+  const paths = imageUrl.split('/');
+  const name = paths[paths.length - 1];
+  const id = name.split('.')[0];
 
-  const { _id } = await MongoImage.create({
-    type,
-    teamId,
-    binary,
-    expiredTime,
-    metadata: Object.assign({ mime }, metadata),
-    shareId
-  });
+  // Mongo
+  if (id && Types.ObjectId.isValid(id)) {
+    const image = await MongoImage.findOne(
+      {
+        _id: id,
+        teamId
+      },
+      undefined,
+      {
+        session
+      }
+    );
+    if (!image) return imageUrl;
+    const [newImage] = await MongoImage.create(
+      [
+        {
+          teamId,
+          binary: image.binary,
+          metadata: image.metadata
+        }
+      ],
+      {
+        session,
+        ordered: true
+      }
+    );
+    return `${imageRouteBase}${imageBaseUrl}${String(newImage._id)}.${image.metadata?.mime?.split('/')[1]}`;
+  }
 
-  return getMongoImgUrl(String(_id), extension);
-}
+  return imageUrl;
+};
+
+export const removeImageByPath = (path?: string, session?: ClientSession) => {
+  if (!path) return;
+
+  const paths = path.split('/');
+  const name = paths[paths.length - 1];
+
+  if (!name) return;
+
+  const id = name.split('.')[0];
+  if (!id) return;
+
+  if (Types.ObjectId.isValid(id)) {
+    return MongoImage.deleteOne({ _id: id }, { session });
+  } else if (isS3ObjectKey(path?.slice(getS3AvatarSource().prefix.length), 'avatar')) {
+    return getS3AvatarSource().deleteAvatar(path, session);
+  }
+};
 
 export async function readMongoImg({ id }: { id: string }) {
   const formatId = id.replace(/\.[^/.]+$/, '');
@@ -49,7 +102,7 @@ export async function readMongoImg({ id }: { id: string }) {
     ...readFromSecondary
   });
   if (!data) {
-    return Promise.reject('Image not found');
+    return Promise.reject(new UserError('Image not found'));
   }
 
   return {
@@ -65,7 +118,7 @@ export async function delImgByRelatedId({
 }: {
   teamId: string;
   relateIds: string[];
-  session: ClientSession;
+  session?: ClientSession;
 }) {
   if (relateIds.length === 0) return;
 

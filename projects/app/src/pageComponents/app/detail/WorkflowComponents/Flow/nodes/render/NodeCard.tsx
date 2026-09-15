@@ -1,0 +1,1407 @@
+import UseGuideModal from '@/components/common/Modal/UseGuideModal';
+import SecretInputModal from '@/pageComponents/app/tool/SecretInputModal';
+import { getAppPermission } from '@/web/core/app/api';
+import { getClientToolPreviewNode } from '@/web/core/app/api/tool';
+import { getAppVersionList } from '@/web/core/app/api/version';
+import { getTeamToolVersions } from '@/web/core/plugin/team/api';
+import { storeNode2FlowNode } from '@/web/core/workflow/utils';
+import { getWorkflowCheckIssueUIStatus } from '@/web/core/workflow/workflowCheck';
+import { Box, Button, Flex, type FlexProps } from '@chakra-ui/react';
+import { getNanoid } from '@fastgpt/global/common/string/tools';
+import { LOGO_ICON } from '@fastgpt/global/common/system/constants';
+import { ObjectIdSchema } from '@fastgpt/global/common/type/mongo';
+import { AppToolSourceEnum } from '@fastgpt/global/core/app/tool/constants';
+import type { SystemToolVersionType } from '@fastgpt/global/core/app/tool/systemTool/type/base';
+import {
+  getToolRawId,
+  isDebugToolSource,
+  mergeToolSetChildDescriptions,
+  splitCombineToolId
+} from '@fastgpt/global/core/app/tool/utils';
+import { formatToolError } from '@fastgpt/global/core/app/utils';
+import {
+  PluginStatusEnum,
+  PluginStatusMap,
+  type PluginStatusType
+} from '@fastgpt/global/core/plugin/type';
+import { NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
+import type { NodeGradients } from '@fastgpt/global/core/workflow/node/constant';
+import {
+  AppNodeFlowNodeTypeMap,
+  FlowNodeTypeEnum,
+  isNestedParentNodeType
+} from '@fastgpt/global/core/workflow/node/constant';
+import { moduleTemplatesFlat } from '@fastgpt/global/core/workflow/template/constants';
+import type { FlowNodeInputItemType } from '@fastgpt/global/core/workflow/type/io';
+import type {
+  FlowNodeItemType,
+  StoreNodeItemType,
+  WorkflowCheckIssue
+} from '@fastgpt/global/core/workflow/type/node';
+import Avatar from '@fastgpt/web/components/common/Avatar';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import MyIconButton from '@fastgpt/web/components/common/Icon/button';
+import MyImage from '@fastgpt/web/components/common/Image/MyImage';
+import MySelect from '@fastgpt/web/components/common/MySelect';
+import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
+import HighlightText from '@fastgpt/web/components/common/String/HighlightText';
+import MyTag from '@fastgpt/web/components/common/Tag/index';
+import DebugToolTag from '@fastgpt/web/components/core/plugin/tool/DebugToolTag';
+import {
+  getBorderColorByColorSchema,
+  getColorSchemaByFlowNodeType,
+  getGradientByColorSchema
+} from '@fastgpt/web/core/workflow/utils';
+import { useConfirm } from '@fastgpt/web/hooks/useConfirm';
+import { useRequest } from '@fastgpt/web/hooks/useRequest';
+import { useToast } from '@fastgpt/web/hooks/useToast';
+import { useBoolean, useCreation } from 'ahooks';
+import { useTranslation } from 'next-i18next';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useReactFlow } from 'reactflow';
+import { useContextSelector } from 'use-context-selector';
+import { WorkflowActionsContext } from '../../../context/workflowActionsContext';
+import { WorkflowBufferDataContext } from '../../../context/workflowInitContext';
+import { WorkflowUIContext } from '../../../context/workflowUIContext';
+import { useDebug } from '../../hooks/useDebug';
+import { useNodeOutputValidity } from '../../hooks/useNodeOutputValidity';
+import { useWorkflowUtils } from '../../hooks/useUtils';
+import { ConnectionSourceHandle, ConnectionTargetHandle } from './Handle/ConnectionHandle';
+import { ToolSourceHandle, ToolTargetHandle } from './Handle/ToolHandle';
+import InlineEdit from './InlineEdit';
+import NodeDebugResponse from './RenderDebug/NodeDebugResponse';
+
+type Props = FlowNodeItemType & {
+  children?: React.ReactNode | React.ReactNode[] | string;
+  minW?: string | number;
+  maxW?: string | number;
+  minH?: string | number;
+  w?: string | number;
+  h?: string | number;
+  selected?: boolean;
+  searchedText?: string;
+  menuForbid?: {
+    copilot?: boolean;
+    debug?: boolean;
+    copy?: boolean;
+    delete?: boolean;
+    fold?: boolean;
+  };
+  customStyle?: FlexProps;
+  rtDoms?: React.ReactNode[];
+  colorSchema?: keyof typeof NodeGradients;
+};
+
+const getCurrentSystemToolTemplate = async (node?: FlowNodeItemType) => {
+  if (!node?.pluginId || node.pluginData?.error || isDebugToolSource(node.source)) return;
+
+  try {
+    const { source } = splitCombineToolId(node.pluginId);
+    if (source !== AppToolSourceEnum.systemTool && source !== AppToolSourceEnum.commercial) return;
+
+    return getClientToolPreviewNode({
+      appId: node.pluginId,
+      versionId: node.version ?? '',
+      source: node.source
+    });
+  } catch {
+    return;
+  }
+};
+
+const NodeCard = (props: Props) => {
+  const { t } = useTranslation();
+  const {
+    children,
+    avatar = LOGO_ICON,
+    avatarLinear,
+    name = t('common:core.module.template.UnKnow Module'),
+    intro,
+    minW = '300px',
+    maxW = '666px',
+    minH = 0,
+    w = 'full',
+    h = 'full',
+    nodeId,
+    selected,
+    searchedText,
+    menuForbid,
+    isTool = false,
+    isError = false,
+    workflowCheckIssues,
+    debugResult,
+    isFolded,
+    customStyle,
+    inputs,
+    rtDoms,
+    pluginId,
+    flowNodeType,
+    colorSchema
+  } = props;
+
+  useNodeOutputValidity(nodeId);
+
+  const { hasToolNode, getNodeById, foldedNodesMap } = useContextSelector(
+    WorkflowBufferDataContext,
+    (v) => v
+  );
+  const onUpdateNodeError = useContextSelector(WorkflowActionsContext, (v) => v.onUpdateNodeError);
+  const onChangeNode = useContextSelector(WorkflowActionsContext, (v) => v.onChangeNode);
+  const setHoverNodeId = useContextSelector(WorkflowUIContext, (v) => v.setHoverNodeId);
+  const presentationMode = useContextSelector(WorkflowUIContext, (v) => v.presentationMode);
+  const setPresentationMode = useContextSelector(WorkflowUIContext, (v) => v.setPresentationMode);
+  const { fitView } = useReactFlow();
+
+  const inputConfig = useMemo(
+    () => inputs?.find((item) => item.key === NodeInputKeyEnum.systemInputConfig),
+    [inputs]
+  );
+
+  const handleDoubleClick = useCallback(() => {
+    onChangeNode({
+      nodeId,
+      type: 'attr',
+      key: 'isFolded',
+      value: false
+    });
+    setPresentationMode(false);
+
+    // Fit view to show this node in center
+    setTimeout(() => {
+      fitView({
+        nodes: [{ id: nodeId }],
+        padding: 0.3
+      });
+    }, 100);
+  }, [onChangeNode, setPresentationMode, fitView, nodeId]);
+
+  const showToolHandle = isTool && hasToolNode;
+
+  const gradient = useMemo(() => {
+    const { source } = splitCombineToolId(pluginId ?? '');
+    return getGradientByColorSchema({ colorSchema, source });
+  }, [colorSchema, pluginId]);
+
+  const foldedOverlay = useMemo(() => {
+    if (!isFolded) return null;
+
+    return (
+      <Flex
+        position={'absolute'}
+        top={0}
+        left={0}
+        right={0}
+        bottom={0}
+        alignItems={'center'}
+        justifyContent={'center'}
+        flexDirection={'column'}
+        zIndex={1}
+        onDoubleClick={handleDoubleClick}
+        cursor={'pointer'}
+        bg={'rgba(255, 255, 255, 0.80)'}
+        backdropFilter={'blur(10px)'}
+        borderRadius={26}
+      >
+        <Avatar
+          src={avatarLinear || avatar}
+          fill={'none'}
+          borderRadius={16}
+          w={'100px'}
+          h={'100px'}
+        />
+        <Box
+          mt={3}
+          color={'myGray.700'}
+          fontSize={'26px'}
+          fontWeight={'500'}
+          textAlign={'center'}
+          overflow={'hidden'}
+          textOverflow={'ellipsis'}
+          whiteSpace={'nowrap'}
+          maxW={'80%'}
+        >
+          {name}
+        </Box>
+      </Flex>
+    );
+  }, [isFolded, avatar, avatarLinear, name, handleDoubleClick]);
+
+  const errorIssues = useMemo(
+    () => workflowCheckIssues?.filter((issue) => issue.level === 'error') ?? [],
+    [workflowCheckIssues]
+  );
+
+  const { outlineColor, outlineWidth } = useMemo(() => {
+    // error mode
+    if (isError) return { outlineColor: '#F97066', outlineWidth: '4px solid' };
+    // common mode
+    if (!presentationMode && !isFolded) {
+      const outlineColor = selected ? 'primary.600' : 'myGray.250';
+      const outlineWidth = selected ? '4px solid' : '1px solid';
+      return { outlineColor, outlineWidth };
+    }
+    // presentation & fold mode
+    const { source } = splitCombineToolId(pluginId ?? '');
+    const outlineColor = getBorderColorByColorSchema({ colorSchema, source });
+    if (!outlineColor) return { outlineColor: undefined, outlineWidth: undefined };
+    return {
+      outlineColor,
+      outlineWidth: '4px solid'
+    };
+  }, [presentationMode, isFolded, colorSchema, selected, isError, pluginId]);
+
+  // Current node and parent node
+  const { node, hidden } = useMemo(() => {
+    const node = getNodeById(nodeId);
+    const hidden = node?.parentNodeId ? foldedNodesMap[node.parentNodeId] : false;
+
+    return { node, hidden };
+  }, [foldedNodesMap, getNodeById, nodeId]);
+
+  const isAppNode = node && AppNodeFlowNodeTypeMap[node?.flowNodeType];
+  const isLoopNode = isNestedParentNodeType(node?.flowNodeType ?? '');
+
+  const { data: nodeTemplate } = useRequest(
+    async () => {
+      if (node?.pluginData?.error) {
+        return undefined;
+      }
+
+      if (isAppNode) {
+        const currentSystemToolTemplate = await getCurrentSystemToolTemplate(node);
+
+        return {
+          ...node,
+          ...node.pluginData,
+          ...(currentSystemToolTemplate
+            ? {
+                status: currentSystemToolTemplate.status,
+                courseUrl: currentSystemToolTemplate.courseUrl,
+                readmeUrl: currentSystemToolTemplate.readmeUrl,
+                userGuide: currentSystemToolTemplate.userGuide,
+                diagram: currentSystemToolTemplate.diagram
+              }
+            : {})
+        };
+      } else {
+        const template = moduleTemplatesFlat.find(
+          (item) => item.flowNodeType === node?.flowNodeType
+        );
+        return template;
+      }
+    },
+    {
+      onSuccess(res) {
+        if (!res) return;
+        // 教程元信息由工具详情实时回写，兼容已保存的旧节点。
+        onChangeNode([
+          {
+            nodeId,
+            type: 'attr',
+            key: 'courseUrl',
+            value: res?.courseUrl
+          },
+          {
+            nodeId,
+            type: 'attr',
+            key: 'readmeUrl',
+            value: res?.readmeUrl
+          },
+          {
+            nodeId,
+            type: 'attr',
+            key: 'userGuide',
+            value: res?.userGuide
+          }
+        ]);
+      },
+      manual: false,
+      errorToast: '',
+      refreshDeps: [
+        isAppNode,
+        node?.pluginData?.error,
+        node?.pluginData?.status,
+        node?.pluginId,
+        node?.source,
+        node?.version
+      ]
+    }
+  );
+
+  const toolStatus = nodeTemplate?.status ?? node?.pluginData?.status;
+  const showVersion = useMemo(() => {
+    if (toolStatus === PluginStatusEnum.Offline || node?.pluginData?.error) return false;
+
+    const source = node?.pluginId ? splitCombineToolId(node.pluginId).source : undefined;
+    if (isDebugToolSource(node?.source)) return false;
+    // 1. MCP/HTTP single tools use the latest toolset content and do not expose version selection.
+    if (source === AppToolSourceEnum.mcp || source === AppToolSourceEnum.http) return false;
+
+    // 2. MCP/HTTP tool sets do not have version
+    if (
+      isAppNode &&
+      (node.toolConfig?.mcpToolSet ||
+        node.toolConfig?.mcpTool ||
+        node?.toolConfig?.httpToolSet ||
+        node?.toolConfig?.httpTool)
+    )
+      return false;
+    // 3. Team app/System commercial plugin
+    if (isAppNode && node?.pluginId && !node?.pluginData?.error) return true;
+    // 4. System tool
+    if (isAppNode && node?.toolConfig?.systemTool) return true;
+
+    return false;
+  }, [isAppNode, node, toolStatus]);
+
+  /* Node header - 重构后的版本,依赖项大幅减少 */
+  const error = useMemo(() => formatToolError(node?.pluginData?.error), [node?.pluginData?.error]);
+  const showHeader = node?.flowNodeType !== FlowNodeTypeEnum.comment;
+
+  const RenderToolHandle = useMemo(
+    () =>
+      node?.flowNodeType === FlowNodeTypeEnum.toolCall ? (
+        <ToolSourceHandle nodeId={nodeId} />
+      ) : null,
+    [node?.flowNodeType, nodeId]
+  );
+
+  return (
+    <Flex
+      position={'relative'}
+      outline={selected && (presentationMode || isFolded) ? '16px solid' : undefined}
+      outlineColor={'rgba(17, 24, 36, 0.05)'}
+      borderRadius={isFolded ? 26 : 'lg'}
+      boxShadow={'0 24px 40px 0 rgba(0, 0, 0, 0.05)'}
+      {...customStyle}
+    >
+      <Flex
+        hidden={hidden}
+        flexDirection={'column'}
+        {...(isFolded
+          ? {
+              w: '240px',
+              h: '240px'
+            }
+          : {
+              minW,
+              maxW,
+              minH,
+              w,
+              h
+            })}
+        outline={outlineWidth}
+        outlineColor={outlineColor}
+        borderRadius={isFolded ? 26 : 'lg'}
+        _hover={{
+          boxShadow: '0 24px 40px 0 rgba(0, 0, 0, 0.08)',
+          '& .controller-menu': {
+            display: 'flex'
+          },
+          '& .controller-debug': {
+            display: 'block'
+          },
+          '& .node-hover-controller': {
+            visibility: 'visible'
+          }
+        }}
+        onMouseEnter={() => setHoverNodeId(nodeId)}
+        onMouseLeave={() => setHoverNodeId(undefined)}
+        {...(isError ? { onMouseDownCapture: () => onUpdateNodeError(nodeId, false) } : {})}
+      >
+        {debugResult && <NodeDebugResponse nodeId={nodeId} debugResult={debugResult} />}
+
+        {foldedOverlay}
+
+        {!isFolded && (
+          <Box bg={'white'} borderRadius={'lg'} flex={1} display={'flex'} flexDirection={'column'}>
+            {/* Header */}
+            <Box position={'relative'}>
+              {gradient && (
+                <Box
+                  position={'absolute'}
+                  top={0}
+                  left={0}
+                  right={0}
+                  height={'60px'}
+                  background={gradient}
+                  borderRadius={'lg'}
+                  zIndex={20}
+                  pointerEvents={'none'}
+                />
+              )}
+              {showHeader && (
+                <Box px={4} pt={4} position={'relative'}>
+                  <Flex alignItems={'center'} mb={1}>
+                    <NodeTitleSection
+                      nodeId={nodeId}
+                      avatar={avatar}
+                      name={name}
+                      searchedText={searchedText}
+                      appId={pluginId}
+                    />
+
+                    <Box mr={1} />
+
+                    {isDebugToolSource(node?.source) && <DebugToolTag mr={2} />}
+
+                    {showVersion && <NodeVersion node={node!} />}
+
+                    <NodeActionButtons
+                      nodeTemplate={nodeTemplate}
+                      courseUrl={node?.courseUrl}
+                      readmeUrl={node?.readmeUrl}
+                      rtDoms={rtDoms}
+                    />
+
+                    <NodeStatusBadge status={nodeTemplate?.status} error={error} />
+                  </Flex>
+
+                  <NodeIntro nodeId={nodeId} intro={intro} flowNodeType={flowNodeType} />
+                </Box>
+              )}
+            </Box>
+
+            <Flex
+              flexDirection={'column'}
+              flex={1}
+              pb={showHeader ? 4 : 0}
+              gap={2}
+              position={'relative'}
+            >
+              {!isFolded ? (
+                <>
+                  {inputConfig && !inputConfig?.value ? (
+                    <NodeSecret
+                      nodeId={nodeId}
+                      isFolder={node?.isFolder}
+                      courseUrl={node?.courseUrl}
+                      readmeUrl={node?.readmeUrl}
+                      hasSystemSecret={node?.hasSystemSecret}
+                      pluginId={node?.pluginId}
+                      source={node?.source}
+                      systemKeyCost={node?.systemKeyCost}
+                      inputConfig={inputConfig}
+                    />
+                  ) : (
+                    children
+                  )}
+                </>
+              ) : (
+                <Box h={4} />
+              )}
+            </Flex>
+          </Box>
+        )}
+
+        {/* Menu - Always render outside the fold/unfold condition */}
+        <MenuRender nodeId={nodeId} menuForbid={menuForbid} />
+
+        {/* Handle - Always render handles outside the fold/unfold condition */}
+        <ToolTargetHandle show={showToolHandle} nodeId={nodeId} />
+        <ConnectionSourceHandle nodeId={nodeId} />
+        <ConnectionTargetHandle nodeId={nodeId} />
+        {RenderToolHandle}
+
+        {/* Presentation Mode Overlay */}
+        {presentationMode && !isFolded && showHeader && (
+          <PresentationModeOverlay
+            avatar={avatarLinear || avatar}
+            name={name}
+            intro={intro}
+            isLoopNode={isLoopNode}
+            onDoubleClick={handleDoubleClick}
+          />
+        )}
+      </Flex>
+      {!isFolded && errorIssues.length > 0 && (
+        <Box position={'absolute'} top={'100%'} left={0} w={'100%'}>
+          <NodeWorkflowCheckIssues issues={errorIssues} />
+        </Box>
+      )}
+    </Flex>
+  );
+};
+
+export default React.memo(NodeCard);
+
+/** 待处理/待完善状态图标：待完善用设计稿虚线圆环，待处理用圆形 info。 */
+const WorkflowCheckIssueStatusIcon = React.memo(function WorkflowCheckIssueStatusIcon({
+  status
+}: {
+  status: ReturnType<typeof getWorkflowCheckIssueUIStatus>;
+}) {
+  return (
+    <MyIcon
+      name={status === 'pending_handle' ? 'infoRounded' : 'core/app/workflow/checkPendingImprove'}
+      w={'24px'}
+      h={'24px'}
+      flexShrink={0}
+      color={'#485264'}
+    />
+  );
+});
+
+const workflowCheckIssueTextStyle = {
+  color: 'myGray.600',
+  fontFamily: 'PingFang SC, PingFang, sans-serif',
+  fontSize: '16px',
+  fontStyle: 'normal',
+  fontWeight: 500,
+  lineHeight: '24px',
+  letterSpacing: '0.15px'
+} as const;
+
+/** 节点下方校验问题提示条，使用灰色轻量样式而非红色错误条。 */
+const NodeWorkflowCheckIssues = React.memo(function NodeWorkflowCheckIssues({
+  issues
+}: {
+  issues: WorkflowCheckIssue[];
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <Flex flexDirection={'column'} alignItems={'flex-start'} gap={'8px'} mt={2}>
+      {issues.map((issue, index) => {
+        const status = getWorkflowCheckIssueUIStatus(issue.code);
+        // 显式保留静态 key，避免 i18n 清理脚本误删状态前缀文案。
+        const statusPrefixText =
+          status === 'pending_handle'
+            ? t('common:core.workflow.check.status.pending_handle')
+            : t('common:core.workflow.check.status.pending_improve');
+
+        return (
+          <Flex
+            key={`${issue.code}-${issue.inputKey ?? ''}-${index}`}
+            display={'inline-flex'}
+            alignItems={'center'}
+            gap={'8px'}
+            px={'16px'}
+            py={'8px'}
+            w={'fit-content'}
+            maxW={'min(720px, 100%)'}
+            bg={'#E8EBF0'}
+            opacity={0.8}
+            borderRadius={'8px'}
+          >
+            <WorkflowCheckIssueStatusIcon status={status} />
+            <Box as={'span'} flexShrink={0} {...workflowCheckIssueTextStyle}>
+              {statusPrefixText}:
+            </Box>
+            <Box
+              as={'span'}
+              minW={0}
+              whiteSpace={'normal'}
+              wordBreak={'break-word'}
+              {...workflowCheckIssueTextStyle}
+            >
+              {issue.message.trim()}
+            </Box>
+          </Flex>
+        );
+      })}
+    </Flex>
+  );
+});
+
+// 节点标题区域组件
+const NodeTitleSection = React.memo<{
+  nodeId: string;
+  avatar: string;
+  name: string;
+  searchedText?: string;
+  appId?: string;
+}>(({ nodeId, avatar, name, searchedText, appId }) => {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const onChangeNode = useContextSelector(WorkflowActionsContext, (v) => v.onChangeNode);
+
+  const childAppId = useMemo(() => {
+    if (!appId) return;
+    const rawId = getToolRawId(appId);
+    const result = ObjectIdSchema.safeParse(rawId);
+    if (result.success) {
+      return rawId;
+    }
+    return undefined;
+  }, [appId]);
+
+  const { runAsync: onGetPermission } = useRequest(getAppPermission, {
+    onSuccess(permission) {
+      if (permission.hasWritePer) {
+        window.open(`/app/detail?appId=${childAppId}`, '_blank');
+      } else {
+        toast({
+          title: t('workflow:no_edit_permission'),
+          status: 'warning'
+        });
+      }
+    }
+  });
+
+  const handleSave = useCallback(
+    (newVal: string) => {
+      const trimmed = newVal.trim();
+      if (!trimmed) {
+        toast({
+          title: t('app:modules.Title is required'),
+          status: 'warning'
+        });
+        return false;
+      }
+      if (trimmed !== name) {
+        onChangeNode({
+          nodeId,
+          type: 'attr',
+          key: 'name',
+          value: trimmed
+        });
+      }
+      return true;
+    },
+    [name, onChangeNode, nodeId, toast, t]
+  );
+
+  const renderDisplay = useCallback(
+    (val: string) => (
+      <HighlightText rawText={val} matchText={searchedText ?? ''} mode={'bg'} color={'#ffe82d'} />
+    ),
+    [searchedText]
+  );
+
+  return (
+    <Flex alignItems={'center'} flex={'1 1 0'} minW={0}>
+      <Avatar src={avatar} borderRadius={'sm'} objectFit={'contain'} w={'24px'} h={'24px'} />
+      <Box ml={2} flex={1} minW={0}>
+        <InlineEdit
+          value={name}
+          onSave={handleSave}
+          fontSize={'18px'}
+          fontWeight={'medium'}
+          maxLength={50}
+          h={'28px'}
+          innerH={'26px'}
+          lineHeight={'26px'}
+          px={'6px'}
+          renderDisplay={renderDisplay}
+        />
+      </Box>
+      {childAppId && (
+        <Box ml={1} flexShrink={0} visibility={'hidden'}>
+          <MyIconButton
+            className="node-hover-controller"
+            icon="common/link"
+            tip={t('workflow:to_app_detail')}
+            onClick={() => onGetPermission(childAppId)}
+          />
+        </Box>
+      )}
+    </Flex>
+  );
+});
+NodeTitleSection.displayName = 'NodeTitleSection';
+
+// 节点介绍组件
+const NodeIntro = React.memo(function NodeIntro({
+  nodeId,
+  intro = '',
+  flowNodeType
+}: {
+  nodeId: string;
+  intro?: string;
+  flowNodeType: FlowNodeTypeEnum;
+}) {
+  const { t } = useTranslation();
+  const onChangeNode = useContextSelector(WorkflowActionsContext, (v) => v.onChangeNode);
+  const [isIntroEditing, setIsIntroEditing] = useState(false);
+
+  const handleSave = useCallback(
+    (newVal: string) => {
+      const trimmed = newVal.trim();
+      if (trimmed !== intro) {
+        onChangeNode({
+          nodeId,
+          type: 'attr',
+          key: 'intro',
+          value: trimmed
+        });
+      }
+      return true;
+    },
+    [intro, onChangeNode, nodeId]
+  );
+
+  return (
+    <Box w={'100%'} minW={0} overflow={'hidden'}>
+      <InlineEdit
+        value={intro}
+        onSave={handleSave}
+        type={'textarea'}
+        maxLength={500}
+        placeholder={t('app:node_not_intro')}
+        onEditingChange={setIsIntroEditing}
+        fontSize={'sm'}
+        lineHeight={'short'}
+        color={'myGray.500'}
+        minH={'20px'}
+        py={'3px'}
+        px={'6px'}
+      />
+      {isIntroEditing && flowNodeType === FlowNodeTypeEnum.toolSet && (
+        <Flex
+          alignItems={'center'}
+          gap={'0.25rem'}
+          py={'0.25rem'}
+          px={0}
+          fontSize={'xs'}
+          color={'myGray.500'}
+        >
+          <MyIcon name={'common/info'} w={'14px'} />
+          {t('app:toolset_intro_tips')}
+        </Flex>
+      )}
+    </Box>
+  );
+});
+
+const NodeVersion = React.memo(function NodeVersion({ node }: { node: FlowNodeItemType }) {
+  const { t } = useTranslation();
+
+  const onResetNode = useContextSelector(WorkflowActionsContext, (v) => v.onResetNode);
+  const { openConfirm: openKeepLatestConfirm, ConfirmModal: KeepLatestConfirmModal } = useConfirm({
+    content: t('app:keep_the_latest_confirm_tip')
+  });
+  const toolSource = useMemo(
+    () => (node.pluginId ? splitCombineToolId(node.pluginId).source : undefined),
+    [node.pluginId]
+  );
+
+  const {
+    runAsync: loadVersions,
+    data: versionList = [],
+    loading: isLoadingVersions
+  } = useRequest(
+    async () => {
+      if (!node.pluginId) return [];
+
+      const { authAppId } = splitCombineToolId(node.pluginId);
+      if (toolSource === AppToolSourceEnum.mcp || toolSource === AppToolSourceEnum.http) return [];
+
+      if (toolSource === AppToolSourceEnum.personal) {
+        if (!authAppId) return [];
+
+        const { list = [] } = await getAppVersionList({
+          appId: authAppId,
+          isPublish: true,
+          offset: 0,
+          pageSize: 100
+        });
+
+        return list.map<SystemToolVersionType>((item) => ({
+          version: item._id,
+          versionDescription: item.versionName
+        }));
+      }
+
+      return getTeamToolVersions({
+        toolId: node.pluginId,
+        source: toolSource === AppToolSourceEnum.personal ? 'team' : 'system'
+      });
+    },
+    {
+      refreshDeps: [node.pluginId, toolSource]
+    }
+  );
+
+  const { runAsync: onUpdateVersion, loading: isUpdating } = useRequest(
+    async (versionId: string) => {
+      if (!node) return;
+
+      if (node.pluginId) {
+        const template = await getClientToolPreviewNode({
+          appId: node.pluginId,
+          versionId,
+          source: node.source
+        });
+
+        if (!!template) {
+          onResetNode({
+            id: node.nodeId,
+            node: {
+              ...template,
+              colorSchema:
+                template.colorSchema ?? getColorSchemaByFlowNodeType(template.flowNodeType),
+              name: node.name,
+              intro: node.intro,
+              avatar: node.avatar,
+              toolConfig: mergeToolSetChildDescriptions({
+                savedToolConfig: node.toolConfig,
+                templateToolConfig: template.toolConfig
+              })
+            }
+          });
+        }
+      }
+    },
+    {
+      refreshDeps: [node, onResetNode]
+    }
+  );
+  const onSelectVersion = useCallback(
+    (versionId: string) => {
+      if (!versionId) {
+        openKeepLatestConfirm({
+          onConfirm: () => onUpdateVersion('')
+        })();
+        return;
+      }
+
+      return onUpdateVersion(versionId);
+    },
+    [onUpdateVersion, openKeepLatestConfirm]
+  );
+
+  const renderVersionList = useCreation(
+    () => [
+      {
+        label: t('app:keep_the_latest'),
+        value: ''
+      },
+      ...versionList.map((item) => ({
+        label: item.versionDescription || item.version,
+        value: item.version
+      }))
+    ],
+    [node.isLatestVersion, node.version, t, versionList]
+  );
+  const valueLabel = useMemo(() => {
+    return (
+      <Flex alignItems={'center'} gap={0.5}>
+        {!node?.version ? t('app:keep_the_latest') : node?.versionLabel}
+        {!node.isLatestVersion && (
+          <MyTag type="fill" colorSchema={'adora'} fontSize={'mini'} borderRadius={'lg'}>
+            {t('app:not_the_newest')}
+          </MyTag>
+        )}
+      </Flex>
+    );
+  }, [node.isLatestVersion, node.version, node.versionLabel, t]);
+
+  return (
+    <>
+      <MySelect
+        className="nowheel"
+        value={node.version}
+        onChange={onSelectVersion}
+        isLoading={isUpdating || isLoadingVersions}
+        customOnOpen={loadVersions}
+        placeholder={node?.versionLabel}
+        variant={'whitePrimaryOutline'}
+        size={'sm'}
+        list={renderVersionList}
+        valueLabel={valueLabel}
+      />
+      <KeepLatestConfirmModal isLoading={isUpdating} />
+    </>
+  );
+});
+
+const MenuRender = React.memo(function MenuRender({
+  nodeId,
+  menuForbid
+}: {
+  nodeId: string;
+  menuForbid?: Props['menuForbid'];
+}) {
+  const { t } = useTranslation();
+  const { openDebugNode, DebugInputModal } = useDebug();
+  const { setNodes, getNodeById } = useContextSelector(WorkflowBufferDataContext, (v) => v);
+  const onChangeNode = useContextSelector(WorkflowActionsContext, (v) => v.onChangeNode);
+  const { deleteElements } = useReactFlow();
+
+  const { computedNewNodeName } = useWorkflowUtils();
+
+  // Get current node to check if folded
+  const currentNode = getNodeById(nodeId);
+  const isFolded = currentNode?.isFolded;
+
+  const onCopyNode = useCallback(
+    (nodeId: string) => {
+      setNodes((state) => {
+        const node = state.find((node) => node.id === nodeId);
+        if (!node) return state;
+        const template: Omit<StoreNodeItemType, 'nodeId'> = {
+          flowNodeType: node.data.flowNodeType,
+          parentNodeId: node.data.parentNodeId,
+          avatar: node.data.avatar,
+          avatarLinear: node.data.avatarLinear,
+          colorSchema: node.data.colorSchema,
+          name: computedNewNodeName({
+            templateName: node.data.name,
+            flowNodeType: node.data.flowNodeType,
+            pluginId: node.data.pluginId
+          }),
+          intro: node.data.intro,
+          showStatus: node.data.showStatus,
+
+          version: node.data.version,
+          versionLabel: node.data.versionLabel,
+          isLatestVersion: node.data.isLatestVersion,
+
+          catchError: node.data.catchError,
+          inputs: node.data.inputs,
+          outputs: node.data.outputs,
+
+          pluginId: node.data.pluginId,
+          source: node.data.source,
+          isFolder: node.data.isFolder,
+          pluginData: node.data.pluginData,
+
+          toolConfig: node.data.toolConfig,
+
+          currentCost: node.data.currentCost,
+          systemKeyCost: node.data.systemKeyCost,
+          hasTokenFee: node.data.hasTokenFee,
+          hasSystemSecret: node.data.hasSystemSecret,
+          readmeUrl: node.data.readmeUrl
+        };
+
+        return [
+          ...state.map((item) => ({
+            ...item,
+            selected: false
+          })),
+          storeNode2FlowNode({
+            item: {
+              flowNodeType: template.flowNodeType,
+              avatar: template.avatar,
+              avatarLinear: template.avatarLinear,
+              colorSchema: template.colorSchema,
+              name: template.name,
+              intro: template.intro,
+              nodeId: getNanoid(),
+              position: { x: node.position.x + 200, y: node.position.y + 50 },
+              showStatus: template.showStatus,
+              pluginId: template.pluginId,
+              source: template.source,
+              inputs: template.inputs,
+              outputs: template.outputs,
+              version: template.version,
+              versionLabel: template.versionLabel,
+              isLatestVersion: template.isLatestVersion,
+              toolConfig: template.toolConfig,
+              catchError: template.catchError
+            },
+            selected: true,
+            parentNodeId: template.parentNodeId,
+            t
+          })
+        ];
+      });
+    },
+    [computedNewNodeName, setNodes, t]
+  );
+  const Render = useMemo(() => {
+    const menuList = [
+      ...(menuForbid?.fold
+        ? []
+        : [
+            {
+              icon: isFolded ? 'core/chat/chevronRight' : 'core/chat/chevronDown',
+              label: isFolded ? t('workflow:Unfold') : t('workflow:Fold'),
+              variant: 'whiteBase',
+              onClick: () => {
+                onChangeNode({
+                  nodeId,
+                  type: 'attr',
+                  key: 'isFolded',
+                  value: !isFolded
+                });
+              }
+            }
+          ]),
+      ...(menuForbid?.debug
+        ? []
+        : [
+            {
+              icon: 'core/workflow/debug',
+              label: t('common:core.workflow.Debug'),
+              variant: 'whiteBase',
+              onClick: () => openDebugNode({ entryNodeId: nodeId })
+            }
+          ]),
+      ...(menuForbid?.copy
+        ? []
+        : [
+            {
+              icon: 'copy',
+              label: t('common:Copy'),
+              variant: 'whiteBase',
+              onClick: () => onCopyNode(nodeId)
+            }
+          ]),
+      ...(menuForbid?.delete
+        ? []
+        : [
+            {
+              icon: 'delete',
+              label: t('common:Delete'),
+              variant: 'whiteDanger',
+              onClick: () => deleteElements({ nodes: [{ id: nodeId }] })
+            }
+          ])
+    ];
+
+    return (
+      <>
+        <Box
+          className="nodrag controller-menu"
+          display={'none'}
+          flexDirection={'column'}
+          gap={2}
+          position={'absolute'}
+          top={'-20px'}
+          right={0}
+          transform={'translateX(90%)'}
+          pl={'20px'}
+          pr={'10px'}
+          pb={'20px'}
+          pt={'20px'}
+        >
+          {menuList.map((item) => (
+            <Button
+              key={item.icon}
+              h={8}
+              fontSize={'sm'}
+              pl={2}
+              pr={6}
+              variant={item.variant}
+              leftIcon={<MyIcon name={item.icon as any} w={'16px'} mr={-1} />}
+              onClick={item.onClick}
+            >
+              {t(item.label as any)}
+            </Button>
+          ))}
+        </Box>
+        <DebugInputModal />
+      </>
+    );
+  }, [
+    menuForbid?.debug,
+    menuForbid?.copy,
+    menuForbid?.delete,
+    menuForbid?.fold,
+    t,
+    DebugInputModal,
+    openDebugNode,
+    nodeId,
+    onCopyNode,
+    deleteElements,
+    isFolded,
+    onChangeNode
+  ]);
+
+  return Render;
+});
+
+// 节点操作按钮组组件
+const NodeActionButtons = React.memo<{
+  nodeTemplate?: {
+    diagram?: string;
+    userGuide?: string;
+    name?: string;
+    avatar?: string;
+    courseUrl?: string;
+    readmeUrl?: string;
+  };
+  courseUrl?: string;
+  readmeUrl?: string;
+  rtDoms?: React.ReactNode[];
+}>(({ nodeTemplate, courseUrl, readmeUrl, rtDoms }) => {
+  const { t } = useTranslation();
+
+  const buttons = useMemo(() => {
+    const result: React.ReactNode[] = [];
+
+    if (nodeTemplate?.diagram) {
+      result.push(
+        <MyTooltip
+          key="diagram"
+          label={
+            <MyImage src={nodeTemplate.diagram} w={'100%'} minH={['auto', '200px']} alt={''} />
+          }
+        >
+          <Button variant={'grayGhost'} size={'xs'} color={'primary.600'} px={1}>
+            {t('common:core.module.Diagram')}
+          </Button>
+        </MyTooltip>
+      );
+    }
+
+    const guideReadmeUrl = nodeTemplate?.readmeUrl || readmeUrl;
+    const guideCourseUrl = nodeTemplate?.courseUrl || courseUrl;
+
+    if (guideCourseUrl || guideReadmeUrl || nodeTemplate?.userGuide) {
+      result.push(
+        <UseGuideModal
+          key="userGuide"
+          title={nodeTemplate?.name}
+          iconSrc={nodeTemplate?.avatar}
+          text={nodeTemplate?.userGuide}
+          link={guideCourseUrl}
+          readmeUrl={guideReadmeUrl}
+        >
+          {({ onClick }) => (
+            <MyTooltip label={t('workflow:Node.Open_Node_Course')}>
+              <MyIconButton ml={1} icon="book" color={'primary.600'} onClick={onClick} />
+            </MyTooltip>
+          )}
+        </UseGuideModal>
+      );
+    }
+
+    if (rtDoms) {
+      result.push(...rtDoms);
+    }
+
+    return result;
+  }, [nodeTemplate, courseUrl, readmeUrl, rtDoms, t]);
+
+  if (buttons.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {buttons.map((button, index) => (
+        <React.Fragment key={index}>
+          {index > 0 && <Box bg={'myGray.300'} w={'1px'} h={'12px'} mx={1} />}
+          {button}
+        </React.Fragment>
+      ))}
+    </>
+  );
+});
+NodeActionButtons.displayName = 'NodeActionButtons';
+
+// 节点错误徽章组件
+const NodeStatusBadge = React.memo<{ status?: PluginStatusType; error?: string | null }>(
+  ({ status, error }) => {
+    const { t } = useTranslation();
+    const errorText =
+      error || (status === PluginStatusEnum.Offline ? 'common:error.tool_not_exist' : undefined);
+
+    if (errorText) {
+      return (
+        <Flex
+          bg={'red.50'}
+          alignItems={'center'}
+          h={8}
+          px={2}
+          rounded={'6px'}
+          fontSize={'xs'}
+          fontWeight={'medium'}
+        >
+          <MyIcon name={'common/errorFill'} w={'14px'} mr={1} />
+          <Box color={'red.600'}>{t(errorText as any)}</Box>
+        </Flex>
+      );
+    }
+    if (status !== undefined && status !== PluginStatusEnum.Normal) {
+      const statusLabelMap: Partial<Record<PluginStatusType, string>> = {
+        [PluginStatusEnum.Hidden]: t('app:toolkit_status_hidden'),
+        [PluginStatusEnum.SoonOffline]: t('app:toolkit_status_soon_offline')
+      };
+      const statusTooltipMap: Partial<Record<PluginStatusType, string>> = {
+        [PluginStatusEnum.Hidden]: t('app:tool_hidden_tips'),
+        [PluginStatusEnum.SoonOffline]: t('app:tool_soon_offset_tips')
+      };
+      return (
+        <MyTooltip label={statusTooltipMap[status]}>
+          <MyTag mr={2} colorSchema={PluginStatusMap[status].tagColor} type="borderFill">
+            {statusLabelMap[status]}
+          </MyTag>
+        </MyTooltip>
+      );
+    }
+    return null;
+  }
+);
+NodeStatusBadge.displayName = 'NodeStatusBadge';
+
+// 节点 Secret 组件
+const NodeSecret = React.memo(function NodeSecret({
+  nodeId,
+  isFolder,
+  courseUrl,
+  readmeUrl,
+  hasSystemSecret,
+  pluginId,
+  source,
+  systemKeyCost,
+  inputConfig
+}: {
+  nodeId: string;
+  isFolder?: boolean;
+  courseUrl?: string;
+  readmeUrl?: string;
+  hasSystemSecret?: boolean;
+  pluginId?: string;
+  source?: string;
+  systemKeyCost?: number;
+  inputConfig: FlowNodeInputItemType | undefined;
+}) {
+  const { t } = useTranslation();
+  const onChangeNode = useContextSelector(WorkflowActionsContext, (v) => v.onChangeNode);
+
+  const [
+    isOpenToolParamConfigModal,
+    { setTrue: onOpenToolParamConfigModal, setFalse: onCloseToolParamConfigModal }
+  ] = useBoolean(false);
+
+  return (
+    <>
+      <Flex
+        alignItems={'center'}
+        flexDirection={'column'}
+        justifyContent={'center'}
+        borderRadius={'lg'}
+        h={'200px'}
+        bg={'myGray.25'}
+        border={'base'}
+        mx={4}
+      >
+        <Box>{t('app:tool_not_active')}</Box>
+        <Button w={'83px'} mt={2} size={'lg'} onClick={onOpenToolParamConfigModal}>
+          {t('app:too_to_active')}
+        </Button>
+      </Flex>
+
+      {inputConfig && isOpenToolParamConfigModal && (
+        <SecretInputModal
+          isFolder={isFolder}
+          onClose={onCloseToolParamConfigModal}
+          onSubmit={(data) => {
+            onChangeNode({
+              nodeId,
+              type: 'updateInput',
+              key: inputConfig.key,
+              value: {
+                ...inputConfig,
+                value: data
+              }
+            });
+            onCloseToolParamConfigModal();
+          }}
+          courseUrl={courseUrl}
+          readmeUrl={readmeUrl}
+          inputConfig={inputConfig}
+          hasSystemSecret={hasSystemSecret}
+          parentId={pluginId}
+          source={source}
+          secretCost={systemKeyCost}
+        />
+      )}
+    </>
+  );
+});
+
+// Presentation Mode Overlay 组件
+const PresentationModeOverlay = React.memo(function PresentationModeOverlay({
+  avatar,
+  name,
+  intro,
+  isLoopNode,
+  onDoubleClick
+}: {
+  avatar: string;
+  name: string;
+  intro?: string;
+  isLoopNode: boolean;
+  onDoubleClick: () => void;
+}) {
+  const [presentationHeight, setPresentationHeight] = useState<number>(0);
+
+  const presentationOverlayRef = useCallback((node: HTMLDivElement | null) => {
+    if (node) {
+      setPresentationHeight(node.offsetHeight);
+    }
+  }, []);
+
+  return (
+    <Flex
+      ref={presentationOverlayRef}
+      position={'absolute'}
+      top={0}
+      left={0}
+      right={0}
+      bottom={0}
+      bg={'rgba(255, 255, 255, 0.80)'}
+      backdropFilter={'blur(10px)'}
+      flexDirection={'column'}
+      zIndex={10}
+      borderRadius={'lg'}
+      {...(isLoopNode
+        ? {
+            alignItems: 'flex-start',
+            justifyContent: 'flex-start',
+            px: 4,
+            py: 4
+          }
+        : {
+            alignItems: 'center',
+            justifyContent: 'center',
+            px: 3,
+            py: 0
+          })}
+      cursor={'pointer'}
+      onDoubleClick={onDoubleClick}
+    >
+      <Flex
+        flexDirection={'column'}
+        {...(isLoopNode
+          ? {
+              ml: 4,
+              mt: 4,
+              alignItems: 'flex-start'
+            }
+          : {
+              ml: 0,
+              mt: 0,
+              alignItems: 'center'
+            })}
+        w={'full'}
+        color={'black'}
+      >
+        <Avatar src={avatar} fill={'none'} borderRadius={24} w={'160px'} h={'160px'} />
+        {name && presentationHeight > 280 && (
+          <Box
+            mt={2}
+            fontSize={'36px'}
+            fontWeight={'medium'}
+            textAlign={isLoopNode ? 'left' : 'center'}
+            overflow={'hidden'}
+            textOverflow={'ellipsis'}
+            whiteSpace={'nowrap'}
+            maxW={'80%'}
+          >
+            {name}
+          </Box>
+        )}
+        {intro && presentationHeight > 320 && (
+          <Box
+            mt={1}
+            fontSize={'28px'}
+            textAlign={isLoopNode ? 'left' : 'center'}
+            overflow={'hidden'}
+            textOverflow={'ellipsis'}
+            whiteSpace={'nowrap'}
+            maxW={'80%'}
+          >
+            {intro}
+          </Box>
+        )}
+      </Flex>
+    </Flex>
+  );
+});

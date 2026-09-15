@@ -1,43 +1,54 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useTranslation } from 'next-i18next';
 import MyIcon from '../Icon';
-import { useRequest2 } from '../../../hooks/useRequest';
+import { useRequest } from '../../../hooks/useRequest';
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
   useDisclosure,
-  PlacementWithLogical,
+  type PlacementWithLogical,
   HStack,
   Box,
   Button,
-  PopoverArrow
+  PopoverArrow,
+  Flex,
+  type PopoverProps
 } from '@chakra-ui/react';
+import { useMemoEnhance } from '../../../hooks/useMemoEnhance';
 
 const PopoverConfirm = ({
   content,
-  showCancel,
+  showCancel = true,
   type,
   Trigger,
-  placement = 'bottom-start',
+  placement = 'auto',
+  closeOnBlur = true,
   offset,
-  onConfirm
+  modifiers,
+  onConfirm,
+  confirmText,
+  cancelText
 }: {
   content: string;
   showCancel?: boolean;
   type?: 'info' | 'delete';
   Trigger: React.ReactNode;
   placement?: PlacementWithLogical;
+  closeOnBlur?: boolean;
   offset?: [number, number];
-  onConfirm: () => any;
+  modifiers?: PopoverProps['modifiers'];
+  onConfirm: () => Promise<any> | any;
+  confirmText?: string;
+  cancelText?: string;
 }) => {
   const { t } = useTranslation();
 
-  const map = useMemo(() => {
+  const map = useMemoEnhance(() => {
     const map = {
       info: {
         variant: 'primary',
-        icon: 'common/confirm/commonTip'
+        icon: 'common/confirm/infoTipClean'
       },
       delete: {
         variant: 'dangerFill',
@@ -46,12 +57,12 @@ const PopoverConfirm = ({
     };
     if (type && map[type]) return map[type];
     return map.info;
-  }, [type, t]);
+  }, [type]);
 
   const firstFieldRef = React.useRef(null);
   const { onOpen, onClose, isOpen } = useDisclosure();
 
-  const { runAsync: onclickConfirm, loading } = useRequest2(onConfirm, {
+  const { runAsync: onclickConfirm, loading } = useRequest(async () => onConfirm(), {
     onSuccess: onClose
   });
 
@@ -63,30 +74,80 @@ const PopoverConfirm = ({
       onClose={onClose}
       placement={placement}
       offset={offset}
-      closeOnBlur={false}
+      modifiers={modifiers}
+      closeOnBlur={closeOnBlur}
       trigger={'click'}
       openDelay={100}
       closeDelay={100}
       isLazy
-      lazyBehavior="keepMounted"
+      lazyBehavior="unmount"
       arrowSize={10}
+      strategy={'fixed'}
+      computePositionOnMount={true}
     >
       <PopoverTrigger>{Trigger}</PopoverTrigger>
-      <PopoverContent p={4}>
+      <PopoverContent p={'20px'} w={'304px'} borderRadius={'10px'}>
         <PopoverArrow />
 
-        <HStack alignItems={'flex-start'} color={'myGray.700'}>
-          <MyIcon name={map.icon as any} w={'1.5rem'} />
-          <Box fontSize={'sm'}>{content}</Box>
+        <HStack alignItems={'flex-start'} color={'myGray.700'} spacing={'12px'}>
+          {!type || type === 'info' ? (
+            <Flex
+              alignItems={'center'}
+              justifyContent={'center'}
+              bg={'primary.100'}
+              borderRadius={'full'}
+              w={'24px'}
+              h={'24px'}
+              flexShrink={0}
+            >
+              <MyIcon
+                name={'common/confirm/infoTipClean'}
+                w={'16px'}
+                h={'16px'}
+                color={'myGray.400'}
+                fill={'myGray.400'}
+                verticalAlign={'middle'}
+              />
+            </Flex>
+          ) : (
+            <Box flexShrink={0}>
+              <MyIcon name={map.icon as any} w={'24px'} h={'24px'} verticalAlign={'middle'} />
+            </Box>
+          )}
+          <Box
+            fontSize={'sm'}
+            whiteSpace={'pre-wrap'}
+            wordBreak={'break-all'}
+            flex={'1'}
+            lineHeight={'20px'}
+          >
+            {content}
+          </Box>
         </HStack>
-        <HStack mt={1} justifyContent={'flex-end'}>
+        <HStack mt={'16px'} justifyContent={'flex-end'} spacing={'12px'}>
           {showCancel && (
-            <Button variant={'whiteBase'} size="sm" onClick={onClose}>
-              {t('common:common.Cancel')}
+            <Button
+              variant={'whiteBase'}
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+            >
+              {cancelText || t('common:Cancel')}
             </Button>
           )}
-          <Button isLoading={loading} variant={map.variant} size="sm" onClick={onclickConfirm}>
-            {t('common:common.Confirm')}
+          <Button
+            isLoading={loading}
+            variant={map.variant}
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              // useRequest 已展示失败提示；保留确认框重试，不把拒绝继续抛给浏览器事件。
+              void onclickConfirm().catch(() => {});
+            }}
+          >
+            {confirmText || t('common:Confirm')}
           </Button>
         </HStack>
       </PopoverContent>

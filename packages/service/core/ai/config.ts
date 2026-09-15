@@ -1,33 +1,53 @@
-import type { UserModelSchema } from '@fastgpt/global/support/user/type';
 import OpenAI from '@fastgpt/global/core/ai';
+import { type OpenaiAccountType } from '@fastgpt/global/support/user/team/type';
+import { serviceEnv } from '../../env';
 
-export const openaiBaseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+export const openaiBaseUrl = `${serviceEnv.AIPROXY_API_ENDPOINT}/v1`;
+export const openaiBaseKey = serviceEnv.AIPROXY_API_TOKEN;
+export const defaultUserOpenAIBaseUrl = 'https://api.openai.com/v1';
 
-export const getAIApi = (props?: {
-  userKey?: UserModelSchema['openaiAccount'];
-  timeout?: number;
-}) => {
-  const { userKey, timeout } = props || {};
-
-  const baseUrl =
-    userKey?.baseUrl || global?.systemEnv?.oneapiUrl || process.env.ONEAPI_URL || openaiBaseUrl;
-  const apiKey = userKey?.key || global?.systemEnv?.chatApiKey || process.env.CHAT_API_KEY || '';
-
-  return new OpenAI({
-    baseURL: baseUrl,
-    apiKey,
-    httpAgent: global.httpsAgent,
-    timeout,
-    maxRetries: 2
-  });
+export type AIApiRequestMeta = {
+  usedUserOpenAIKey: boolean;
+  baseUrl?: string;
 };
 
-export const getAxiosConfig = (props?: { userKey?: UserModelSchema['openaiAccount'] }) => {
-  const { userKey } = props || {};
+const getUserOpenAIAccount = (userKey?: OpenaiAccountType): OpenaiAccountType | undefined => {
+  if (!userKey?.key) return;
 
-  const baseUrl =
-    userKey?.baseUrl || global?.systemEnv?.oneapiUrl || process.env.ONEAPI_URL || openaiBaseUrl;
-  const apiKey = userKey?.key || global?.systemEnv?.chatApiKey || process.env.CHAT_API_KEY || '';
+  return {
+    key: userKey.key,
+    baseUrl: userKey.baseUrl || defaultUserOpenAIBaseUrl
+  };
+};
+
+// 代理走 packages/service/common/proxy/index.ts 里的 EnvHttpProxyAgent + setGlobalDispatcher
+export const getAIApi = (props?: { userKey?: OpenaiAccountType; timeout?: number }) => {
+  const { userKey, timeout } = props || {};
+  const userOpenAIAccount = getUserOpenAIAccount(userKey);
+
+  const baseUrl = userOpenAIAccount?.baseUrl || openaiBaseUrl;
+  const apiKey = userOpenAIAccount?.key || openaiBaseKey;
+
+  return {
+    ai: new OpenAI({
+      baseURL: baseUrl,
+      apiKey,
+      timeout,
+      maxRetries: 2
+    }),
+    requestMeta: {
+      usedUserOpenAIKey: !!userOpenAIAccount,
+      baseUrl
+    } satisfies AIApiRequestMeta
+  };
+};
+
+export const getAxiosConfig = (props?: { userKey?: OpenaiAccountType }) => {
+  const { userKey } = props || {};
+  const userOpenAIAccount = getUserOpenAIAccount(userKey);
+
+  const baseUrl = userOpenAIAccount?.baseUrl || openaiBaseUrl;
+  const apiKey = userOpenAIAccount?.key || openaiBaseKey;
 
   return {
     baseUrl,

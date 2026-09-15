@@ -1,27 +1,26 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { jsonRes } from '@fastgpt/service/common/response';
-import { connectToDatabase } from '@/service/mongo';
 import { checkWebSyncLimit } from '@fastgpt/service/support/user/utils';
 import { authCert } from '@fastgpt/service/support/permission/auth/common';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { NextAPI } from '@/service/middleware/entry';
+import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import {
+  WebSyncLimitQuerySchema,
+  WebSyncLimitResponseSchema,
+  type WebSyncLimitResponse
+} from '@fastgpt/global/openapi/support/user/team/limit/api';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<any>) {
-  try {
-    await connectToDatabase();
+async function handler(req: ApiRequestProps): Promise<WebSyncLimitResponse> {
+  parseApiInput({ req, querySchema: WebSyncLimitQuerySchema });
 
-    // 凭证校验
-    const { teamId } = await authCert({ req, authToken: true });
+  // 凭证校验
+  const { teamId } = await authCert({ req, authToken: true });
 
-    await checkWebSyncLimit({
-      teamId,
-      limitMinutes: global.feConfigs?.limit?.websiteSyncLimitMinuted
-    });
+  await checkWebSyncLimit({
+    teamId,
+    limitMinutes: global.feConfigs?.limit?.websiteSyncLimitMinuted
+  });
 
-    jsonRes(res);
-  } catch (err) {
-    res.status(500);
-    jsonRes(res, {
-      code: 500,
-      error: err
-    });
-  }
+  return WebSyncLimitResponseSchema.parse(undefined);
 }
+
+export default NextAPI(handler);

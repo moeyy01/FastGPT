@@ -1,3138 +1,656 @@
-// @ts-nocheck
-
-import { AppItemType } from '@/types/app';
+import { getEmptyAgentConfig } from '@/pageComponents/app/detail/Edit/ChatAgent/utils';
+import { parseCurl } from '@fastgpt/global/common/string/http';
 import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
-import {
-  NodeOutputKeyEnum,
-  WorkflowIOValueTypeEnum
-} from '@fastgpt/global/core/workflow/constants';
+import { type AppSchemaType } from '@fastgpt/global/core/app/type';
+import { NodeInputKeyEnum, WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
 import {
   FlowNodeInputTypeEnum,
   FlowNodeOutputTypeEnum,
   FlowNodeTypeEnum
 } from '@fastgpt/global/core/workflow/node/constant';
-import { i18nT } from '@fastgpt/web/i18n/utils';
+import {
+  type FlowNodeInputItemType,
+  type FlowNodeOutputItemType
+} from '@fastgpt/global/core/workflow/type/io';
+import { i18nT } from '@fastgpt/global/common/i18n/utils';
 
-type TemplateType = (AppItemType & {
-  avatar: string;
-  intro: string;
-  type: AppTypeEnum;
-})[];
-
-// template
-export const simpleBotTemplates: TemplateType = [
-  {
-    id: 'simpleChat',
-    avatar: 'core/workflow/template/aiChat',
-    name: i18nT('app:template.simple_robot'),
-    intro: '一个极其简单的 AI 应用，你可以绑定知识库或工具。',
-    type: AppTypeEnum.simple,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: FlowNodeTypeEnum.systemConfig,
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.app.Welcome Text',
-            value: ''
+// TODO: 需要做一个类型强制约束
+export const getEmptyAppsTemplate = (t: any) => {
+  const obj = {
+    [AppTypeEnum.chatAgent]: {
+      avatar: 'core/app/type/simpleFill',
+      name: 'Agent',
+      ...getEmptyAgentConfig(t)
+    },
+    [AppTypeEnum.simple]: {
+      avatar: 'core/app/type/simpleFill',
+      name: i18nT('app:template.simple_robot'),
+      nodes: [
+        {
+          nodeId: '448745',
+          name: t(i18nT('common:core.module.template.work_start')),
+          intro: '',
+          avatar: 'core/workflow/template/workflowStart',
+          flowNodeType: FlowNodeTypeEnum.workflowStart,
+          position: {
+            x: 558.4082376415505,
+            y: 123.72387429194112
           },
-          {
-            key: 'variables',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              type: 'web'
+          version: '481',
+          inputs: [
+            {
+              key: 'userChatInput',
+              renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
+              valueType: WorkflowIOValueTypeEnum.string,
+              label: i18nT('common:core.module.input.label.user question'),
+              required: true,
+              toolDescription: i18nT('common:core.module.input.label.user question')
             }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
+          ],
+          outputs: [
+            {
+              id: 'userChatInput',
+              key: 'userChatInput',
+              label: 'core.module.input.label.user question',
+              valueType: WorkflowIOValueTypeEnum.string,
+              type: FlowNodeOutputTypeEnum.static
             }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: '448745',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: FlowNodeTypeEnum.workflowStart,
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
+          ]
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: 'loOvhld2ZTKa',
-        name: 'AI 对话',
-        intro: 'AI 大模型对话',
-        avatar: 'core/workflow/template/aiChat',
-        flowNodeType: FlowNodeTypeEnum.chatNode,
-        showStatus: true,
-        position: {
-          x: 1097.7317280958762,
-          y: -244.16014496351386
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: [
-              FlowNodeInputTypeEnum.settingLLMModel,
-              FlowNodeInputTypeEnum.reference
-            ],
-            label: 'core.module.input.label.aiModel',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'gpt-4o-mini'
+        {
+          nodeId: 'loOvhld2ZTKa',
+          name: t(i18nT('common:core.module.template.ai_chat')),
+          intro: t(i18nT('common:core.module.template.ai_chat_intro')),
+          avatar: 'core/workflow/template/aiChat',
+          flowNodeType: FlowNodeTypeEnum.chatNode,
+          showStatus: true,
+          position: {
+            x: 1097.7317280958762,
+            y: -244.16014496351386
           },
-          {
-            key: 'temperature',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 0,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 2000,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'isResponseAnswerText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: true,
-            valueType: WorkflowIOValueTypeEnum.boolean
-          },
-          {
-            key: 'quoteTemplate',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'quotePrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            max: 3000,
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            label: 'core.module.input.label.chat history',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题',
-            value: ['448745', 'userChatInput']
-          },
-          {
-            key: 'quoteQA',
-            renderTypeList: [FlowNodeInputTypeEnum.settingDatasetQuotePrompt],
-            label: '',
-            debugLabel: '知识库引用',
-            description: '',
-            valueType: WorkflowIOValueTypeEnum.datasetQuote
-          }
-        ],
-        outputs: [
-          {
-            id: 'history',
-            key: 'history',
-            label: 'core.module.output.label.New context',
-            description: 'core.module.output.description.New context',
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            type: FlowNodeOutputTypeEnum.static
-          },
-          {
-            id: 'answerText',
-            key: 'answerText',
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      }
-    ],
-    edges: [
-      {
-        source: '448745',
-        target: 'loOvhld2ZTKa',
-        sourceHandle: '448745-source-right',
-        targetHandle: 'loOvhld2ZTKa-target-left'
-      }
-    ]
-  },
-  {
-    id: 'chatGuide',
-    avatar: 'core/workflow/template/systemConfig',
-    name: '对话引导 + 变量',
-    intro: '可以在对话开始发送一段提示，或者让用户填写一些内容，作为本次对话的变量',
-    type: AppTypeEnum.simple,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: FlowNodeTypeEnum.systemConfig,
-        position: {
-          x: 496.57560693988853,
-          y: -490.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.app.Welcome Text',
-            value: '你好，我可以为你翻译各种语言，请告诉我你需要翻译成什么语言？'
-          },
-          {
-            key: 'variables',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: 'core.app.Chat Variable',
-            value: [
-              {
-                id: 'myb3xk',
-                key: 'language',
-                label: '目标语言',
-                type: 'select',
-                required: true,
-                maxLen: 50,
-                enums: [
-                  {
-                    value: '中文'
-                  },
-                  {
-                    value: '英文'
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            key: 'questionGuide',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              type: 'web'
+          version: '481',
+          inputs: [
+            {
+              key: 'model',
+              renderTypeList: [
+                FlowNodeInputTypeEnum.settingLLMModel,
+                FlowNodeInputTypeEnum.reference
+              ],
+              label: 'core.module.input.label.aiModel',
+              valueType: WorkflowIOValueTypeEnum.string
+            },
+            {
+              key: 'temperature',
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              value: undefined,
+              valueType: WorkflowIOValueTypeEnum.number,
+              min: 0,
+              max: 10,
+              step: 1
+            },
+            {
+              key: 'maxToken',
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              value: undefined,
+              valueType: WorkflowIOValueTypeEnum.number,
+              min: 100,
+              max: 4000,
+              step: 50
+            },
+            {
+              key: 'isResponseAnswerText',
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              value: true,
+              valueType: WorkflowIOValueTypeEnum.boolean
+            },
+            {
+              key: 'quoteTemplate',
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              valueType: WorkflowIOValueTypeEnum.string
+            },
+            {
+              key: 'quotePrompt',
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              valueType: WorkflowIOValueTypeEnum.string
+            },
+            {
+              key: 'systemPrompt',
+              renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
+              max: 3000,
+              valueType: WorkflowIOValueTypeEnum.string,
+              label: 'core.ai.Prompt',
+              description: 'core.app.tip.systemPromptTip',
+              placeholder: 'core.app.tip.chatNodeSystemPromptTip',
+              value: ''
+            },
+            {
+              key: 'history',
+              renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
+              valueType: WorkflowIOValueTypeEnum.chatHistory,
+              label: 'core.module.input.label.chat history',
+              required: true,
+              min: 0,
+              max: 30,
+              value: 6
+            },
+            {
+              key: 'userChatInput',
+              renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
+              valueType: WorkflowIOValueTypeEnum.string,
+              label: i18nT('common:core.module.input.label.user question'),
+              required: true,
+              toolDescription: i18nT('common:core.module.input.label.user question'),
+              value: ['448745', 'userChatInput']
+            },
+            {
+              key: 'quoteQA',
+              renderTypeList: [FlowNodeInputTypeEnum.settingDatasetQuotePrompt],
+              label: '',
+              debugLabel: i18nT('common:core.module.Dataset quote.label'),
+              description: '',
+              valueType: WorkflowIOValueTypeEnum.datasetQuote
+            },
+            {
+              key: NodeInputKeyEnum.aiChatReasoning,
+              renderTypeList: [FlowNodeInputTypeEnum.hidden],
+              label: '',
+              valueType: WorkflowIOValueTypeEnum.boolean,
+              value: true
             }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
+          ],
+          outputs: [
+            {
+              id: 'history',
+              key: 'history',
+              label: 'core.module.output.label.New context',
+              description: 'core.module.output.description.New context',
+              valueType: WorkflowIOValueTypeEnum.chatHistory,
+              type: FlowNodeOutputTypeEnum.static
+            },
+            {
+              id: 'answerText',
+              key: 'answerText',
+              label: 'core.module.output.label.Ai response content',
+              description: 'core.module.output.description.Ai response content',
+              valueType: WorkflowIOValueTypeEnum.string,
+              type: FlowNodeOutputTypeEnum.static
             }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: '448745',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: FlowNodeTypeEnum.workflowStart,
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
+          ]
+        }
+      ],
+      edges: [
+        {
+          source: '448745',
+          target: 'loOvhld2ZTKa',
+          sourceHandle: '448745-source-right',
+          targetHandle: 'loOvhld2ZTKa-target-left'
+        }
+      ],
+      chatConfig: {
+        welcomeText: '',
+        welcomeConfig: {
+          welcomeText: ''
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: 'loOvhld2ZTKa',
-        name: 'AI 对话',
-        intro: 'AI 大模型对话',
-        avatar: 'core/workflow/template/aiChat',
-        flowNodeType: FlowNodeTypeEnum.chatNode,
-        showStatus: true,
-        position: {
-          x: 1097.7317280958762,
-          y: -244.16014496351386
+        variables: [],
+        questionGuide: {
+          open: false
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: [
-              FlowNodeInputTypeEnum.settingLLMModel,
-              FlowNodeInputTypeEnum.reference
-            ],
-            label: 'core.module.input.label.aiModel',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'gpt-4o-mini'
-          },
-          {
-            key: 'temperature',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 0,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 2000,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'isResponseAnswerText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: true,
-            valueType: WorkflowIOValueTypeEnum.boolean
-          },
-          {
-            key: 'quoteTemplate',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'quotePrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            max: 3000,
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: '请直接将我的问题翻译成{{$VARIABLE_NODE_ID.language$}}，不需要回答问题。'
-          },
-          {
-            key: 'history',
-            renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            label: 'core.module.input.label.chat history',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题',
-            value: ['448745', 'userChatInput']
-          },
-          {
-            key: 'quoteQA',
-            renderTypeList: [FlowNodeInputTypeEnum.settingDatasetQuotePrompt],
-            label: '',
-            debugLabel: '知识库引用',
-            description: '',
-            valueType: WorkflowIOValueTypeEnum.datasetQuote
-          }
-        ],
-        outputs: [
-          {
-            id: 'history',
-            key: 'history',
-            label: 'core.module.output.label.New context',
-            description: 'core.module.output.description.New context',
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            type: FlowNodeOutputTypeEnum.static
-          },
-          {
-            id: 'answerText',
-            key: 'answerText',
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
+        ttsConfig: {
+          type: 'web' as const
+        },
+        whisperConfig: {
+          open: false,
+          autoSend: false,
+          autoTTSResponse: false
+        }
       }
-    ],
-    edges: [
-      {
-        source: '448745',
-        target: 'loOvhld2ZTKa',
-        sourceHandle: '448745-source-right',
-        targetHandle: 'loOvhld2ZTKa-target-left'
-      }
-    ]
-  },
-  {
-    id: 'simpleDatasetChat',
-    avatar: 'core/workflow/template/datasetSearch',
-    name: '知识库+对话引导',
-    intro: '每次提问时进行一次知识库搜索，将搜索结果注入 LLM 模型进行参考回答',
-    type: AppTypeEnum.simple,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: FlowNodeTypeEnum.systemConfig,
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.app.Welcome Text',
-            value: '你好，我是知识库助手，请不要忘记选择知识库噢~\n[你是谁]\n[如何使用]'
+    },
+    [AppTypeEnum.workflow]: {
+      avatar: 'core/app/type/workflowFill',
+      name: i18nT('common:core.module.template.empty_workflow'),
+      nodes: [
+        {
+          nodeId: '448745',
+          name: t(i18nT('common:core.module.template.work_start')),
+          intro: '',
+          avatar: 'core/workflow/template/workflowStart',
+          flowNodeType: FlowNodeTypeEnum.workflowStart,
+          position: {
+            x: 632.368838596004,
+            y: -347.7446492944009
           },
-          {
-            key: 'variables',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              type: 'web'
+          version: '481',
+          inputs: [
+            {
+              key: 'userChatInput',
+              renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
+              valueType: WorkflowIOValueTypeEnum.string,
+              label: i18nT('common:core.module.input.label.user question'),
+              required: true,
+              toolDescription: i18nT('common:core.module.input.label.user question')
             }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
+          ],
+          outputs: [
+            {
+              id: 'userChatInput',
+              key: 'userChatInput',
+              label: i18nT('common:core.module.input.label.user question'),
+              type: FlowNodeOutputTypeEnum.static,
+              valueType: WorkflowIOValueTypeEnum.string
             }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: 'workflowStartNodeId',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: FlowNodeTypeEnum.workflowStart,
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
+          ]
+        }
+      ],
+      edges: [],
+      chatConfig: {
+        welcomeText: '',
+        welcomeConfig: {
+          welcomeText: ''
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: '7BdojPlukIQw',
-        name: 'AI 对话',
-        intro: 'AI 大模型对话',
-        avatar: 'core/workflow/template/aiChat',
-        flowNodeType: FlowNodeTypeEnum.chatNode,
-        showStatus: true,
-        position: {
-          x: 1638.509551404687,
-          y: -341.0428450861567
+        variables: [],
+        questionGuide: {
+          open: false
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: [
-              FlowNodeInputTypeEnum.settingLLMModel,
-              FlowNodeInputTypeEnum.reference
-            ],
-            label: 'core.module.input.label.aiModel',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'gpt-4o-mini'
-          },
-          {
-            key: 'temperature',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 3,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 1950,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'isResponseAnswerText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: true,
-            valueType: WorkflowIOValueTypeEnum.boolean
-          },
-          {
-            key: 'quoteTemplate',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'quotePrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            max: 3000,
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            label: 'core.module.input.label.chat history',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题',
-            value: ['workflowStartNodeId', 'userChatInput']
-          },
-          {
-            key: 'quoteQA',
-            renderTypeList: [FlowNodeInputTypeEnum.settingDatasetQuotePrompt],
-            label: '',
-            debugLabel: '知识库引用',
-            description: '',
-            valueType: WorkflowIOValueTypeEnum.datasetQuote,
-            value: ['iKBoX2vIzETU', 'quoteQA']
-          }
-        ],
-        outputs: [
-          {
-            id: 'history',
-            key: 'history',
-            label: 'core.module.output.label.New context',
-            description: 'core.module.output.description.New context',
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            type: FlowNodeOutputTypeEnum.static
-          },
-          {
-            id: 'answerText',
-            key: 'answerText',
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: 'iKBoX2vIzETU',
-        name: '知识库搜索',
-        intro: '调用“语义检索”和“全文检索”能力，从“知识库”中查找可能与问题相关的参考内容',
-        avatar: 'core/workflow/template/datasetSearch',
-        flowNodeType: FlowNodeTypeEnum.datasetSearchNode,
-        showStatus: true,
-        position: {
-          x: 918.5901682164496,
-          y: -227.11542247619582
+        ttsConfig: {
+          type: 'web' as const
         },
-        version: '481',
-        inputs: [
-          {
-            key: 'datasets',
-            renderTypeList: [FlowNodeInputTypeEnum.selectDataset, FlowNodeInputTypeEnum.reference],
-            label: 'core.module.input.label.Select dataset',
-            value: [],
-            valueType: WorkflowIOValueTypeEnum.selectDataset,
-            list: [],
-            required: true
-          },
-          {
-            key: 'similarity',
-            renderTypeList: [FlowNodeInputTypeEnum.selectDatasetParamsModal],
-            label: '',
-            value: 0.4,
-            valueType: WorkflowIOValueTypeEnum.number
-          },
-          {
-            key: 'limit',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 1500,
-            valueType: WorkflowIOValueTypeEnum.number
-          },
-          {
-            key: 'searchMode',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'embedding'
-          },
-          {
-            key: 'usingReRank',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            value: false
-          },
-          {
-            key: 'datasetSearchUsingExtensionQuery',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            value: true
-          },
-          {
-            key: 'datasetSearchExtensionModel',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'datasetSearchExtensionBg',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: ''
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '需要检索的内容',
-            value: ['workflowStartNodeId', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: 'quoteQA',
-            key: 'quoteQA',
-            label: 'core.module.Dataset quote.label',
-            type: FlowNodeOutputTypeEnum.static,
-            valueType: WorkflowIOValueTypeEnum.datasetQuote,
-            description: '特殊数组格式，搜索结果为空时，返回空数组。'
-          }
-        ]
+        whisperConfig: {
+          open: false,
+          autoSend: false,
+          autoTTSResponse: false
+        }
       }
-    ],
-    edges: [
-      {
-        source: 'workflowStartNodeId',
-        target: 'iKBoX2vIzETU',
-        sourceHandle: 'workflowStartNodeId-source-right',
-        targetHandle: 'iKBoX2vIzETU-target-left'
-      },
-      {
-        source: 'iKBoX2vIzETU',
-        target: '7BdojPlukIQw',
-        sourceHandle: 'iKBoX2vIzETU-source-right',
-        targetHandle: '7BdojPlukIQw-target-left'
-      }
-    ]
-  },
-  {
-    id: 'toolChat',
-    avatar: 'core/workflow/template/getTime',
-    name: '知道时间的机器人',
-    intro: '通过挂载时间插件，让模型获取当前最新时间',
-    type: AppTypeEnum.simple,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: FlowNodeTypeEnum.systemConfig,
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
+    },
+    [AppTypeEnum.workflowTool]: {
+      avatar: 'core/app/type/pluginFill',
+      name: i18nT('common:core.module.template.empty_plugin'),
+      nodes: [
+        {
+          nodeId: 'pluginInput',
+          name: t(i18nT('workflow:template.plugin_start')),
+          avatar: 'core/workflow/template/workflowStart',
+          flowNodeType: FlowNodeTypeEnum.pluginInput,
+          showStatus: false,
+          position: {
+            x: 616.4226348688949,
+            y: -165.05298493910115
+          },
+          version: '481',
+          inputs: [],
+          outputs: []
         },
-        version: '481',
-        inputs: [],
-        outputs: []
-      },
-      {
-        nodeId: 'workflowStartNodeId',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: FlowNodeTypeEnum.workflowStart,
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: 'string',
-            type: 'static'
-          }
-        ]
-      },
-      {
-        nodeId: 'jrWPV9',
-        name: '工具调用',
-        intro: '通过AI模型自动选择一个或多个功能块进行调用，也可以对插件进行调用。',
-        avatar: 'core/workflow/template/toolCall',
-        flowNodeType: FlowNodeTypeEnum.tools,
-        showStatus: true,
-        position: {
-          x: 1062.1738942532802,
-          y: -223.65033022650476
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: ['settingLLMModel', 'reference'],
-            label: 'core.module.input.label.aiModel',
-            valueType: 'string',
-            llmModelType: 'all',
-            value: 'gpt-4o-mini'
+        {
+          nodeId: 'pluginOutput',
+          name: t(i18nT('common:core.module.template.self_output')),
+          avatar: '/imgs/workflow/output.png',
+          flowNodeType: FlowNodeTypeEnum.pluginOutput,
+          showStatus: false,
+          position: {
+            x: 1607.7142331269126,
+            y: -151.8669210746189
           },
-          {
-            key: 'temperature',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 0,
-            valueType: 'number',
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 2000,
-            valueType: 'number',
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: ['textarea', 'reference'],
-            max: 3000,
-            valueType: 'string',
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: ['numberInput', 'reference'],
-            valueType: 'chatHistory',
-            label: 'core.module.input.label.chat history',
-            description: '最多携带多少轮对话记录',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            value: ['workflowStartNodeId', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: 'answerText',
-            key: 'answerText',
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: 'string',
-            type: 'static'
-          }
-        ]
-      },
-      {
-        nodeId: 'zBxjo5',
-        name: '获取当前时间',
-        intro: '获取用户当前时区的时间。',
-        avatar: 'core/workflow/template/getTime',
-        flowNodeType: 'pluginModule',
-        showStatus: false,
-        position: {
-          x: 1000,
-          y: 545
-        },
-        version: '481',
-        inputs: [],
-        outputs: [
-          {
-            id: 'time',
-            type: 'static',
-            key: 'time',
-            valueType: 'string',
-            label: 'time',
-            description: ''
-          }
-        ],
-        pluginId: 'community-getTime'
-      }
-    ],
-    edges: [
-      {
-        source: 'workflowStartNodeId',
-        target: 'jrWPV9',
-        sourceHandle: 'workflowStartNodeId-source-right',
-        targetHandle: 'jrWPV9-target-left'
-      },
-      {
-        source: 'jrWPV9',
-        target: 'zBxjo5',
-        sourceHandle: 'selectedTools',
-        targetHandle: 'selectedTools'
-      }
-    ],
-    chatConfig: {
-      scheduledTriggerConfig: {
-        cronString: '',
-        timezone: 'Asia/Shanghai',
-        defaultPrompt: ''
-      }
+          version: '481',
+          inputs: [],
+          outputs: []
+        }
+      ],
+      edges: [],
+      chatConfig: {}
     }
-  }
-];
+  };
 
-export const workflowTemplates: TemplateType = [
-  {
-    id: 'TranslateRobot',
-    avatar: '/imgs/app/templates/translate.svg',
-    name: '多轮翻译机器人',
-    intro: '通过4轮翻译，提高翻译英文的质量',
-    type: AppTypeEnum.workflow,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: 'userGuide',
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
-            label: 'core.app.Welcome Text',
-            value: ''
-          },
-          {
-            key: 'variables',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: 'boolean',
-            renderTypeList: ['hidden'],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              type: 'web'
-            }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
-            }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: '448745',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: 'workflowStart',
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            type: 'static',
-            valueType: 'string'
-          }
-        ]
-      },
-      {
-        nodeId: 'loOvhld2ZTKa',
-        name: '第一轮翻译',
-        intro: 'AI 大模型对话',
-        avatar: 'core/workflow/template/aiChat',
-        flowNodeType: 'chatNode',
-        showStatus: true,
-        position: {
-          x: 1748.8252410306534,
-          y: -245.08260685989214
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: ['settingLLMModel', 'reference'],
-            label: 'core.module.input.label.aiModel',
-            valueType: 'string',
-            value: 'gpt-4o'
-          },
-          {
-            key: 'temperature',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 0,
-            valueType: 'number',
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 2000,
-            valueType: 'number',
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'isResponseAnswerText',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: true,
-            valueType: 'boolean'
-          },
-          {
-            key: 'quoteTemplate',
-            renderTypeList: ['hidden'],
-            label: '',
-            valueType: 'string'
-          },
-          {
-            key: 'quotePrompt',
-            renderTypeList: ['hidden'],
-            label: '',
-            valueType: 'string'
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: ['textarea', 'reference'],
-            max: 3000,
-            valueType: 'string',
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value:
-              '# Role: 资深英汉翻译专家\n\n## Background:\n你是一位经验丰富的英汉翻译专家,精通英汉互译,尤其擅长将英文文章译成流畅易懂的现代汉语。你曾多次带领团队完成大型翻译项目,译文广受好评。\n\n## Attention:\n- 翻译过程中要始终坚持"信、达、雅"的原则,但"达"尤为重要\n- 译文要符合现代汉语的表达习惯,通俗易懂,连贯流畅 \n- 避免使用过于文绉绉的表达和晦涩难懂的典故引用\n\n## Profile:  \n- Author: 米开朗基杨 \n- Version: 0.2\n- Language: 中文\n- Description: 你是一位资深英汉翻译专家,精通英汉互译。你擅长将英文文章译成地道流畅的现代汉语,表达准确易懂,符合当代中文语言习惯。\n\n## Constraints:\n- 必须严格遵循四轮翻译流程:直译、意译、校审、定稿  \n- 译文要忠实原文,准确无误,不能遗漏或曲解原意\n- 译文应以现代白话文为主,避免过多使用文言文和古典诗词\n- 每一轮翻译前后必须添加【思考】和【翻译】标记\n- 最终译文使用Markdown的代码块呈现\n\n## Goals:\n- 通过四轮翻译流程,将英文原文译成高质量的现代汉语译文  \n- 译文要准确传达原文意思,语言表达力求浅显易懂,朗朗上口\n- 适度使用一些熟语俗语、流行网络用语等,增强译文的亲和力\n- 在直译的基础上,提供至少2个不同风格的意译版本供选择\n\n## Skills:\n- 精通英汉双语,具有扎实的语言功底和丰富的翻译经验\n- 擅长将英语表达习惯转换为地道自然的现代汉语\n- 对当代中文语言的发展变化有敏锐洞察,善于把握语言流行趋势\n\n## Workflow:\n1. 第一轮直译:逐字逐句忠实原文,不遗漏任何信息\n2. 第二轮意译:在直译的基础上用通俗流畅的现代汉语意译原文,至少提供2个不同风格的版本\n3. 第三轮校审:仔细审视译文,消除偏差和欠缺,使译文更加地道易懂 \n4. 第四轮定稿:择优选取,反复修改润色,最终定稿出一个简洁畅达、符合大众阅读习惯的译文\n\n## OutputFormat: \n- 每一轮翻译前用【思考】说明该轮要点\n- 每一轮翻译后用【翻译】呈现译文\n- 在\\`\\`\\`代码块中展示最终定稿译文\n\n## Suggestions:\n- 直译时力求忠实原文,但不要过于拘泥逐字逐句\n- 意译时在准确表达原意的基础上,用最朴实无华的现代汉语来表达 \n- 校审环节重点关注译文是否符合当代汉语表达习惯,是否通俗易懂\n- 定稿时适度采用一些熟语谚语、网络流行语等,使译文更接地气\n- 善于利用中文的灵活性,用不同的表述方式展现同一内容,提高译文的可读性\n\n## Initialization\n作为一名资深英汉翻译专家,你必须严格遵循翻译流程的各项要求。首先请向用户问好,介绍你将带领团队完成翻译任务,力求将英文原文译成通俗易懂的现代汉语。然后简要说明四轮翻译流程,请用户提供英文原文,开始进行翻译工作。'
-          },
-          {
-            key: 'history',
-            renderTypeList: ['numberInput', 'reference'],
-            valueType: 'chatHistory',
-            label: 'core.module.input.label.chat history',
-            description: '最多携带多少轮对话记录',
-            required: true,
-            min: 0,
-            max: 50,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题',
-            value: ['gBDvemE4FBhp', 'system_text']
-          },
-          {
-            key: 'quoteQA',
-            renderTypeList: ['settingDatasetQuotePrompt'],
-            label: '',
-            debugLabel: '知识库引用',
-            description: '',
-            valueType: 'datasetQuote'
-          }
-        ],
-        outputs: [
-          {
-            id: 'history',
-            key: 'history',
-            required: true,
-            label: 'core.module.output.label.New context',
-            description: 'core.module.output.description.New context',
-            valueType: 'chatHistory',
-            type: 'static'
-          },
-          {
-            id: 'answerText',
-            key: 'answerText',
-            required: true,
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: 'string',
-            type: 'static'
-          }
-        ]
-      },
-      {
-        nodeId: 'w0oBbQ3YJHye',
-        name: '代码运行',
-        intro: '执行一段简单的脚本代码，通常用于进行复杂的数据处理。',
-        avatar: 'core/workflow/template/codeRun',
-        flowNodeType: 'code',
-        showStatus: true,
-        position: {
-          x: 2522.61682940854,
-          y: -79.74569750380468
-        },
-        version: '482',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: '这些变量会作为代码的运行的输入参数',
-            editField: {
-              key: true,
-              valueType: true
-            },
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: true
-            }
-          },
-          {
-            key: 'codeType',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 'js'
-          },
-          {
-            key: 'code',
-            renderTypeList: ['custom'],
-            label: '',
-            value:
-              "function main({data1}) {\n    const codeBlocks = data1.match(/```[\\s\\S]*?```/g);\n\n    if (codeBlocks && codeBlocks.length > 0) {\n        const lastCodeBlock = codeBlocks[codeBlocks.length - 1];\n        const cleanedCodeBlock = lastCodeBlock.replace(/```[a-zA-Z]*|```/g, '').trim();\n        \n        return {\n            result: cleanedCodeBlock\n        };\n    }\n\n    return {\n        result: '未截取到代码块内容'\n    };\n}\n"
-          },
-          {
-            key: 'data1',
-            valueType: 'string',
-            label: 'data1',
-            renderTypeList: ['reference'],
-            description: '',
-            canEdit: true,
-            editField: {
-              key: true,
-              valueType: true
-            },
-            value: ['loOvhld2ZTKa', 'answerText']
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_addOutputParam',
-            key: 'system_addOutputParam',
-            type: 'dynamic',
-            valueType: 'dynamic',
-            label: '',
-            description: '将代码中 return 的对象作为输出，传递给后续的节点'
-          },
-          {
-            id: 'system_rawResponse',
-            key: 'system_rawResponse',
-            label: '完整响应数据',
-            valueType: 'object',
-            type: 'static'
-          },
-          {
-            id: 'error',
-            key: 'error',
-            label: '运行错误',
-            description: '代码运行错误信息，成功时返回空',
-            valueType: 'object',
-            type: 'static'
-          },
-          {
-            id: 'qLUQfhG0ILRX',
-            type: 'dynamic',
-            key: 'result',
-            valueType: 'string',
-            label: 'result'
-          },
-          {
-            id: 'gR0mkQpJ4Og8',
-            type: 'dynamic',
-            key: 'data2',
-            valueType: 'string',
-            label: 'data2'
-          }
-        ]
-      },
-      {
-        nodeId: 'foO69L5FOmDQ',
-        name: '指定回复',
-        intro:
-          '该模块可以直接回复一段指定的内容。常用于引导、提示。非字符串内容传入时，会转成字符串进行输出。',
-        avatar: 'core/workflow/template/reply',
-        flowNodeType: 'answerNode',
-        position: {
-          x: 3798.4479531204515,
-          y: 116.03040242110023
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'text',
-            renderTypeList: ['textarea', 'reference'],
-            valueType: 'any',
-            required: true,
-            label: 'core.module.input.label.Response content',
-            description: 'core.module.input.description.Response content',
-            placeholder: 'core.module.input.description.Response content',
-            selectedTypeIndex: 1,
-            value: ['bcqtxqxE2R6o', 'system_text']
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: 'gBDvemE4FBhp',
-        name: '文本拼接',
-        intro: '可对固定或传入的文本进行加工后输出，非字符串类型数据最终会转成字符串类型。',
-        avatar: 'core/workflow/template/textConcat',
-        flowNodeType: 'textEditor',
-        position: {
-          x: 1031.371061396644,
-          y: 38.65839420088383
-        },
-        version: '486',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: '可以引用其他节点的输出，作为文本拼接的变量，通过 {{字段名}} 来引用变量',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            }
-          },
-          {
-            key: 'system_textareaInput',
-            renderTypeList: ['textarea'],
-            valueType: 'string',
-            required: true,
-            label: '拼接文本',
-            placeholder: '可通过 {{字段名}} 来引用变量',
-            value: '原文:\n"""\n{{q}}\n"""'
-          },
-          {
-            renderTypeList: ['reference'],
-            valueType: 'string',
-            canEdit: true,
-            key: 'q',
-            label: 'q',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            },
-            required: true,
-            value: ['448745', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_text',
-            key: 'system_text',
-            label: '拼接结果',
-            type: 'static',
-            valueType: 'string'
-          }
-        ]
-      },
-      {
-        nodeId: 'bcqtxqxE2R6o',
-        name: '合并输出结果',
-        intro: '可对固定或传入的文本进行加工后输出，非字符串类型数据最终会转成字符串类型。',
-        avatar: 'core/workflow/template/textConcat',
-        flowNodeType: 'textEditor',
-        position: {
-          x: 3113.6227559936665,
-          y: 12.909197647746709
-        },
-        version: '486',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: '可以引用其他节点的输出，作为文本拼接的变量，通过 {{字段名}} 来引用变量',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            }
-          },
-          {
-            key: 'system_textareaInput',
-            renderTypeList: ['textarea'],
-            valueType: 'string',
-            required: true,
-            label: '拼接文本',
-            placeholder: '可通过 {{字段名}} 来引用变量',
-            value: '****** \n\n最终翻译结果如下: \n\n```\n{{result}}\n```'
-          },
-          {
-            renderTypeList: ['reference'],
-            valueType: 'string',
-            canEdit: true,
-            key: 'result',
-            label: 'result',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            },
-            required: true,
-            value: ['w0oBbQ3YJHye', 'qLUQfhG0ILRX']
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_text',
-            key: 'system_text',
-            label: '拼接结果',
-            type: 'static',
-            valueType: 'string'
-          }
-        ]
-      }
-    ],
-    edges: [
-      {
-        source: 'loOvhld2ZTKa',
-        target: 'w0oBbQ3YJHye',
-        sourceHandle: 'loOvhld2ZTKa-source-right',
-        targetHandle: 'w0oBbQ3YJHye-target-left'
-      },
-      {
-        source: '448745',
-        target: 'gBDvemE4FBhp',
-        sourceHandle: '448745-source-right',
-        targetHandle: 'gBDvemE4FBhp-target-left'
-      },
-      {
-        source: 'gBDvemE4FBhp',
-        target: 'loOvhld2ZTKa',
-        sourceHandle: 'gBDvemE4FBhp-source-right',
-        targetHandle: 'loOvhld2ZTKa-target-left'
-      },
-      {
-        source: 'w0oBbQ3YJHye',
-        target: 'bcqtxqxE2R6o',
-        sourceHandle: 'w0oBbQ3YJHye-source-right',
-        targetHandle: 'bcqtxqxE2R6o-target-left'
-      },
-      {
-        source: 'bcqtxqxE2R6o',
-        target: 'foO69L5FOmDQ',
-        sourceHandle: 'bcqtxqxE2R6o-source-right',
-        targetHandle: 'foO69L5FOmDQ-target-left'
-      }
-    ]
-  },
-  {
-    id: 'google',
-    avatar: '/imgs/app/templates/google.svg',
-    name: '谷歌搜索',
-    intro: '通过请求谷歌搜索，查询相关内容作为模型的参考。',
-    type: AppTypeEnum.workflow,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: 'userGuide',
-        position: {
-          x: 262.2732338817093,
-          y: -476.00241136598146
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
-            label: 'core.app.Welcome Text',
-            value: ''
-          },
-          {
-            key: 'variables',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: 'boolean',
-            renderTypeList: ['hidden'],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              type: 'web'
-            }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
-            }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: '448745',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: 'workflowStart',
-        position: {
-          x: 295.8944548701009,
-          y: 110.81336038514848
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: 'string',
-            type: 'static'
-          }
-        ]
-      },
-      {
-        nodeId: 'NOgbnBzUwDgT',
-        name: '工具调用',
-        intro: '通过AI模型自动选择一个或多个功能块进行调用，也可以对插件进行调用。',
-        avatar: 'core/workflow/template/toolCall',
-        flowNodeType: 'tools',
-        showStatus: true,
-        position: {
-          x: 1028.8358722416106,
-          y: -500.8755882990822
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: ['settingLLMModel', 'reference'],
-            label: 'core.module.input.label.aiModel',
-            valueType: 'string',
-            llmModelType: 'all',
-            value: 'FastAI-plus'
-          },
-          {
-            key: 'temperature',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 0,
-            valueType: 'number',
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 2000,
-            valueType: 'number',
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: ['textarea', 'reference'],
-            max: 3000,
-            valueType: 'string',
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: ['numberInput', 'reference'],
-            valueType: 'chatHistory',
-            label: 'core.module.input.label.chat history',
-            description: '最多携带多少轮对话记录',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            value: ['448745', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: NodeOutputKeyEnum.answerText,
-            key: NodeOutputKeyEnum.answerText,
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: 'GMELVPxHfpg5',
-        name: 'HTTP 请求',
-        intro: '调用谷歌搜索，查询相关内容',
-        avatar: 'core/workflow/template/httpRequest',
-        flowNodeType: 'httpRequest468',
-        showStatus: true,
-        position: {
-          x: 1005.4777753640342,
-          y: 319.4905539380939
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: 'core.module.input.description.HTTP Dynamic Input'
-          },
-          {
-            valueType: 'string',
-            renderTypeList: ['reference'],
-            key: 'query',
-            label: 'query',
-            toolDescription: '谷歌搜索检索词',
-            required: true,
-            canEdit: true,
-            editField: {
-              key: true,
-              description: true
-            }
-          },
-          {
-            key: 'system_httpMethod',
-            renderTypeList: ['custom'],
-            valueType: 'string',
-            label: '',
-            value: 'GET',
-            required: true
-          },
-          {
-            key: 'system_httpReqUrl',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
-            label: '',
-            description: 'core.module.input.description.Http Request Url',
-            placeholder: 'https://api.ai.com/getInventory',
-            required: false,
-            value: 'https://www.googleapis.com/customsearch/v1'
-          },
-          {
-            key: 'system_httpHeader',
-            renderTypeList: ['custom'],
-            valueType: 'any',
-            value: [],
-            label: '',
-            description: 'core.module.input.description.Http Request Header',
-            placeholder: 'core.module.input.description.Http Request Header',
-            required: false
-          },
-          {
-            key: 'system_httpParams',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value: [
-              {
-                key: 'q',
-                type: 'string',
-                value: '{{query}}'
-              },
-              {
-                key: 'cx',
-                type: 'string',
-                value: '谷歌搜索cxID'
-              },
-              {
-                key: 'key',
-                type: 'string',
-                value: '谷歌搜索key'
-              },
-              {
-                key: 'c2coff',
-                type: 'string',
-                value: '1'
-              },
-              {
-                key: 'start',
-                type: 'string',
-                value: '1'
-              },
-              {
-                key: 'end',
-                type: 'string',
-                value: '20'
-              },
-              {
-                key: 'dateRestrict',
-                type: 'string',
-                value: 'm[1]'
-              }
-            ],
-            label: '',
-            required: false
-          },
-          {
-            key: 'system_httpJsonBody',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value: '',
-            label: '',
-            required: false
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_addOutputParam',
-            key: 'system_addOutputParam',
-            type: 'dynamic',
-            valueType: 'dynamic',
-            label: '',
-            editField: {
-              key: true,
-              valueType: true
-            }
-          },
-          {
-            id: 'httpRawResponse',
-            key: 'httpRawResponse',
-            label: '原始响应',
-            description: 'HTTP请求的原始响应。只能接受字符串或JSON类型响应数据。',
-            valueType: 'any',
-            type: 'static',
-            required: true
-          },
-          {
-            id: 'M5YmxaYe8em1',
-            type: 'dynamic',
-            key: 'prompt',
-            valueType: 'string',
-            label: 'prompt'
-          }
-        ]
-      },
-      {
-        nodeId: 'poIbrrA8aiR0',
-        name: '代码运行',
-        intro: '执行一段简单的脚本代码，通常用于进行复杂的数据处理。',
-        avatar: 'core/workflow/template/codeRun',
-        flowNodeType: 'code',
-        showStatus: true,
-        position: {
-          x: 1711.805344753384,
-          y: 650.1023414708576
-        },
-        version: '482',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: '这些变量会作为代码的运行的输入参数',
-            editField: {
-              key: true,
-              valueType: true
-            }
-          },
-          {
-            key: 'data',
-            valueType: 'object',
-            label: 'data',
-            renderTypeList: ['reference'],
-            description: '',
-            canEdit: true,
-            editField: {
-              key: true,
-              valueType: true
-            },
-            value: ['GMELVPxHfpg5', 'httpRawResponse']
-          },
-          {
-            key: 'codeType',
-            renderTypeList: ['hidden'],
-            label: '',
-            value: 'js'
-          },
-          {
-            key: 'code',
-            renderTypeList: ['custom'],
-            label: '',
-            value:
-              'function main({data}){\n    const result = data.items.map((item) => ({\n      title: item.title,\n      link: item.link,\n      snippet: item.snippet\n    }))\n    return { prompt: JSON.stringify(result) }\n}'
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_addOutputParam',
-            key: 'system_addOutputParam',
-            type: 'dynamic',
-            valueType: 'dynamic',
-            label: '',
-            editField: {
-              key: true,
-              valueType: true
-            },
-            description: '将代码中 return 的对象作为输出，传递给后续的节点'
-          },
-          {
-            id: 'system_rawResponse',
-            key: 'system_rawResponse',
-            label: '完整响应数据',
-            valueType: 'object',
-            type: 'static'
-          },
-          {
-            id: 'error',
-            key: 'error',
-            label: '运行错误',
-            description: '代码运行错误信息，成功时返回空',
-            valueType: 'object',
-            type: 'static'
-          },
-          {
-            id: 'qLUQfhG0ILRX',
-            type: 'dynamic',
-            key: 'prompt',
-            valueType: 'string',
-            label: 'prompt'
-          }
-        ]
-      }
-    ],
-    edges: [
-      {
-        source: '448745',
-        target: 'NOgbnBzUwDgT',
-        sourceHandle: '448745-source-right',
-        targetHandle: 'NOgbnBzUwDgT-target-left'
-      },
-      {
-        source: 'NOgbnBzUwDgT',
-        target: 'GMELVPxHfpg5',
-        sourceHandle: 'selectedTools',
-        targetHandle: 'selectedTools'
-      },
-      {
-        source: 'GMELVPxHfpg5',
-        target: 'poIbrrA8aiR0',
-        sourceHandle: 'GMELVPxHfpg5-source-right',
-        targetHandle: 'poIbrrA8aiR0-target-left'
-      }
-    ]
-  },
-  {
-    id: 'dalle',
-    avatar: '/imgs/app/templates/dalle.svg',
-    name: 'Dalle3绘图',
-    intro: '通过请求Dalle3接口绘图，需要有 api key',
-    type: AppTypeEnum.workflow,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: 'userGuide',
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
-            label: 'core.app.Welcome Text',
-            value: ''
-          },
-          {
-            key: 'variables',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: 'boolean',
-            renderTypeList: ['hidden'],
-            label: 'core.app.Question Guide',
-            value: false
-          },
-          {
-            key: 'tts',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              type: 'web'
-            }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
-            }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: '448745',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: 'workflowStart',
-        position: {
-          x: 532.1275542407774,
-          y: 46.03775600322817
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: ['reference', 'textarea'],
-            valueType: 'string',
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            type: 'static',
-            valueType: 'string'
-          }
-        ]
-      },
-      {
-        nodeId: 'tMyUnRL5jIrC',
-        name: 'HTTP 请求',
-        intro: '可以发出一个 HTTP 请求，实现更为复杂的操作（联网搜索、数据库查询等）',
-        avatar: 'core/workflow/template/httpRequest',
-        flowNodeType: 'httpRequest468',
-        showStatus: true,
-        position: {
-          x: 931.6784209157559,
-          y: -162.36850541742047
-        },
-        version: '486',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: 'core.module.input.description.HTTP Dynamic Input',
-            editField: {
-              key: true,
-              valueType: true
-            },
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: true
-            }
-          },
-          {
-            key: 'system_httpMethod',
-            renderTypeList: ['custom'],
-            valueType: 'string',
-            label: '',
-            value: 'POST',
-            required: true
-          },
-          {
-            key: 'system_httpReqUrl',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
-            label: '',
-            description: 'core.module.input.description.Http Request Url',
-            placeholder: 'https://api.ai.com/getInventory',
-            required: false,
-            value: 'https://api.openai.com/v1/images/generations'
-          },
-          {
-            key: 'system_httpHeader',
-            renderTypeList: ['custom'],
-            valueType: 'any',
-            value: [
-              {
-                key: 'Authorization',
-                type: 'string',
-                value: 'Bearer '
-              }
-            ],
-            label: '',
-            description: 'core.module.input.description.Http Request Header',
-            placeholder: 'core.module.input.description.Http Request Header',
-            required: false
-          },
-          {
-            key: 'system_httpParams',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value: [],
-            label: '',
-            required: false
-          },
-          {
-            key: 'system_httpJsonBody',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value:
-              '{\n  "model": "dall-e-3",\n  "prompt": "{{prompt}}",\n  "n": 1,\n  "size": "1024x1024"\n}',
-            label: '',
-            required: false
-          },
-          {
-            key: 'prompt',
-            valueType: 'string',
-            label: 'prompt',
-            renderTypeList: ['reference'],
-            description: '',
-            canEdit: true,
-            editField: {
-              key: true,
-              valueType: true
-            },
-            value: ['448745', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_addOutputParam',
-            key: 'system_addOutputParam',
-            type: 'dynamic',
-            valueType: 'dynamic',
-            label: '',
-            customFieldConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: true
-            }
-          },
-          {
-            id: 'error',
-            key: 'error',
-            label: '请求错误',
-            description: 'HTTP请求错误信息，成功时返回空',
-            valueType: 'object',
-            type: 'static'
-          },
-          {
-            id: 'httpRawResponse',
-            key: 'httpRawResponse',
-            label: '原始响应',
-            required: true,
-            description: 'HTTP请求的原始响应。只能接受字符串或JSON类型响应数据。',
-            valueType: 'any',
-            type: 'static'
-          },
-          {
-            id: 'DeKGGioBwaMf',
-            type: 'dynamic',
-            key: 'data[0].url',
-            valueType: 'string',
-            label: 'data[0].url'
-          }
-        ]
-      },
-      {
-        nodeId: '7mapnCgHfKW6',
-        name: '指定回复',
-        intro:
-          '该模块可以直接回复一段指定的内容。常用于引导、提示。非字符串内容传入时，会转成字符串进行输出。',
-        avatar: 'core/workflow/template/reply',
-        flowNodeType: 'answerNode',
-        position: {
-          x: 2204.4609372615846,
-          y: 163.11883652393863
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'text',
-            renderTypeList: ['textarea', 'reference'],
-            valueType: 'any',
-            label: 'core.module.input.label.Response content',
-            description: 'core.module.input.description.Response content',
-            placeholder: 'core.module.input.description.Response content',
-            selectedTypeIndex: 1,
-            value: ['vEXJF8pQ8eOv', 'system_text'],
-            required: true
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: 'vEXJF8pQ8eOv',
-        name: '文本拼接',
-        intro: '可对固定或传入的文本进行加工后输出，非字符串类型数据最终会转成字符串类型。',
-        avatar: 'core/workflow/template/textConcat',
-        flowNodeType: 'textEditor',
-        position: {
-          x: 1544.8821308368042,
-          y: -27.22950739442814
-        },
-        version: '486',
-        inputs: [
-          {
-            key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
-            label: '',
-            required: false,
-            description: '可以引用其他节点的输出，作为文本拼接的变量，通过 {{字段名}} 来引用变量',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            }
-          },
-          {
-            key: 'system_textareaInput',
-            renderTypeList: ['textarea'],
-            valueType: 'string',
-            required: true,
-            label: '拼接文本',
-            placeholder: '可通过 {{字段名}} 来引用变量',
-            value: '![]({{url}})'
-          },
-          {
-            renderTypeList: ['reference'],
-            valueType: 'string',
-            canEdit: true,
-            key: 'url',
-            label: 'url',
-            customInputConfig: {
-              selectValueTypeList: [
-                'string',
-                'number',
-                'boolean',
-                'object',
-                'arrayString',
-                'arrayNumber',
-                'arrayBoolean',
-                'arrayObject',
-                'any',
-                'chatHistory',
-                'datasetQuote',
-                'dynamic',
-                'selectApp',
-                'selectDataset'
-              ],
-              showDescription: false,
-              showDefaultValue: false
-            },
-            required: true,
-            value: ['tMyUnRL5jIrC', 'DeKGGioBwaMf']
-          }
-        ],
-        outputs: [
-          {
-            id: 'system_text',
-            key: 'system_text',
-            label: '拼接结果',
-            type: 'static',
-            valueType: 'string'
-          }
-        ]
-      }
-    ],
-    edges: [
-      {
-        source: '448745',
-        target: 'tMyUnRL5jIrC',
-        sourceHandle: '448745-source-right',
-        targetHandle: 'tMyUnRL5jIrC-target-left'
-      },
-      {
-        source: 'tMyUnRL5jIrC',
-        target: 'vEXJF8pQ8eOv',
-        sourceHandle: 'tMyUnRL5jIrC-source-right',
-        targetHandle: 'vEXJF8pQ8eOv-target-left'
-      },
-      {
-        source: 'vEXJF8pQ8eOv',
-        target: '7mapnCgHfKW6',
-        sourceHandle: 'vEXJF8pQ8eOv-source-right',
-        targetHandle: '7mapnCgHfKW6-target-left'
-      }
-    ]
-  },
-  {
-    id: 'CQ',
-    avatar: 'core/workflow/template/questionClassify',
-    name: '问题分类 + 知识库',
-    intro: '先对用户的问题进行分类，再根据不同类型问题，执行不同的操作',
-    type: AppTypeEnum.workflow,
-    modules: [
-      {
-        nodeId: 'userGuide',
-        name: '系统配置',
-        intro: '可以配置应用的系统参数',
-        avatar: 'core/workflow/template/systemConfig',
-        flowNodeType: FlowNodeTypeEnum.systemConfig,
-        position: {
-          x: 531.2422736065552,
-          y: -486.7611729549753
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'welcomeText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.app.Welcome Text',
-            value: '你好，我是知识库助手，请不要忘记选择知识库噢~\n[你是谁]\n[如何使用]'
-          },
-          {
-            key: 'variables',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: 'core.app.Chat Variable',
-            value: []
-          },
-          {
-            key: 'questionGuide',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: 'core.app.Question Guide',
-            value: true
-          },
-          {
-            key: 'tts',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              type: 'web'
-            }
-          },
-          {
-            key: 'whisper',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: {
-              open: false,
-              autoSend: false,
-              autoTTSResponse: false
-            }
-          },
-          {
-            key: 'scheduleTrigger',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: null
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: 'workflowStartNodeId',
-        name: '流程开始',
-        intro: '',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: FlowNodeTypeEnum.workflowStart,
-        position: {
-          x: 558.4082376415505,
-          y: 123.72387429194112
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题'
-          }
-        ],
-        outputs: [
-          {
-            id: 'userChatInput',
-            key: 'userChatInput',
-            label: 'core.module.input.label.user question',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: '7BdojPlukIQw',
-        name: 'AI 对话',
-        intro: 'AI 大模型对话',
-        avatar: 'core/workflow/template/aiChat',
-        flowNodeType: FlowNodeTypeEnum.chatNode,
-        showStatus: true,
-        position: {
-          x: 2701.1267277679685,
-          y: -767.8956312653042
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: [
-              FlowNodeInputTypeEnum.settingLLMModel,
-              FlowNodeInputTypeEnum.reference
-            ],
-            label: 'core.module.input.label.aiModel',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'gpt-4o-mini'
-          },
-          {
-            key: 'temperature',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 3,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 0,
-            max: 10,
-            step: 1
-          },
-          {
-            key: 'maxToken',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 1950,
-            valueType: WorkflowIOValueTypeEnum.number,
-            min: 100,
-            max: 4000,
-            step: 50
-          },
-          {
-            key: 'isResponseAnswerText',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: true,
-            valueType: WorkflowIOValueTypeEnum.boolean
-          },
-          {
-            key: 'quoteTemplate',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'quotePrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            max: 3000,
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.ai.Prompt',
-            description: 'core.app.tip.chatNodeSystemPromptTip',
-            placeholder: 'core.app.tip.chatNodeSystemPromptTip',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            label: 'core.module.input.label.chat history',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '用户问题',
-            value: ['workflowStartNodeId', 'userChatInput']
-          },
-          {
-            key: 'quoteQA',
-            renderTypeList: [FlowNodeInputTypeEnum.settingDatasetQuotePrompt],
-            label: '',
-            debugLabel: '知识库引用',
-            description: '',
-            valueType: WorkflowIOValueTypeEnum.datasetQuote,
-            value: ['MNMMMIjjWyMU', 'quoteQA']
-          }
-        ],
-        outputs: [
-          {
-            id: 'history',
-            key: 'history',
-            label: 'core.module.output.label.New context',
-            description: 'core.module.output.description.New context',
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            type: FlowNodeOutputTypeEnum.static
-          },
-          {
-            id: 'answerText',
-            key: 'answerText',
-            label: 'core.module.output.label.Ai response content',
-            description: 'core.module.output.description.Ai response content',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: 'rvbo634w3AYj',
-        name: '问题分类',
-        intro:
-          '根据用户的历史记录和当前问题判断该次提问的类型。可以添加多组问题类型，下面是一个模板例子：\n类型1: 打招呼\n类型2: 关于商品“使用”问题\n类型3: 关于商品“购买”问题\n类型4: 其他问题',
-        avatar: 'core/workflow/template/questionClassify',
-        flowNodeType: FlowNodeTypeEnum.classifyQuestion,
-        showStatus: true,
-        position: {
-          x: 1020.9667229609946,
-          y: -385.0060974413916
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'model',
-            renderTypeList: [FlowNodeInputTypeEnum.selectLLMModel, FlowNodeInputTypeEnum.reference],
-            label: 'core.module.input.label.aiModel',
-            required: true,
-            valueType: WorkflowIOValueTypeEnum.string,
-            llmModelType: 'classify',
-            value: 'gpt-4o-mini'
-          },
-          {
-            key: 'systemPrompt',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            max: 3000,
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.module.input.label.Background',
-            description: 'core.module.input.description.Background',
-            placeholder: 'core.module.input.placeholder.Classify background',
-            value: ''
-          },
-          {
-            key: 'history',
-            renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.chatHistory,
-            label: 'core.module.input.label.chat history',
-            required: true,
-            min: 0,
-            max: 30,
-            value: 6
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            value: ['workflowStartNodeId', 'userChatInput']
-          },
-          {
-            key: 'agents',
-            renderTypeList: [FlowNodeInputTypeEnum.custom],
-            valueType: WorkflowIOValueTypeEnum.any,
-            label: '',
-            value: [
-              {
-                value: '关于电影《星际穿越》的问题',
-                key: 'wqre'
-              },
-              {
-                value: '打招呼、问候等问题',
-                key: 'sdfa'
-              },
-              {
-                value: '其他问题',
-                key: 'agex'
-              }
-            ]
-          }
-        ],
-        outputs: [
-          {
-            id: 'cqResult',
-            key: 'cqResult',
-            label: '分类结果',
-            valueType: WorkflowIOValueTypeEnum.string,
-            type: FlowNodeOutputTypeEnum.static
-          }
-        ]
-      },
-      {
-        nodeId: '7kwgL1dVlwG6',
-        name: '指定回复',
-        intro:
-          '该模块可以直接回复一段指定的内容。常用于引导、提示。非字符串内容传入时，会转成字符串进行输出。',
-        avatar: 'core/workflow/template/reply',
-        flowNodeType: FlowNodeTypeEnum.answerNode,
-        position: {
-          x: 1874.9167551056487,
-          y: 434.98431875888207
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'text',
-            renderTypeList: [FlowNodeInputTypeEnum.textarea, FlowNodeInputTypeEnum.reference],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: 'core.module.input.label.Response content',
-            description: 'core.module.input.description.Response content',
-            placeholder: 'core.module.input.description.Response content',
-            selectedTypeIndex: 1,
-            value: ['rvbo634w3AYj', 'cqResult']
-          }
-        ],
-        outputs: []
-      },
-      {
-        nodeId: 'MNMMMIjjWyMU',
-        name: '知识库搜索',
-        intro: '调用“语义检索”和“全文检索”能力，从“知识库”中查找可能与问题相关的参考内容',
-        avatar: 'core/workflow/template/datasetSearch',
-        flowNodeType: FlowNodeTypeEnum.datasetSearchNode,
-        showStatus: true,
-        position: {
-          x: 1851.010152279949,
-          y: -613.3555232387284
-        },
-        version: '481',
-        inputs: [
-          {
-            key: 'datasets',
-            renderTypeList: [FlowNodeInputTypeEnum.selectDataset, FlowNodeInputTypeEnum.reference],
-            label: 'core.module.input.label.Select dataset',
-            value: [],
-            valueType: WorkflowIOValueTypeEnum.selectDataset,
-            list: [],
-            required: true
-          },
-          {
-            key: 'similarity',
-            renderTypeList: [FlowNodeInputTypeEnum.selectDatasetParamsModal],
-            label: '',
-            value: 0.4,
-            valueType: WorkflowIOValueTypeEnum.number
-          },
-          {
-            key: 'limit',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            value: 1500,
-            valueType: WorkflowIOValueTypeEnum.number
-          },
-          {
-            key: 'searchMode',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: 'embedding'
-          },
-          {
-            key: 'usingReRank',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            value: false
-          },
-          {
-            key: 'datasetSearchUsingExtensionQuery',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.boolean,
-            value: true
-          },
-          {
-            key: 'datasetSearchExtensionModel',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string
-          },
-          {
-            key: 'datasetSearchExtensionBg',
-            renderTypeList: [FlowNodeInputTypeEnum.hidden],
-            label: '',
-            valueType: WorkflowIOValueTypeEnum.string,
-            value: ''
-          },
-          {
-            key: 'userChatInput',
-            renderTypeList: [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.textarea],
-            valueType: WorkflowIOValueTypeEnum.string,
-            label: '用户问题',
-            required: true,
-            toolDescription: '需要检索的内容',
-            value: ['workflowStartNodeId', 'userChatInput']
-          }
-        ],
-        outputs: [
-          {
-            id: 'quoteQA',
-            key: 'quoteQA',
-            label: 'core.module.Dataset quote.label',
-            description: '特殊数组格式，搜索结果为空时，返回空数组。',
-            type: FlowNodeOutputTypeEnum.static,
-            valueType: WorkflowIOValueTypeEnum.datasetQuote
-          }
-        ]
-      }
-    ],
-    edges: [
-      {
-        source: 'workflowStartNodeId',
-        target: 'rvbo634w3AYj',
-        sourceHandle: 'workflowStartNodeId-source-right',
-        targetHandle: 'rvbo634w3AYj-target-left'
-      },
-      {
-        source: 'rvbo634w3AYj',
-        target: '7kwgL1dVlwG6',
-        sourceHandle: 'rvbo634w3AYj-source-agex',
-        targetHandle: '7kwgL1dVlwG6-target-left'
-      },
-      {
-        source: 'rvbo634w3AYj',
-        target: 'MNMMMIjjWyMU',
-        sourceHandle: 'rvbo634w3AYj-source-wqre',
-        targetHandle: 'MNMMMIjjWyMU-target-left'
-      },
-      {
-        source: 'MNMMMIjjWyMU',
-        target: '7BdojPlukIQw',
-        sourceHandle: 'MNMMMIjjWyMU-source-right',
-        targetHandle: '7BdojPlukIQw-target-left'
-      },
-      {
-        source: 'rvbo634w3AYj',
-        target: '7kwgL1dVlwG6',
-        sourceHandle: 'rvbo634w3AYj-source-sdfa',
-        targetHandle: '7kwgL1dVlwG6-target-left'
-      }
-    ]
-  }
-];
+  return obj;
+};
 
-export const pluginTemplates: TemplateType = [
-  {
-    id: 'plugin-simple',
-    avatar: 'core/workflow/template/aiChat',
-    name: '默认模板',
-    intro: '标准的插件初始模板',
-    type: AppTypeEnum.plugin,
-    modules: [
+export const parsePluginFromCurlString = (
+  curl: string
+): {
+  nodes: AppSchemaType['modules'];
+  edges: AppSchemaType['edges'];
+  chatConfig: AppSchemaType['chatConfig'];
+} => {
+  const { url, method, headers, body, params, bodyArray } = parseCurl(curl);
+
+  const allInputs = Array.from(
+    new Map([...params, ...bodyArray].map((item) => [item.key, item])).values()
+  );
+  const formatPluginStartInputs = allInputs
+    .map((item) => {
+      const valueType = item.value === null ? 'string' : typeof item.value;
+      const valueTypeMap = {
+        string: {
+          renderTypeList: [FlowNodeInputTypeEnum.input, FlowNodeInputTypeEnum.reference],
+          valueType: WorkflowIOValueTypeEnum.string,
+          isToolType: true,
+          defaultValue: item.value
+        },
+        number: {
+          renderTypeList: [FlowNodeInputTypeEnum.numberInput, FlowNodeInputTypeEnum.reference],
+          valueType: WorkflowIOValueTypeEnum.number,
+          isToolType: true,
+          defaultValue: item.value
+        },
+        boolean: {
+          renderTypeList: [FlowNodeInputTypeEnum.switch, FlowNodeInputTypeEnum.reference],
+          valueType: WorkflowIOValueTypeEnum.boolean,
+          isToolType: true,
+          defaultValue: item.value
+        },
+        object: {
+          renderTypeList: [FlowNodeInputTypeEnum.JSONEditor, FlowNodeInputTypeEnum.reference],
+          valueType: WorkflowIOValueTypeEnum.object,
+          isToolType: false,
+          defaultValue: ''
+        }
+      };
+
+      const valueTypeItem = valueTypeMap[valueType as keyof typeof valueTypeMap];
+      if (!valueTypeItem) return;
+
+      return {
+        renderTypeList: valueTypeItem.renderTypeList,
+        selectedType: valueTypeItem.renderTypeList[0],
+        valueType: valueTypeItem.valueType,
+        canEdit: true,
+        key: item.key,
+        label: item.key,
+        description: '',
+        defaultValue: valueTypeItem.defaultValue,
+        required: false,
+        toolDescription: valueTypeItem.isToolType ? item.key : ''
+      };
+    })
+    .filter(Boolean) as FlowNodeInputItemType[];
+  const formatPluginStartOutputs = formatPluginStartInputs.map<FlowNodeOutputItemType>((item) => ({
+    id: item.key,
+    key: item.key,
+    label: item.key,
+    valueType: item.valueType,
+    type: FlowNodeOutputTypeEnum.hidden
+  }));
+
+  const referenceHeaders = headers.map((item) => ({
+    key: item.key,
+    value: item.value,
+    type: item.type
+  }));
+  const referenceParams = params.map((item) => ({
+    key: item.key,
+    value: `{{$pluginInput.${item.key}$}}`,
+    type: item.type
+  }));
+  const referenceBody = Object.entries(JSON.parse(body)).reduce(
+    (acc, [key, value]) => {
+      acc[key] =
+        typeof value === 'string' ? `###{{$pluginInput.${key}$}}###` : `{{$pluginInput.${key}$}}`;
+      return acc;
+    },
+    {} as Record<string, any>
+  );
+  const referenceBodyStr = JSON.stringify(referenceBody, null, 2)
+    .replace(/"{{\$/g, '{{$')
+    .replace(/\$}}"/g, '$}}')
+    .replace(/###{{\$/g, '{{$')
+    .replace(/\$}}###/g, '$}}');
+
+  return {
+    nodes: [
       {
         nodeId: 'pluginInput',
-        name: '自定义插件输入',
+        name: i18nT('workflow:template.plugin_start'),
+        intro: i18nT('workflow:intro_plugin_input'),
         avatar: 'core/workflow/template/workflowStart',
         flowNodeType: FlowNodeTypeEnum.pluginInput,
         showStatus: false,
         position: {
-          x: 616.4226348688949,
-          y: -165.05298493910115
+          x: 427.6554681270263,
+          y: -291.6987155252725
         },
         version: '481',
-        inputs: [],
-        outputs: []
+        inputs: formatPluginStartInputs,
+        outputs: formatPluginStartOutputs
       },
       {
         nodeId: 'pluginOutput',
-        name: '自定义插件输出',
-        avatar: '/imgs/workflow/output.png',
+        name: i18nT('common:core.module.template.self_output'),
+        intro: i18nT('workflow:intro_custom_plugin_output'),
+        avatar: 'core/workflow/template/pluginOutput',
         flowNodeType: FlowNodeTypeEnum.pluginOutput,
         showStatus: false,
         position: {
-          x: 1607.7142331269126,
-          y: -151.8669210746189
-        },
-        version: '481',
-        inputs: [],
-        outputs: []
-      }
-    ],
-    edges: []
-  },
-  {
-    id: 'plugin-feishu',
-    avatar: '/imgs/app/templates/feishu.svg',
-    name: '飞书webhook插件',
-    intro: '通过 webhook 给飞书机器人发送一条消息',
-    type: AppTypeEnum.plugin,
-    modules: [
-      {
-        nodeId: 'pluginInput',
-        name: '自定义插件输入',
-        intro: '自定义配置外部输入，使用插件时，仅暴露自定义配置的输入',
-        avatar: 'core/workflow/template/workflowStart',
-        flowNodeType: 'pluginInput',
-        showStatus: false,
-        position: {
-          x: 517.5620777851774,
-          y: -173.55711888178655
+          x: 1870.1072210870427,
+          y: -126.69871552527252
         },
         version: '481',
         inputs: [
           {
-            inputType: 'input',
-            valueType: 'string',
-            key: '飞书机器人地址',
-            label: '飞书机器人地址',
-            description: '',
-            isToolInput: false,
-            defaultValue: '',
-            editField: {
-              key: true
-            },
-            dynamicParamDefaultValue: {
-              inputType: 'reference',
-              valueType: 'string',
-              required: true
-            },
-            renderTypeList: ['input'],
-            required: true,
+            renderTypeList: [FlowNodeInputTypeEnum.reference],
+            valueType: WorkflowIOValueTypeEnum.any,
             canEdit: true,
-            value: ''
+            key: 'result',
+            label: 'result',
+            isToolOutput: true,
+            description: '',
+            required: true,
+            value: ['vumlECDQTjeC', 'httpRawResponse']
           },
           {
-            key: '发送的消息',
-            valueType: 'string',
-            label: '发送的消息',
-            renderTypeList: ['reference'],
-            required: true,
-            description: '',
+            renderTypeList: [FlowNodeInputTypeEnum.reference],
+            valueType: WorkflowIOValueTypeEnum.object,
             canEdit: true,
-            value: '',
-            editField: {
-              key: true
-            },
-            dynamicParamDefaultValue: {
-              inputType: 'reference',
-              valueType: 'string',
-              required: true
-            }
+            key: 'error',
+            label: 'error',
+            isToolOutput: true,
+            description: '',
+            required: true,
+            value: ['vumlECDQTjeC', 'error']
           }
         ],
-        outputs: [
-          {
-            id: 'mv52BrPVE6bm',
-            key: '飞书机器人地址',
-            valueType: 'string',
-            label: '飞书机器人地址',
-            type: 'static'
-          },
-          {
-            id: 'p0m68Dv5KaIp',
-            key: '发送的消息',
-            valueType: 'string',
-            label: '发送的消息',
-            type: 'static'
-          }
-        ]
-      },
-      {
-        nodeId: 'pluginOutput',
-        name: '自定义插件输出',
-        intro: '自定义配置外部输出，使用插件时，仅暴露自定义配置的输出',
-        avatar: '/imgs/workflow/output.png',
-        flowNodeType: 'pluginOutput',
-        showStatus: false,
-        position: {
-          x: 1668.9410524554828,
-          y: -153.47815316221283
-        },
-        version: '481',
-        inputs: [],
         outputs: []
       },
       {
-        nodeId: 'rKBYGQuYefae',
+        nodeId: 'vumlECDQTjeC',
         name: 'HTTP 请求',
         intro: '可以发出一个 HTTP 请求，实现更为复杂的操作（联网搜索、数据库查询等）',
         avatar: 'core/workflow/template/httpRequest',
-        flowNodeType: 'httpRequest468',
+        flowNodeType: FlowNodeTypeEnum.httpRequest468,
         showStatus: true,
         position: {
-          x: 1069.7228495148624,
-          y: -392.26482361861054
+          x: 1049.4419012643668,
+          y: -471.49748139163944
         },
         version: '481',
         inputs: [
           {
             key: 'system_addInputParam',
-            renderTypeList: ['addInputParam'],
-            valueType: 'dynamic',
+            renderTypeList: [FlowNodeInputTypeEnum.addInputParam],
+            valueType: WorkflowIOValueTypeEnum.dynamic,
             label: '',
             required: false,
-            description: 'core.module.input.description.HTTP Dynamic Input'
-          },
-          {
-            key: 'text',
-            valueType: 'string',
-            label: 'text',
-            renderTypeList: ['reference'],
-            description: '',
-            canEdit: true,
-            editField: {
-              key: true,
-              valueType: true
+            description: '接收前方节点的输出值作为变量，这些变量可以被 HTTP 请求参数使用。',
+            customInputConfig: {
+              selectValueTypeList: [
+                WorkflowIOValueTypeEnum.string,
+                WorkflowIOValueTypeEnum.number,
+                WorkflowIOValueTypeEnum.boolean,
+                WorkflowIOValueTypeEnum.object,
+                WorkflowIOValueTypeEnum.arrayString,
+                WorkflowIOValueTypeEnum.arrayNumber,
+                WorkflowIOValueTypeEnum.arrayBoolean,
+                WorkflowIOValueTypeEnum.arrayObject,
+                WorkflowIOValueTypeEnum.arrayAny,
+                WorkflowIOValueTypeEnum.any,
+                WorkflowIOValueTypeEnum.chatHistory,
+                WorkflowIOValueTypeEnum.datasetQuote,
+                WorkflowIOValueTypeEnum.dynamic,
+                WorkflowIOValueTypeEnum.selectApp,
+                WorkflowIOValueTypeEnum.selectDataset
+              ],
+              showDescription: false,
+              showDefaultValue: true
             },
-            value: ['pluginInput', 'p0m68Dv5KaIp']
-          },
-          {
-            key: 'url',
-            valueType: 'string',
-            label: 'url',
-            renderTypeList: ['reference'],
-            description: '',
-            canEdit: true,
-            editField: {
-              key: true,
-              valueType: true
-            },
-            value: ['pluginInput', 'mv52BrPVE6bm']
+            valueDesc: '',
+            debugLabel: '',
+            toolDescription: ''
           },
           {
             key: 'system_httpMethod',
-            renderTypeList: ['custom'],
-            valueType: 'string',
+            renderTypeList: [FlowNodeInputTypeEnum.custom],
+            valueType: WorkflowIOValueTypeEnum.string,
             label: '',
-            value: 'POST',
-            required: true
+            value: method,
+            required: true,
+            valueDesc: '',
+            description: '',
+            debugLabel: '',
+            toolDescription: ''
+          },
+          {
+            key: 'system_httpTimeout',
+            renderTypeList: [FlowNodeInputTypeEnum.custom],
+            valueType: WorkflowIOValueTypeEnum.number,
+            label: '',
+            value: 30,
+            min: 5,
+            max: 600,
+            required: true,
+            valueDesc: '',
+            description: '',
+            debugLabel: '',
+            toolDescription: ''
           },
           {
             key: 'system_httpReqUrl',
-            renderTypeList: ['hidden'],
-            valueType: 'string',
+            renderTypeList: [FlowNodeInputTypeEnum.hidden],
+            valueType: WorkflowIOValueTypeEnum.string,
             label: '',
-            description: 'core.module.input.description.Http Request Url',
+            description:
+              '新的 HTTP 请求地址。如果出现两个"请求地址"，可以删除该模块重新加入，会拉取最新的模块配置。',
             placeholder: 'https://api.ai.com/getInventory',
             required: false,
-            value: '{{url}}'
+            value: url,
+            valueDesc: '',
+            debugLabel: '',
+            toolDescription: ''
           },
           {
             key: 'system_httpHeader',
-            renderTypeList: ['custom'],
-            valueType: 'any',
-            value: [],
+            renderTypeList: [FlowNodeInputTypeEnum.custom],
+            valueType: WorkflowIOValueTypeEnum.any,
+            value: referenceHeaders,
             label: '',
-            description: 'core.module.input.description.Http Request Header',
-            placeholder: 'core.module.input.description.Http Request Header',
-            required: false
+            description:
+              '自定义请求头，请严格填入 JSON 字符串。\n1. 确保最后一个属性没有逗号\n2. 确保 key 包含双引号\n例如：{"Authorization":"Bearer xxx"}',
+            placeholder: i18nT('common:core.module.input.description.Http Request Header'),
+            required: false,
+            valueDesc: '',
+            debugLabel: '',
+            toolDescription: ''
           },
           {
             key: 'system_httpParams',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value: [],
+            renderTypeList: [FlowNodeInputTypeEnum.hidden],
+            valueType: WorkflowIOValueTypeEnum.any,
+            value: referenceParams,
+            description:
+              '新的 HTTP 请求地址。如果出现两个“请求地址”，可以删除该模块重新加入，会拉取最新的模块配置。',
             label: '',
-            required: false
+            required: false,
+            valueDesc: '',
+            debugLabel: '',
+            toolDescription: ''
           },
           {
             key: 'system_httpJsonBody',
-            renderTypeList: ['hidden'],
-            valueType: 'any',
-            value:
-              '{\r\n    "msg_type": "text",\r\n    "content": {\r\n        "text": "{{text}}"\r\n    }\r\n}',
+            renderTypeList: [FlowNodeInputTypeEnum.hidden],
+            valueType: WorkflowIOValueTypeEnum.any,
+            value: referenceBodyStr,
             label: '',
-            required: false
+            required: false,
+            valueDesc: '',
+            description: '',
+            debugLabel: '',
+            toolDescription: ''
+          },
+          {
+            key: 'system_httpFormBody',
+            renderTypeList: [FlowNodeInputTypeEnum.hidden],
+            valueType: WorkflowIOValueTypeEnum.any,
+            value: [],
+            label: '',
+            required: false,
+            valueDesc: '',
+            description: '',
+            debugLabel: '',
+            toolDescription: ''
+          },
+          {
+            key: 'system_httpContentType',
+            renderTypeList: [FlowNodeInputTypeEnum.hidden],
+            valueType: WorkflowIOValueTypeEnum.string,
+            value: 'json',
+            label: '',
+            required: false,
+            valueDesc: '',
+            description: '',
+            debugLabel: '',
+            toolDescription: ''
           }
         ],
         outputs: [
           {
             id: 'system_addOutputParam',
             key: 'system_addOutputParam',
-            type: 'dynamic',
-            valueType: 'dynamic',
-            label: '',
-            editField: {
-              key: true,
-              valueType: true
-            }
+            type: FlowNodeOutputTypeEnum.dynamic,
+            valueType: WorkflowIOValueTypeEnum.dynamic,
+            label: '输出字段提取',
+            customFieldConfig: {
+              selectValueTypeList: [
+                WorkflowIOValueTypeEnum.string,
+                WorkflowIOValueTypeEnum.number,
+                WorkflowIOValueTypeEnum.boolean,
+                WorkflowIOValueTypeEnum.object,
+                WorkflowIOValueTypeEnum.arrayString,
+                WorkflowIOValueTypeEnum.arrayNumber,
+                WorkflowIOValueTypeEnum.arrayBoolean,
+                WorkflowIOValueTypeEnum.arrayObject,
+                WorkflowIOValueTypeEnum.arrayAny,
+                WorkflowIOValueTypeEnum.any,
+                WorkflowIOValueTypeEnum.chatHistory,
+                WorkflowIOValueTypeEnum.datasetQuote,
+                WorkflowIOValueTypeEnum.dynamic,
+                WorkflowIOValueTypeEnum.selectApp,
+                WorkflowIOValueTypeEnum.selectDataset
+              ],
+              showDescription: false,
+              showDefaultValue: false
+            },
+            description: '可以通过 JSONPath 语法来提取响应值中的指定字段',
+            valueDesc: ''
           },
           {
             id: 'error',
             key: 'error',
             label: '请求错误',
             description: 'HTTP请求错误信息，成功时返回空',
-            valueType: 'object',
-            type: 'static'
+            valueType: WorkflowIOValueTypeEnum.object,
+            type: FlowNodeOutputTypeEnum.static,
+            valueDesc: ''
           },
           {
             id: 'httpRawResponse',
             key: 'httpRawResponse',
-            label: '原始响应',
             required: true,
+            label: '原始响应',
             description: 'HTTP请求的原始响应。只能接受字符串或JSON类型响应数据。',
-            valueType: 'any',
-            type: 'static'
+            valueType: WorkflowIOValueTypeEnum.any,
+            type: FlowNodeOutputTypeEnum.static,
+            valueDesc: ''
           }
         ]
       }
@@ -3140,23 +658,17 @@ export const pluginTemplates: TemplateType = [
     edges: [
       {
         source: 'pluginInput',
-        target: 'rKBYGQuYefae',
+        target: 'vumlECDQTjeC',
         sourceHandle: 'pluginInput-source-right',
-        targetHandle: 'rKBYGQuYefae-target-left'
+        targetHandle: 'vumlECDQTjeC-target-left'
       },
       {
-        source: 'rKBYGQuYefae',
+        source: 'vumlECDQTjeC',
         target: 'pluginOutput',
-        sourceHandle: 'rKBYGQuYefae-source-right',
+        sourceHandle: 'vumlECDQTjeC-source-right',
         targetHandle: 'pluginOutput-target-left'
       }
-    ]
-  }
-];
-
-export const defaultAppTemplates = [
-  simpleBotTemplates[0],
-  simpleBotTemplates[1],
-  workflowTemplates[0],
-  workflowTemplates[1]
-];
+    ],
+    chatConfig: {}
+  };
+};

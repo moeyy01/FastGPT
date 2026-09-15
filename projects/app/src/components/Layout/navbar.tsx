@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
-import { Box, BoxProps, Flex, Link, LinkProps } from '@chakra-ui/react';
+import { Box, type BoxProps, Flex, Link, type LinkProps } from '@chakra-ui/react';
 import { useRouter } from 'next/router';
 import { useUserStore } from '@/web/support/user/useUserStore';
-import { useChatStore } from '@/web/core/chat/context/storeChat';
-import { HUMAN_ICON } from '@fastgpt/global/common/system/constants';
+import { useChatStore } from '@/web/core/chat/context/useChatStore';
 import NextLink from 'next/link';
 import Badge from '../Badge';
 import Avatar from '@fastgpt/web/components/common/Avatar';
@@ -11,70 +10,120 @@ import MyIcon from '@fastgpt/web/components/common/Icon';
 import { useTranslation } from 'next-i18next';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
-import { getDocPath } from '@/web/common/system/doc';
+import { getWebReqUrl } from '@fastgpt/web/common/system/utils';
+import MyImage from '@fastgpt/web/components/common/Image/MyImage';
+import { LOGO_ICON } from '@fastgpt/global/common/system/constants';
 
 export enum NavbarTypeEnum {
   normal = 'normal',
   small = 'small'
 }
 
+const itemStyles: BoxProps & LinkProps = {
+  my: 2,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  w: '48px',
+  h: '58px',
+  borderRadius: 'md'
+};
+const hoverStyle: LinkProps = {
+  _hover: {
+    bg: 'myGray.05',
+    color: 'primary.600'
+  }
+};
+
 const Navbar = ({ unread }: { unread: number }) => {
   const { t } = useTranslation();
   const router = useRouter();
   const { userInfo } = useUserStore();
   const { gitStar, feConfigs } = useSystemStore();
-  const { lastChatAppId, lastChatId } = useChatStore();
+  const { lastChatAppId, lastPane } = useChatStore();
+
   const navbarList = useMemo(
     () => [
       {
         label: t('common:navbar.Chat'),
-        icon: 'core/chat/chatLight',
-        activeIcon: 'core/chat/chatFill',
-        link: `/chat?appId=${lastChatAppId}&chatId=${lastChatId}`,
+        icon: 'navbar/chatLight',
+        activeIcon: 'navbar/chatFill',
+        link: `/chat?appId=${lastChatAppId}&pane=${lastPane}`,
         activeLink: ['/chat']
       },
       {
         label: t('common:navbar.Studio'),
-        icon: 'core/app/aiLight',
-        activeIcon: 'core/app/aiFill',
-        link: `/app/list`,
-        activeLink: ['/app/list', '/app/detail']
+        icon: 'navbar/dashboardLight',
+        activeIcon: 'navbar/dashboardFill',
+        link: `/dashboard/agent`,
+        activeLink: [
+          '/dashboard/agent',
+          '/dashboard/create',
+          '/app/detail',
+          '/dashboard/skill',
+          '/skill/detail',
+          '/dashboard/tool',
+          '/dashboard/tool/marketplace',
+          '/dashboard/systemTool',
+          '/dashboard/templateMarket',
+          '/dashboard/mcpServer',
+          '/dashboard/evaluation',
+          '/dashboard/evaluation/create'
+        ]
       },
       {
         label: t('common:navbar.Datasets'),
-        icon: 'core/dataset/datasetLight',
-        activeIcon: 'core/dataset/datasetFill',
+        icon: 'navbar/datasetLight',
+        activeIcon: 'navbar/datasetFill',
         link: `/dataset/list`,
         activeLink: ['/dataset/list', '/dataset/detail']
       },
       {
         label: t('common:navbar.Account'),
-        icon: 'support/user/userLight',
-        activeIcon: 'support/user/userFill',
-        link: '/account',
-        activeLink: ['/account']
-      }
+        icon: 'navbar/userLight',
+        activeIcon: 'navbar/userFill',
+        link: '/account/info',
+        activeLink: [
+          '/account/bill',
+          '/account/info',
+          '/account/customDomain',
+          '/account/team',
+          '/account/usage',
+          '/account/thirdParty',
+          '/account/apikey',
+          '/account/setting',
+          '/account/inform',
+          '/account/model'
+        ]
+      },
+      ...(userInfo?.username === 'root'
+        ? [
+            {
+              label: t('common:navbar.Config'),
+              icon: 'support/config/configLight',
+              activeIcon: 'support/config/configFill',
+              link: '/config/plugin/tool',
+              activeLink: [
+                '/config/plugin/tool',
+                '/config/plugin/marketplace',
+                '/config/model',
+                '/config/system/migrations'
+              ]
+            }
+          ]
+        : [])
     ],
-    [lastChatAppId, lastChatId, t]
+    [lastChatAppId, lastPane, t, userInfo?.username]
   );
 
-  const itemStyles: BoxProps & LinkProps = {
-    my: 3,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    w: '48px',
-    h: '58px',
-    borderRadius: 'md'
-  };
-  const hoverStyle: LinkProps = {
-    _hover: {
-      bg: 'myGray.05',
-      color: 'primary.600'
-    }
-  };
+  const isDashboardPage = useMemo(() => {
+    return router.pathname.startsWith('/dashboard');
+  }, [router.pathname]);
+  const isDetailPage = useMemo(() => {
+    return router.pathname.startsWith('/app/detail') || router.pathname.startsWith('/skill/detail');
+  }, [router.pathname]);
 
   return (
     <Flex
@@ -84,65 +133,71 @@ const Navbar = ({ unread }: { unread: number }) => {
       h={'100%'}
       w={'100%'}
       userSelect={'none'}
+      pb={2}
+      bg={isDashboardPage ? 'myGray.50' : isDetailPage ? 'myGray.25' : 'transparent'}
     >
       {/* logo */}
-      <Box
-        flex={'0 0 auto'}
-        mb={3}
-        border={'2px solid #fff'}
-        borderRadius={'50%'}
-        overflow={'hidden'}
-        cursor={'pointer'}
-        onClick={() => router.push('/account')}
-      >
-        <Avatar
-          w={'36px'}
-          h={'36px'}
-          src={userInfo?.avatar}
-          fallbackSrc={HUMAN_ICON}
-          borderRadius={'50%'}
-        />
+      <Box flex={'0 0 auto'} mb={3}>
+        <MyImage w={9} h={9} src={LOGO_ICON} />
       </Box>
       {/* 导航列表 */}
       <Box flex={1}>
-        {navbarList.map((item) => (
-          <Box
-            key={item.link}
-            {...itemStyles}
-            {...(item.activeLink.includes(router.pathname)
-              ? {
-                  color: 'primary.600',
-                  bg: 'white',
-                  boxShadow:
-                    '0px 0px 1px 0px rgba(19, 51, 107, 0.08), 0px 4px 4px 0px rgba(19, 51, 107, 0.05)'
-                }
-              : {
-                  color: 'myGray.500',
-                  bg: 'transparent',
-                  _hover: {
-                    bg: 'rgba(255,255,255,0.9)'
+        {navbarList.map((item) => {
+          const isActive = item.activeLink.includes(router.pathname);
+
+          return (
+            <Box
+              key={item.link}
+              {...itemStyles}
+              {...(isActive
+                ? {
+                    bg: 'white',
+                    boxShadow:
+                      '0px 0px 1px 0px rgba(19, 51, 107, 0.08), 0px 4px 4px 0px rgba(19, 51, 107, 0.05)'
                   }
-                })}
-            {...(item.link !== router.asPath
-              ? {
-                  onClick: () => router.push(item.link)
-                }
-              : {})}
-          >
-            <MyIcon
-              name={
-                item.activeLink.includes(router.pathname)
-                  ? (item.activeIcon as any)
-                  : (item.icon as any)
-              }
-              width={'20px'}
-              height={'20px'}
-            />
-            <Box fontSize={'12px'} transform={'scale(0.9)'} mt={'5px'} lineHeight={1}>
-              {item.label}
+                : {
+                    bg: 'transparent',
+                    _hover: {
+                      bg: isDashboardPage || isDetailPage ? 'white' : 'rgba(255,255,255,0.9)'
+                    }
+                  })}
+              {...(item.link !== router.asPath
+                ? {
+                    onClick: () => {
+                      if (item.link.startsWith('/chat')) {
+                        window.open(getWebReqUrl(item.link), '_blank', 'noopener,noreferrer');
+                        return;
+                      }
+                      router.push(item.link);
+                    }
+                  }
+                : {})}
+            >
+              <MyIcon
+                {...(isActive
+                  ? {
+                      name: item.activeIcon as any,
+                      color: 'primary.600'
+                    }
+                  : {
+                      name: item.icon as any,
+                      color: 'myGray.400'
+                    })}
+                width={'24px'}
+                height={'24px'}
+              />
+              <Box
+                fontSize={'12px'}
+                transform={'scale(0.9)'}
+                mt={'5px'}
+                lineHeight={1}
+                color={isActive ? 'primary.700' : 'myGray.500'}
+              >
+                {item.label}
+              </Box>
             </Box>
-          </Box>
-        ))}
+          );
+        })}
       </Box>
 
       {unread > 0 && (
@@ -152,9 +207,10 @@ const Navbar = ({ unread }: { unread: number }) => {
             {...itemStyles}
             {...hoverStyle}
             prefetch
-            href={`/account?currentTab=inform`}
+            href={`/account/inform`}
             mb={0}
             color={'myGray.500'}
+            height={'48px'}
           >
             <Badge count={unread}>
               <MyIcon name={'support/user/informLight'} width={'22px'} height={'22px'} />
@@ -162,20 +218,26 @@ const Navbar = ({ unread }: { unread: number }) => {
           </Link>
         </Box>
       )}
-      {(feConfigs?.docUrl || feConfigs?.chatbotUrl) && (
-        <MyTooltip label={t('common:common.system.Use Helper')} placement={'right-end'}>
-          <Link
-            {...itemStyles}
-            {...hoverStyle}
-            href={feConfigs?.chatbotUrl || getDocPath('/docs/intro')}
-            target="_blank"
-            mb={0}
-            color={'myGray.500'}
-          >
-            <MyIcon name={'common/courseLight'} width={'24px'} height={'24px'} />
-          </Link>
-        </MyTooltip>
-      )}
+
+      {feConfigs?.navbarItems
+        ?.filter((item) => item.isActive)
+        .map((item) => (
+          <MyTooltip key={item.id} label={item.name} placement={'right-end'}>
+            <Link
+              as={NextLink}
+              href={item.url}
+              target={'_blank'}
+              {...itemStyles}
+              {...hoverStyle}
+              mt={0}
+              color={'myGray.400'}
+              height={'48px'}
+            >
+              <Avatar src={item.avatar} borderRadius={'md'} width={'26px'} height={'26px'} />
+            </Link>
+          </MyTooltip>
+        ))}
+
       {feConfigs?.show_git && (
         <MyTooltip label={`Git Star: ${gitStar}`} placement={'right-end'}>
           <Link
@@ -185,12 +247,17 @@ const Navbar = ({ unread }: { unread: number }) => {
             {...itemStyles}
             {...hoverStyle}
             mt={0}
-            color={'myGray.500'}
+            color={'myGray.400'}
+            height={'48px'}
           >
             <MyIcon name={'common/gitInlight'} width={'26px'} height={'26px'} />
           </Link>
         </MyTooltip>
       )}
+
+      <Box flex={'0 0 auto'} mb={4} cursor={'pointer'} onClick={() => router.push('/account/info')}>
+        <Avatar w={9} src={userInfo?.avatar} borderRadius={'50%'} />
+      </Box>
     </Flex>
   );
 };

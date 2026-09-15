@@ -1,21 +1,40 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { jsonRes } from '@fastgpt/service/common/response';
 import { authCert } from '@fastgpt/service/support/permission/auth/common';
-import { connectToDatabase } from '@/service/mongo';
 import { getUserDetail } from '@fastgpt/service/support/user/controller';
+import type { ApiRequestProps } from '@fastgpt/next/type';
+import { NextAPI } from '@/service/middleware/entry';
+import { pushTrack } from '@fastgpt/service/common/middle/tracks/utils';
+import {
+  OpenAPIUserSchema,
+  type OpenAPIUserType
+} from '@fastgpt/global/openapi/support/user/account/login/api';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  try {
-    await connectToDatabase();
-    const { tmbId } = await authCert({ req, authToken: true });
+async function handler(req: ApiRequestProps): Promise<OpenAPIUserType> {
+  const { tmbId, userId, teamId, isRoot } = await authCert({
+    req,
+    authToken: true,
+    allowAccountCancellation: true
+  });
+  const user = await getUserDetail({ tmbId, isRoot });
 
-    jsonRes(res, {
-      data: await getUserDetail({ tmbId })
-    });
-  } catch (err) {
-    jsonRes(res, {
-      code: 500,
-      error: err
-    });
+  pushTrack.dailyUserActive({
+    uid: userId,
+    teamId: teamId,
+    tmbId: tmbId
+  });
+
+  // Remove sensitive information
+  if (user.team.openaiAccount) {
+    user.team.openaiAccount = {
+      key: '',
+      baseUrl: user.team.openaiAccount.baseUrl
+    };
   }
+  if (user.team.externalWorkflowVariables) {
+    user.team.externalWorkflowVariables = Object.fromEntries(
+      Object.keys(user.team.externalWorkflowVariables).map((key) => [key, ''])
+    );
+  }
+
+  return OpenAPIUserSchema.parse(user);
 }
+export default NextAPI(handler);

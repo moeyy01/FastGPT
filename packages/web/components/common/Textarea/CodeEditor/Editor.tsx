@@ -1,10 +1,14 @@
-import React, { useCallback, useRef, useState } from 'react';
-import Editor, { Monaco, loader } from '@monaco-editor/react';
-import { Box, BoxProps } from '@chakra-ui/react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
+import Editor, { type Monaco, loader } from '@monaco-editor/react';
+import { Box, type BoxProps } from '@chakra-ui/react';
 import MyIcon from '../../Icon';
+import { getWebReqUrl } from '../../../../common/system/utils';
+import usePythonCompletion from './usePythonCompletion';
+import useJSCompletion from './useJSCompletion';
+import useSystemHelperCompletion from './useSystemHelperCompletion';
 
 loader.config({
-  paths: { vs: '/js/monaco-editor.0.45.0/vs' }
+  paths: { vs: getWebReqUrl('/js/monaco-editor.0.45.0/vs') }
 });
 
 type EditorVariablePickerType = {
@@ -13,7 +17,6 @@ type EditorVariablePickerType = {
 };
 
 export type Props = Omit<BoxProps, 'resize' | 'onChange'> & {
-  height?: number;
   resize?: boolean;
   defaultValue?: string;
   value?: string;
@@ -21,9 +24,11 @@ export type Props = Omit<BoxProps, 'resize' | 'onChange'> & {
   onOpenModal?: () => void;
   variables?: EditorVariablePickerType[];
   defaultHeight?: number;
+  language?: string;
+  options?: any;
 };
 
-const options = {
+const defaultOptions = {
   lineNumbers: 'on',
   guides: {
     indentation: false
@@ -37,12 +42,17 @@ const options = {
     horizontalScrollbarSize: 8,
     alwaysConsumeMouseWheel: false
   },
-  lineNumbersMinChars: 0,
+  lineNumbersMinChars: 4,
   fontSize: 14,
   scrollBeyondLastLine: false,
   folding: true,
   overviewRulerBorder: false,
-  tabSize: 2
+  tabSize: 2,
+  wordBasedSuggestions: 'off',
+  quickSuggestions: { other: 'on', comments: false, strings: false },
+  suggest: {
+    showWords: false
+  }
 };
 
 const MyEditor = ({
@@ -53,10 +63,24 @@ const MyEditor = ({
   variables = [],
   defaultHeight = 200,
   onOpenModal,
+  language = 'javascript',
+  options,
   ...props
 }: Props) => {
   const [height, setHeight] = useState(defaultHeight);
   const initialY = useRef(0);
+
+  const mergedOptions = React.useMemo(
+    () => ({
+      ...defaultOptions,
+      ...options
+    }),
+    [options]
+  );
+
+  const registerPythonCompletion = usePythonCompletion();
+  const registerJSCompletion = useJSCompletion();
+  const registerSystemHelperCompletion = useSystemHelperCompletion();
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     initialY.current = e.clientY;
@@ -76,50 +100,75 @@ const MyEditor = ({
     document.addEventListener('mouseup', handleMouseUp);
   }, []);
 
-  const beforeMount = useCallback((monaco: Monaco) => {
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-      validate: false,
-      allowComments: false,
-      schemas: [
-        {
-          uri: 'http://myserver/foo-schema.json', // 一个假设的 URI
-          fileMatch: ['*'], // 匹配所有文件
-          schema: {} // 空的 Schema
-        }
-      ]
-    });
+  const editorRef = useRef<any>(null);
+  const monacoRef = useRef<Monaco | null>(null);
 
-    monaco.editor.defineTheme('JSONEditorTheme', {
-      base: 'vs', // 可以基于已有的主题进行定制
-      inherit: true, // 继承基础主题的设置
-      rules: [{ token: 'variable', foreground: '2B5FD9' }],
-      colors: {
-        'editor.background': '#ffffff00',
-        'editorLineNumber.foreground': '#aaa',
-        'editorOverviewRuler.border': '#ffffff00',
-        'editor.lineHighlightBackground': '#F7F8FA',
-        'scrollbarSlider.background': '#E8EAEC',
-        'editorIndentGuide.activeBackground': '#ddd',
-        'editorIndentGuide.background': '#eee'
+  const handleEditorDidMount = useCallback((editor: any, monaco: Monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+
+    // Prevent browser autofill from causing getModifierState errors
+    const editorDom = editor.getDomNode();
+    if (editorDom) {
+      const textarea = editorDom.querySelector('textarea');
+      if (textarea) {
+        textarea.setAttribute('autocomplete', 'off');
+        textarea.setAttribute('autocorrect', 'off');
+        textarea.setAttribute('autocapitalize', 'off');
+        textarea.setAttribute('spellcheck', 'false');
       }
-    });
+    }
   }, []);
+
+  const beforeMount = useCallback(
+    (monaco: Monaco) => {
+      monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+        validate: false,
+        allowComments: false,
+        schemas: [
+          {
+            uri: 'http://myserver/foo-schema.json', // 一个假设的 URI
+            fileMatch: ['*'], // 匹配所有文件
+            schema: {} // 空的 Schema
+          }
+        ]
+      });
+
+      monaco.editor.defineTheme('JSONEditorTheme', {
+        base: 'vs', // 可以基于已有的主题进行定制
+        inherit: true, // 继承基础主题的设置
+        rules: [{ token: 'variable', foreground: '2B5FD9' }],
+        colors: {
+          'editor.background': '#ffffff00',
+          'editorLineNumber.foreground': '#aaa',
+          'editorOverviewRuler.border': '#ffffff00',
+          'editor.lineHighlightBackground': '#F7F8FA',
+          'scrollbarSlider.background': '#E8EAEC',
+          'editorIndentGuide.activeBackground': '#ddd',
+          'editorIndentGuide.background': '#eee'
+        }
+      });
+      registerPythonCompletion(monaco);
+      registerJSCompletion(monaco);
+      registerSystemHelperCompletion(monaco);
+    },
+    [registerPythonCompletion, registerJSCompletion, registerSystemHelperCompletion]
+  );
 
   return (
     <Box
       borderWidth={'1px'}
       borderRadius={'md'}
       borderColor={'myGray.200'}
-      py={2}
+      py={1}
       height={height}
       position={'relative'}
-      pl={2}
       {...props}
     >
       <Editor
         height={'100%'}
-        defaultLanguage="typescript"
-        options={options as any}
+        language={language}
+        options={mergedOptions}
         theme="JSONEditorTheme"
         beforeMount={beforeMount}
         defaultValue={defaultValue}
@@ -127,12 +176,13 @@ const MyEditor = ({
         onChange={(e) => {
           onChange?.(e || '');
         }}
+        onMount={handleEditorDidMount}
       />
       {resize && (
         <Box
           position={'absolute'}
-          right={'-1'}
-          bottom={'-1'}
+          right={'-2.5'}
+          bottom={'-3.5'}
           zIndex={10}
           cursor={'ns-resize'}
           px={'4px'}

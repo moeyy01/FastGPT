@@ -1,0 +1,14 @@
+{
+  "title": "App Building",
+  "root": false,
+  "pages": [
+    "general",
+    "agentv2",
+    "workflow",
+    "tools",
+    "skill",
+    "publish",
+    "evaluation",
+    "faq"
+  ]
+}

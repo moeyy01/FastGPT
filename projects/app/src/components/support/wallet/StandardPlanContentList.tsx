@@ -1,124 +1,272 @@
 import { useSystemStore } from '@/web/common/system/useSystemStore';
-import { StandardSubLevelEnum, SubModeEnum } from '@fastgpt/global/support/wallet/sub/constants';
+import type { StandardSubLevelEnum } from '@fastgpt/global/support/wallet/sub/constants';
+import { SubModeEnum } from '@fastgpt/global/support/wallet/sub/constants';
 import React, { useMemo } from 'react';
 import { standardSubLevelMap } from '@fastgpt/global/support/wallet/sub/constants';
-import { Box, Flex, Grid } from '@chakra-ui/react';
+import { Box, Flex, Grid, Text } from '@chakra-ui/react';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import { useTranslation } from 'next-i18next';
-import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
-import { useRouter } from 'next/router';
-import { AI_POINT_USAGE_CARD_ROUTE } from '@/web/support/wallet/sub/constants';
+import { useClientTranslation } from '@fastgpt/web/i18n/useClientTranslation';
 import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import dynamic from 'next/dynamic';
+import Markdown from '@/components/Markdown';
+import MyPopover from '@fastgpt/web/components/common/MyPopover';
+import { useUserStore } from '@/web/support/user/useUserStore';
+import { formatFileSize } from '@fastgpt/global/common/file/tools';
+import type { TeamPlanStandardType } from '@fastgpt/global/support/wallet/sub/type';
+
+const ModelPriceModal = dynamic(() =>
+  import('@/components/core/ai/ModelTable').then((mod) => mod.ModelPriceModal)
+);
 
 const StandardPlanContentList = ({
   level,
-  mode
+  mode,
+  standplan
 }: {
   level: `${StandardSubLevelEnum}`;
   mode: `${SubModeEnum}`;
+  standplan?: TeamPlanStandardType;
 }) => {
-  const { t } = useTranslation();
-  const { subPlans } = useSystemStore();
-  const router = useRouter();
+  const { t } = useClientTranslation();
+
+  const { subPlans, feConfigs } = useSystemStore();
+  const { userInfo } = useUserStore();
 
   const planContent = useMemo(() => {
-    const plan = subPlans?.standard?.[level];
+    const isWecomTeam = !!userInfo?.team?.isWecomTeam;
+    const formatMode = isWecomTeam ? SubModeEnum.year : mode;
+
+    // For wecom teams, free plan should use basic plan config
+    const effectiveLevel = isWecomTeam && level === 'free' ? 'basic' : level;
+    const plan = subPlans?.standard?.[effectiveLevel];
+
     if (!plan) return;
+    // For wecom free plan (trial), use WecomFreePlan constants
+
     return {
-      price: plan.price * (mode === SubModeEnum.month ? 1 : 10),
+      price: plan.price * (formatMode === SubModeEnum.month ? 1 : 10),
       level: level as `${StandardSubLevelEnum}`,
       ...standardSubLevelMap[level as `${StandardSubLevelEnum}`],
-      maxTeamMember: plan.maxTeamMember,
-      maxAppAmount: plan.maxAppAmount,
-      maxDatasetAmount: plan.maxDatasetAmount,
-      chatHistoryStoreDuration: plan.chatHistoryStoreDuration,
-      maxDatasetSize: plan.maxDatasetSize,
-      permissionCustomApiKey: plan.permissionCustomApiKey,
-      permissionCustomCopyright: plan.permissionCustomCopyright,
-      trainingWeight: plan.trainingWeight,
-      permissionReRank: plan.permissionReRank,
-      totalPoints: plan.totalPoints * (mode === SubModeEnum.month ? 1 : 12),
-      permissionWebsiteSync: plan.permissionWebsiteSync
+      annualBonusPoints:
+        formatMode === SubModeEnum.month
+          ? 0
+          : (standplan?.annualBonusPoints ?? plan.annualBonusPoints),
+      totalPoints:
+        standplan?.totalPoints ??
+        (isWecomTeam
+          ? (plan.wecom?.points ?? 2000)
+          : plan.totalPoints * (formatMode === SubModeEnum.month ? 1 : 12)),
+      requestsPerMinute: standplan?.requestsPerMinute ?? plan.requestsPerMinute,
+      maxTeamMember: standplan?.maxTeamMember ?? plan.maxTeamMember,
+      maxAppAmount: standplan?.maxAppAmount ?? plan.maxAppAmount,
+      maxDatasetAmount: standplan?.maxDatasetAmount ?? plan.maxDatasetAmount,
+      maxDatasetSize: standplan?.maxDatasetSize ?? plan.maxDatasetSize,
+      websiteSyncPerDataset: standplan?.websiteSyncPerDataset ?? plan.websiteSyncPerDataset,
+      chatHistoryStoreDuration:
+        standplan?.chatHistoryStoreDuration ?? plan.chatHistoryStoreDuration,
+      auditLogStoreDuration: standplan?.auditLogStoreDuration ?? plan.auditLogStoreDuration,
+      appRegistrationCount: standplan?.appRegistrationCount ?? plan.appRegistrationCount,
+      ticketResponseTime: standplan?.ticketResponseTime ?? plan.ticketResponseTime,
+      customDomain: standplan?.customDomain ?? plan.customDomain,
+      maxUploadFileSize: formatFileSize(
+        (standplan?.maxUploadFileSize || plan.maxUploadFileSize || feConfigs.uploadFileMaxSize) *
+          1024 ** 2
+      ),
+      maxUploadFileCount:
+        standplan?.maxUploadFileCount || plan.maxUploadFileCount || feConfigs.uploadFileMaxAmount,
+      enableSandbox: standplan?.enableSandbox ?? plan.enableSandbox
     };
-  }, [subPlans?.standard, level, mode]);
+  }, [
+    subPlans?.standard,
+    level,
+    mode,
+    userInfo?.team?.isWecomTeam,
+    standplan?.totalPoints,
+    standplan?.annualBonusPoints,
+    standplan?.requestsPerMinute,
+    standplan?.maxTeamMember,
+    standplan?.maxAppAmount,
+    standplan?.maxDatasetAmount,
+    standplan?.maxDatasetSize,
+    standplan?.websiteSyncPerDataset,
+    standplan?.chatHistoryStoreDuration,
+    standplan?.auditLogStoreDuration,
+    standplan?.appRegistrationCount,
+    standplan?.ticketResponseTime,
+    standplan?.customDomain,
+    standplan?.maxUploadFileSize,
+    standplan?.maxUploadFileCount,
+    standplan?.enableSandbox,
+    feConfigs?.uploadFileMaxSize,
+    feConfigs?.uploadFileMaxAmount
+  ]);
 
   return planContent ? (
-    <Grid gap={4} fontSize={'sm'}>
+    <Grid gap={4} fontSize={'sm'} fontWeight={500}>
       <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Box color={'myGray.600'}>
-          {t('support.wallet.subscription.function.Max members', {
-            amount: planContent.maxTeamMember
-          })}
-        </Box>
+        <MyIcon
+          name={'price/right'}
+          w={'16px'}
+          mr={3}
+          color={planContent.annualBonusPoints ? '#BB182C' : 'primary.600'}
+        />
+        <Flex alignItems={'center'}>
+          {planContent.annualBonusPoints ? (
+            <>
+              <Text fontWeight={'bold'} color={'myGray.600'} textDecoration={'line-through'} mr={1}>
+                {planContent.totalPoints}
+              </Text>
+              <Text fontWeight={'bold'} color={'#DF531E'}>
+                {planContent.totalPoints + planContent.annualBonusPoints}
+              </Text>
+              <Text color={'myGray.600'} ml={1}>
+                {t('common:support.wallet.subscription.point')}
+              </Text>
+            </>
+          ) : (
+            <Box fontWeight={'bold'} color={'myGray.600'} display={'flex'}>
+              <Text>{planContent.totalPoints}</Text>
+              <Text ml={1}>{t('common:support.wallet.subscription.point')}</Text>
+            </Box>
+          )}
+          <ModelPriceModal>
+            {({ onOpen }) => (
+              <QuestionTip ml={1} label={t('common:aipoint_desc')} onClick={onOpen} />
+            )}
+          </ModelPriceModal>
+        </Flex>
       </Flex>
       <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Box color={'myGray.600'}>
-          {t('support.wallet.subscription.function.Max app', {
-            amount: planContent.maxAppAmount
-          })}
-        </Box>
-      </Flex>
-      <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Box color={'myGray.600'}>
-          {t('support.wallet.subscription.function.Max dataset', {
-            amount: planContent.maxDatasetAmount
-          })}
-        </Box>
-      </Flex>
-      <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Box color={'myGray.600'}>
-          {t('support.wallet.subscription.function.History store', {
-            amount: planContent.chatHistoryStoreDuration
-          })}
-        </Box>
-      </Flex>
-      <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Box fontWeight={'bold'}>
-          {t('support.wallet.subscription.function.Max dataset size', {
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box fontWeight={'bold'} color={'myGray.600'}>
+          {t('common:n_dataset_size', {
             amount: planContent.maxDatasetSize
           })}
         </Box>
       </Flex>
       <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
-        <Flex alignItems={'center'}>
-          <Box fontWeight={'bold'}>
-            {t('support.wallet.subscription.function.Points', {
-              amount: planContent.totalPoints
-            })}
-          </Box>
-          <QuestionTip
-            ml={1}
-            label={t('common:support.wallet.subscription.AI points click to read tip')}
-            onClick={() => {
-              router.push(AI_POINT_USAGE_CARD_ROUTE);
-            }}
-          ></QuestionTip>
-        </Flex>
-      </Flex>
-      <Flex alignItems={'center'}>
-        <MyIcon name={'price/right'} w={'16px'} mr={3} />
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
         <Box color={'myGray.600'}>
-          {t('support.wallet.subscription.Training weight', {
-            weight: planContent.trainingWeight
+          {t('common:n_team_members', {
+            amount: planContent.maxTeamMember
           })}
         </Box>
       </Flex>
-      {!!planContent.permissionReRank && (
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {t('common:n_agent_amount', {
+            amount: planContent.maxAppAmount
+          })}
+        </Box>
+      </Flex>
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {t('common:n_dataset_amount', {
+            amount: planContent.maxDatasetAmount
+          })}
+        </Box>
+      </Flex>
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {t('common:n_chat_records_retain', {
+            amount: planContent.chatHistoryStoreDuration
+          })}
+        </Box>
+      </Flex>
+      {!!planContent.auditLogStoreDuration && (
         <Flex alignItems={'center'}>
-          <MyIcon name={'price/right'} w={'16px'} mr={3} />
-          <Box color={'myGray.600'}>检索结果重排</Box>
+          <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+          <Box color={'myGray.600'}>
+            {t('common:n_team_audit_day', {
+              amount: planContent.auditLogStoreDuration
+            })}
+          </Box>
         </Flex>
       )}
-      {!!planContent.permissionWebsiteSync && (
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {t('common:n_team_qpm', {
+            amount: planContent.requestsPerMinute
+          })}
+        </Box>
+        <QuestionTip ml={1} label={t('common:qpm_desc')} />
+      </Flex>
+      {!!planContent.websiteSyncPerDataset && (
         <Flex alignItems={'center'}>
-          <MyIcon name={'price/right'} w={'16px'} mr={3} />
-          <Box color={'myGray.600'}>Web站点同步</Box>
+          <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+          <Box fontWeight={'bold'} color={'myGray.600'}>
+            {t('common:n_website_sync_max_pages', {
+              amount: planContent.websiteSyncPerDataset
+            })}
+          </Box>
+        </Flex>
+      )}
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {planContent.ticketResponseTime
+            ? t('common:worker_order_support_time', {
+                amount: planContent.ticketResponseTime
+              })
+            : t('common:community_support')}
+        </Box>
+        {subPlans?.communitySupportTip && !planContent.ticketResponseTime && (
+          <MyPopover
+            trigger="hover"
+            placement="bottom"
+            offset={[0, 10]}
+            Trigger={
+              <Flex alignItems={'center'}>
+                <MyIcon name={'help' as any} w={'16px'} color={'myGray.500'} ml={1} />
+              </Flex>
+            }
+          >
+            {({ onClose }) => (
+              <Box maxW="300px" p={3}>
+                <Markdown source={subPlans.communitySupportTip} />
+              </Box>
+            )}
+          </MyPopover>
+        )}
+      </Flex>
+      {!!planContent.appRegistrationCount && (
+        <Flex alignItems={'center'}>
+          <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+          <Box color={'myGray.600'}>
+            {t('common:n_app_registration_amount', {
+              amount: planContent.appRegistrationCount
+            })}
+          </Box>
+        </Flex>
+      )}
+      {planContent.customDomain !== undefined && (
+        <Flex alignItems={'center'}>
+          <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+          <Box color={'myGray.600'}>
+            {t('common:n_custom_domain_amount', {
+              amount: planContent.customDomain
+            })}
+          </Box>
+          <QuestionTip ml={1} label={t('common:n_custom_domain_amount_tip')} />
+        </Flex>
+      )}
+      <Flex alignItems={'center'}>
+        <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+        <Box color={'myGray.600'}>
+          {t('common:n_max_upload_file_limit', {
+            count: planContent.maxUploadFileCount,
+            size: planContent.maxUploadFileSize
+          })}
+        </Box>
+      </Flex>
+      {planContent.enableSandbox && (
+        <Flex alignItems={'center'}>
+          <MyIcon name={'price/right'} w={'16px'} mr={3} color={'primary.600'} />
+          <Box color={'myGray.600'}>{t('common:enable_sandbox')}</Box>
         </Flex>
       )}
     </Grid>

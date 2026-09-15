@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -8,7 +8,8 @@ const queryClient = new QueryClient({
       keepPreviousData: true,
       refetchOnWindowFocus: false,
       retry: false,
-      cacheTime: 10
+      cacheTime: 10,
+      networkMode: 'always'
     }
   }
 });

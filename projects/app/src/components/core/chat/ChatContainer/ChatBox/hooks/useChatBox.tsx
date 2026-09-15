@@ -1,13 +1,13 @@
-import { ExportChatType } from '@/types/chat';
-import { ChatItemType } from '@fastgpt/global/core/chat/type';
+import { type ExportChatType } from '@/types/chat';
+import { type ChatItemMiniType } from '@fastgpt/global/core/chat/type';
 import { useCallback } from 'react';
 import { htmlTemplate } from '@/web/core/chat/constants';
 import { fileDownload } from '@/web/common/file/utils';
-import { ChatItemValueTypeEnum } from '@fastgpt/global/core/chat/constants';
-
+import { useTranslation } from 'next-i18next';
 export const useChatBox = () => {
+  const { t } = useTranslation();
   const onExportChat = useCallback(
-    ({ type, history }: { type: ExportChatType; history: ChatItemType[] }) => {
+    ({ type, history }: { type: ExportChatType; history: ChatItemMiniType[] }) => {
       const getHistoryHtml = () => {
         const historyDom = document.getElementById('history');
         if (!historyDom) return;
@@ -44,18 +44,24 @@ export const useChatBox = () => {
           fileDownload({
             text: history
               .map((item) => {
-                let result = `Role: ${item.obj}\n`;
+                const result = `Role: ${item.obj}\n`;
                 const content = item.value.map((item) => {
-                  if (item.type === ChatItemValueTypeEnum.text) {
+                  if (item.text) {
                     return item.text?.content;
-                  } else if (item.type === ChatItemValueTypeEnum.file) {
+                  } else if ('file' in item && item.file) {
                     return `
 ![${item.file?.name}](${item.file?.url})
 `;
-                  } else if (item.type === ChatItemValueTypeEnum.tool) {
+                  } else if ('tools' in item && item.tools) {
                     return `
-\`\`\`Toll
+\`\`\`Tool
 ${JSON.stringify(item.tools, null, 2)}
+\`\`\`
+`;
+                  } else if ('tool' in item && item.tool) {
+                    return `
+\`\`\`Tool
+${JSON.stringify(item.tool, null, 2)}
 \`\`\`
 `;
                   }
@@ -74,7 +80,7 @@ ${JSON.stringify(item.tools, null, 2)}
             fileDownload({
               text: html,
               type: 'text/html',
-              filename: '聊天记录.html'
+              filename: `${t('chat:chat_history')}.html`
             });
         },
         pdf: () => {
@@ -84,7 +90,7 @@ ${JSON.stringify(item.tools, null, 2)}
             // @ts-ignore
             html2pdf(html, {
               margin: 0,
-              filename: `聊天记录.pdf`
+              filename: `${t('chat:chat_history')}.pdf`
             });
         }
       };
